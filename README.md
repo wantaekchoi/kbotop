@@ -2,68 +2,79 @@
 
 # kbotop
 
-**Watch KBO baseball from your terminal.**
-A live scoreboard, text play-by-play, and strike-zone pitch tracking — in the spirit of `htop`.
+**`top`, but for KBO baseball.**
 
-<!-- badges (활성화 예정) -->
-<!-- ![crates.io](https://img.shields.io/crates/v/kbotop) ![downloads](https://img.shields.io/crates/d/kbotop) ![CI](https://img.shields.io/github/actions/workflow/status/wantaekchoi/kbotop/ci.yml) ![license](https://img.shields.io/crates/l/kbotop) -->
+Live scoreboards, text play-by-play, and strike-zone pitch tracking — right in your terminal.
 
-🚧 **Work in progress** — 코어 파서 완성, TUI 조립 중. 첫 릴리스(`kbotop`으로 오늘 경기 보기)를 향해 개발 중입니다.
+[![Built with Ratatui](https://img.shields.io/badge/built%20with-ratatui-1c1c1c?style=flat-square)](https://ratatui.rs)
+[![License: MIT](https://img.shields.io/github/license/wantaekchoi/kbotop?style=flat-square)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-000000?logo=rust&style=flat-square)](https://www.rust-lang.org)
 
 </div>
 
----
+> 🚧 **Active development.** The data layer is done and already pulling live games; the TUI is being assembled. First release is close.
 
-`top`이 프로세스를 보여주듯, **`kbotop`은 오늘의 KBO 경기를 터미널에 띄웁니다.** 화면에 상주하며 실시간으로 갱신되고, `htop`에서 익숙한 조작(F키·`j/k`·`/`·`q`)이 그대로 통합니다 — 다만 대상이 프로세스가 아니라 야구입니다.
+`kbotop` puts today's KBO (Korea Baseball Organization) games where `htop` puts your processes — a live, self-refreshing dashboard you drive with keys you already know. Watch the score, read the play-by-play, and see every pitch land in the strike zone, without leaving your shell.
 
-## Why
+## Features
 
-- ⚡ **초경량** — 의존성 제로의 단일 바이너리. `cargo install` 한 줄, 즉시 실행.
-- 🔴 **라이브** — 스코어·볼카운트·주자, 문자중계가 화면에서 살아 움직임.
-- ◆ **스트라이크존 투구 시각화** — 네이버 PTS 추적 데이터로 구질·구속을 존 위에 그림. *(기존 KBO 터미널 도구엔 없던 것.)*
-- ⌨️ **htop을 계승한 UX** — 요약 헤더 + 기능키 바 + top 계열 키바인딩.
-- 🔑 **API 키 불필요.**
-
-## Planned features (v1)
-
-| | |
-|---|---|
-| Games | 오늘 경기 목록 (실시간 자동 갱신) |
-| Live | 스코어보드 · 문자중계 · 승률 |
-| Strike zone | 투구별 좌표·구속 시각화 |
-| Standings | 리그 순위표 |
+- 🔴 &nbsp;**Live scoreboard** — score, count, bases, refreshed in place
+- 🗒️ &nbsp;**Text play-by-play** — the broadcast feed as it happens
+- ◆ &nbsp;**Strike-zone pitch tracking** — each pitch's location and speed, on the zone
+- 🏆 &nbsp;**Standings** — the league table at a glance
+- ⌨️ &nbsp;**htop-style keys** — `j`/`k`, `/`, `?`, `q`, and a function-key bar
+- ⚡ &nbsp;**One static binary**, no API key, no config required to start
 
 ## Install
 
 ```sh
-# 릴리스 예정
 cargo install kbotop
 ```
 
-## Usage (예정)
+<details>
+<summary>Other ways (arriving with the first release)</summary>
 
 ```sh
-kbotop                    # 오늘 경기 목록
-kbotop --team lg          # 즐겨찾기 팀 라이브로 바로
-kbotop --date 2026-07-19  # 지난 경기
+# Homebrew
+brew install kbotop
+
+# Prebuilt binaries — macOS (arm64/x64) & Linux
+# https://github.com/wantaekchoi/kbotop/releases
+```
+
+</details>
+
+## Usage
+
+```sh
+kbotop                    # today's games
+kbotop --team lg          # jump straight into your team's live game
+kbotop --date 2026-07-19  # a past date
 ```
 
 | Key | Action |
-|---|---|
-| `↑`/`↓` · `j`/`k` | 이동 |
-| `Enter` | 라이브 진입 |
-| `Tab` · `F5` | 경기 ↔ 순위 |
-| `F1` · `?` | 도움말 |
-| `q` · `F10` | 종료 |
+|-----|--------|
+| `↑` `↓` · `j` `k` | move |
+| `Enter` | open live view |
+| `Tab` · `F5` | Games ⇄ Standings |
+| `/` | find a team |
+| `?` · `F1` | help |
+| `q` · `F10` | quit |
 
-## Prior art & thanks
+Keys mirror the in-app `?` help, which stays the source of truth.
 
-검증된 선배들의 관례를 계승합니다 — [`htop`](https://htop.dev)(크롬·키바인딩), [`mlbt`](https://github.com/mlb-rs/mlbt)(동일 스택 MLB 스트라이크존), [`nba-go`](https://github.com/xxhomey19/nba-go)(라이브 갱신 UX), 그리고 같은 길을 먼저 낸 [`kbo-cli`](https://github.com/jeonbyeongmin/kbo-cli).
+## Configuration
+
+`$XDG_CONFIG_HOME/kbotop/config.toml` — or `~/.config/kbotop/config.toml`. Set a favorite team and the poll interval.
+
+## Origin of the name
+
+`htop` → `iotop` → `gotop` → **`kbotop`**. Every `*top` is a live, self-refreshing view over some stream of state — processes, I/O, the GPU. `kbotop` aims that same idea at a baseball game. Not a parody of the name; the lineage of it.
 
 ## Disclaimer
 
-팬메이드 비공식 도구입니다. 데이터는 네이버 스포츠의 비공식 엔드포인트에서 가져오며, 저작권은 KBO·네이버에 있습니다. 비상업·개인 사용 목적이며, 권리자의 요청이 있으면 즉시 대응합니다.
+A fan-made, unofficial tool. Data comes from Naver Sports' public (unofficial) endpoints, and all rights to it belong to the KBO and Naver. It's for personal, non-commercial use, and we respond promptly to any rights-holder request.
 
 ## License
 
-MIT
+[MIT](LICENSE)
