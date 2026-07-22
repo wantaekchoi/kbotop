@@ -189,7 +189,14 @@ fn main() -> Result<()> {
     // config.toml의 poll_secs(하한 3s 적용)를 라이브 뷰 폴링 주기로 흘려보낸다 —
     // cfg 자체는 이후 App::new(cfg)로 이동하므로 여기서 먼저 값을 뽑아둔다.
     let live_poll_secs = cfg.effective_poll_secs();
-    let handle = poller::spawn(source, date, rx_cmd, tx_up, live_poll_secs);
+    let handle = poller::spawn(
+        source,
+        date,
+        rx_cmd,
+        tx_up,
+        live_poll_secs,
+        poller::STANDINGS_POLL_SECS,
+    );
 
     let mut app = App::new(cfg);
     let mut watching_id: Option<String> = None;
@@ -303,7 +310,12 @@ fn run(
             }
             *watching_id = current;
         }
-        if app.tab == Tab::Standings && app.standings.is_empty() {
+        // Standings 탭이 떠 있는 동안은 조건 없이 매 tick RefreshStandings를 보낸다.
+        // 이전엔 `standings.is_empty()`일 때만 보내, 최초 로드 이후엔 W/L·GB가
+        // 바뀌어도 세션 내내 스냅샷이 얼어붙었다(버그 수정). 실제 fetch는
+        // poller.rs의 시간 게이트(STANDINGS_POLL_SECS=90s)가 코얼레싱하므로, 매 tick
+        // 보내도 실제 네트워크 호출은 게이트 주기로만 나간다.
+        if app.tab == Tab::Standings {
             let _ = tx_cmd.send(Command::RefreshStandings);
         }
 
