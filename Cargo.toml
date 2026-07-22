@@ -1,0 +1,39 @@
+[package]
+name = "kbotop"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Watch KBO baseball from your terminal — live scoreboard & strike-zone pitch tracking, in the spirit of htop."
+repository = "https://github.com/wantaekchoi/kbotop"
+homepage = "https://github.com/wantaekchoi/kbotop"
+license = "MIT"
+readme = "README.md"
+keywords = ["kbo", "baseball", "tui", "terminal", "scoreboard"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+ureq = { version = "2.10", features = ["json", "tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4.5", features = ["derive"] }
+toml = "0.8"
+directories = "5"
+anyhow = "1"
+thiserror = "2"
+signal-hook = "0.3"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
+# panic = "abort"를 켜지 않는다: poller.rs의 call_source()가 catch_unwind로 소스
+# 호출 패닉을 흡수해 Update::Error로 바꾸는데, abort 하에서는 catch_unwind가
+# 아무것도 잡지 못하고 프로세스가 그대로 죽는다(리뷰 라운드 5). unwind 유지가
+# 이 방어선이 실제 배포 바이너리에서도 동작하기 위한 전제조건이다.
