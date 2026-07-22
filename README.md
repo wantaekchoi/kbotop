@@ -4,12 +4,11 @@
 
 **A terminal viewer for live KBO baseball** — scores, text play-by-play, and strike-zone pitch tracking, updating in place.
 
+[![Release](https://img.shields.io/github/v/release/wantaekchoi/kbotop?style=flat-square)](https://github.com/wantaekchoi/kbotop/releases)
 [![Built with Ratatui](https://img.shields.io/badge/built%20with-ratatui-1c1c1c?style=flat-square)](https://ratatui.rs)
 [![License: MIT](https://img.shields.io/github/license/wantaekchoi/kbotop?style=flat-square)](LICENSE)
 
 </div>
-
-> **Work in progress — not released yet.** No install command works today. The data layer already pulls live games from Naver Sports; the terminal UI is being built.
 
 ## Introduction
 
@@ -19,13 +18,52 @@ For a game in progress it draws each pitch in the strike zone from Naver's pitch
 
 No API key. A single static binary.
 
-## Status
+## Install
 
-- [x] Live data layer — schedule, scoreboard, text play-by-play, pitch tracking, and standings, verified against the live Naver Sports API
-- [ ] Terminal UI — games list, live view, strike zone _(in progress)_
-- [ ] First release — `cargo install`, Homebrew, and prebuilt binaries for macOS / Linux
+Prebuilt binaries for macOS (arm64/x64) and Linux:
 
-Watch or star the repo to hear when it ships.
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/releases/download/v0.1.0/kbotop-installer.sh | sh
+```
+
+Or from source:
+
+```sh
+git clone https://github.com/wantaekchoi/kbotop
+cd kbotop
+cargo install --path .
+```
+
+<details>
+<summary>Coming soon</summary>
+
+`cargo install kbotop` (crates.io) and `brew install wantaekchoi/tap/kbotop` (Homebrew) are on the way.
+
+</details>
+
+## Usage
+
+```sh
+kbotop                    # today's games
+kbotop --team lg          # straight into your team's live game
+kbotop --date 2026-07-19  # a past date
+```
+
+Vim-style navigation; the in-app `?` help is the source of truth.
+
+- Move: `j` / `k` or arrow keys
+- Open live view: `Enter`
+- Games / Standings: `Tab`
+- Help: `?`
+- Quit: `q`
+
+## Configuration
+
+`$XDG_CONFIG_HOME/kbotop/config.toml`, falling back to `~/.config/kbotop/config.toml`. Sets your favorite team and the poll interval.
+
+## Disclaimer
+
+A fan-made, unofficial tool. Data comes from Naver Sports' public (unofficial) endpoints, and all rights to it belong to the KBO and Naver. For personal, non-commercial use; we respond promptly to any rights-holder request.
 
 ## License
 
