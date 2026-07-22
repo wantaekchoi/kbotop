@@ -2,78 +2,30 @@
 
 # kbotop
 
-**`top`, but for KBO baseball.**
-
-Live scoreboards, text play-by-play, and strike-zone pitch tracking — right in your terminal.
+**A terminal viewer for live KBO baseball** — scores, text play-by-play, and strike-zone pitch tracking, updating in place.
 
 [![Built with Ratatui](https://img.shields.io/badge/built%20with-ratatui-1c1c1c?style=flat-square)](https://ratatui.rs)
 [![License: MIT](https://img.shields.io/github/license/wantaekchoi/kbotop?style=flat-square)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-000000?logo=rust&style=flat-square)](https://www.rust-lang.org)
 
 </div>
 
-> 🚧 **Active development.** The data layer is done and already pulling live games; the TUI is being assembled. First release is close.
+> **Work in progress — not released yet.** No install command works today. The data layer already pulls live games from Naver Sports; the terminal UI is being built.
 
-`kbotop` puts today's KBO (Korea Baseball Organization) games where `htop` puts your processes — a live, self-refreshing dashboard you drive with keys you already know. Watch the score, read the play-by-play, and see every pitch land in the strike zone, without leaving your shell.
+## Introduction
 
-## Features
+`kbotop` is an interactive viewer for KBO (Korea Baseball Organization) games. It shows today's games as a live, self-refreshing dashboard — the score, the count, the runners, and the text play-by-play, all updating in place while you watch.
 
-- 🔴 &nbsp;**Live scoreboard** — score, count, bases, refreshed in place
-- 🗒️ &nbsp;**Text play-by-play** — the broadcast feed as it happens
-- ◆ &nbsp;**Strike-zone pitch tracking** — each pitch's location and speed, on the zone
-- 🏆 &nbsp;**Standings** — the league table at a glance
-- ⌨️ &nbsp;**htop-style keys** — `j`/`k`, `/`, `?`, `q`, and a function-key bar
-- ⚡ &nbsp;**One static binary**, no API key, no config required to start
+For a game in progress it draws each pitch in the strike zone from Naver's pitch-tracking data, so you see location and speed, not just the line score.
 
-## Install
+No API key. A single static binary.
 
-```sh
-cargo install kbotop
-```
+## Status
 
-<details>
-<summary>Other ways (arriving with the first release)</summary>
+- [x] Live data layer — schedule, scoreboard, text play-by-play, pitch tracking, and standings, verified against the live Naver Sports API
+- [ ] Terminal UI — games list, live view, strike zone _(in progress)_
+- [ ] First release — `cargo install`, Homebrew, and prebuilt binaries for macOS / Linux
 
-```sh
-# Homebrew
-brew install kbotop
-
-# Prebuilt binaries — macOS (arm64/x64) & Linux
-# https://github.com/wantaekchoi/kbotop/releases
-```
-
-</details>
-
-## Usage
-
-```sh
-kbotop                    # today's games
-kbotop --team lg          # jump straight into your team's live game
-kbotop --date 2026-07-19  # a past date
-```
-
-| Key | Action |
-|-----|--------|
-| `↑` `↓` · `j` `k` | move |
-| `Enter` | open live view |
-| `Tab` · `F5` | Games ⇄ Standings |
-| `/` | find a team |
-| `?` · `F1` | help |
-| `q` · `F10` | quit |
-
-Keys mirror the in-app `?` help, which stays the source of truth.
-
-## Configuration
-
-`$XDG_CONFIG_HOME/kbotop/config.toml` — or `~/.config/kbotop/config.toml`. Set a favorite team and the poll interval.
-
-## Origin of the name
-
-`htop` → `iotop` → `gotop` → **`kbotop`**. Every `*top` is a live, self-refreshing view over some stream of state — processes, I/O, the GPU. `kbotop` aims that same idea at a baseball game. Not a parody of the name; the lineage of it.
-
-## Disclaimer
-
-A fan-made, unofficial tool. Data comes from Naver Sports' public (unofficial) endpoints, and all rights to it belong to the KBO and Naver. It's for personal, non-commercial use, and we respond promptly to any rights-holder request.
+Watch or star the repo to hear when it ships.
 
 ## License
 
