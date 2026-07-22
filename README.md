@@ -4,6 +4,7 @@
 
 **A terminal viewer for live KBO baseball** — scores, text play-by-play, and strike-zone pitch tracking, updating in place.
 
+[![crates.io](https://img.shields.io/crates/v/kbotop?style=flat-square)](https://crates.io/crates/kbotop)
 [![Release](https://img.shields.io/github/v/release/wantaekchoi/kbotop?style=flat-square)](https://github.com/wantaekchoi/kbotop/releases)
 [![Built with Ratatui](https://img.shields.io/badge/built%20with-ratatui-1c1c1c?style=flat-square)](https://ratatui.rs)
 [![License: MIT](https://img.shields.io/github/license/wantaekchoi/kbotop?style=flat-square)](LICENSE)
@@ -20,26 +21,16 @@ No API key. A single static binary.
 
 ## Install
 
-Prebuilt binaries for macOS (arm64/x64) and Linux:
-
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/releases/download/v0.1.0/kbotop-installer.sh | sh
+# crates.io
+cargo install kbotop
+
+# Homebrew
+brew install wantaekchoi/tap/kbotop
+
+# prebuilt binary (macOS arm64/x64, Linux)
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/releases/download/v0.1.1/kbotop-installer.sh | sh
 ```
-
-Or from source:
-
-```sh
-git clone https://github.com/wantaekchoi/kbotop
-cd kbotop
-cargo install --path .
-```
-
-<details>
-<summary>Coming soon</summary>
-
-`cargo install kbotop` (crates.io) and `brew install wantaekchoi/tap/kbotop` (Homebrew) are on the way.
-
-</details>
 
 ## Usage
 
