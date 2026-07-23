@@ -70,6 +70,8 @@ The UI speaks Korean on ko locales; force English with `--lang en`.
 
 A fan-made, unofficial tool. Data comes from Naver Sports' public (unofficial) endpoints, and all rights to it belong to the KBO and Naver. For personal, non-commercial use; we respond promptly to any rights-holder request.
 
+News is shown as a headline and a short excerpt only; the full text is left to the original-source link. Article copyright belongs to each publisher and reporter.
+
 ## License
 
 [MIT](LICENSE)

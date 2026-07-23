@@ -109,6 +109,19 @@ pub struct NewsItem {
     pub title: String,
     pub source: String, // 언론사명(출처 표시용, 결측 시 빈 문자열)
     pub url: String,    // 기사 링크. 빈 값=링크 없음 — 열기 생략.
+    pub oid: String,    // 언론사 id. 기사 본문 fetch(oid/aid)에 쓴다. 결측 시 빈 문자열.
+    pub aid: String,    // 기사 id. 결측 시 빈 문자열.
+}
+
+/// 기사 본문(인앱 뉴스 표시용, v0.6 스파이크). title/body/reporter는 결측 시
+/// 빈 문자열(관용); org_url은 인앱 표시가 불가할 때 브라우저로 여는 GUI
+/// 폴백 링크로 쓴다(빈 값=폴백 링크 없음).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ArticleText {
+    pub title: String,
+    pub body: String,
+    pub org_url: String,
+    pub reporter: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]

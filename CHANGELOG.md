@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-23
+
+### Added
+- 인앱 뉴스 읽기 — `n`을 누르면 하단 티커의 KBO 기사를 앱 안에서 읽습니다. 제목·기자·리드 발췌를 스크롤(`j`/`k`·방향키·`PageUp`/`PageDown`)로 보고, `Enter`/`o`로 원문을 브라우저에서 엽니다. `Esc`로 닫기.
+
+### Changed
+- `n` 동작을 "브라우저로 열기"에서 "인앱 발췌 오버레이"로 변경. 저작권을 고려해 기사 본문 전체가 아니라 짧은 리드 발췌만 표시하고, 전체는 원문 링크로 넘깁니다(기사 저작권은 각 언론사·기자에게 있음). 기사를 받지 못하면 원문 링크를 브라우저로 여는 폴백.
+
 ## [0.5.0] - 2026-07-23
 
 ### Changed
@@ -73,7 +81,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/wantaekchoi/kbotop/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/wantaekchoi/kbotop/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/wantaekchoi/kbotop/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/wantaekchoi/kbotop/compare/v0.2.0...v0.3.0

@@ -29,6 +29,16 @@ pub struct LinkPickerState {
     pub cursor: usize,
 }
 
+/// 인앱 뉴스 기사 오버레이 상태(v0.6). `n`이 (oid, aid)로 열고, 폴러가
+/// `Update::Article`로 text를 채운다. loading=true는 "요청 보냄, 응답 대기".
+pub struct ArticleView {
+    pub loading: bool,
+    pub text: Option<crate::model::ArticleText>,
+    pub scroll: u16,
+    pub oid: String,
+    pub aid: String,
+}
+
 /// `Live`가 `List`보다 훨씬 커서 clippy가 boxing을 권하지만, `App`이 화면당
 /// 하나만 들고 있고 교체 빈도도 낮으므로(라이브 진입/이탈, 5s 갱신) 간접 참조를
 /// 추가할 실익이 없다 — 브리프의 타입을 그대로 유지.
@@ -90,6 +100,14 @@ pub struct App {
     pub tips_override: Option<Vec<String>>,
     /// `o` 링크 픽커가 열려 있는지 + 항목/커서(None = 닫힘).
     pub link_picker: Option<LinkPickerState>,
+    /// 기사 본문 fetch 요청 큐(부가 기능, v0.6). `n` 키(T3)가 (oid, aid)를 세팅하면
+    /// run()이 매 tick 감지해 `Command::FetchArticle`을 보내고 비운다 —
+    /// watched_game·sent_date와 같은 "App은 채널을 모른다" 패턴.
+    pub pending_article: Option<(String, String)>,
+    /// 인앱 뉴스 기사 오버레이(부가 기능, v0.6). None = 닫힘. `n`이 loading 상태로
+    /// 열고, 폴러 응답(Update::Article)이 text를 채우거나(성공) 오버레이를 닫고
+    /// 브라우저로 폴백한다(실패).
+    pub article_view: Option<ArticleView>,
     /// TUI chrome 표시 언어(main이 --lang/config/env로 감지해 주입). 기본값은
     /// 테스트 결정성을 위해 En — 실사용 경로에서는 main이 항상 덮어쓴다.
     pub lang: crate::ui::i18n::Lang,
@@ -121,6 +139,8 @@ impl App {
             poll_choice: 5,
             tips_override: None,
             link_picker: None,
+            pending_article: None,
+            article_view: None,
             lang: crate::ui::i18n::Lang::En,
         }
     }
@@ -190,6 +210,40 @@ impl App {
                         crate::ui::teamlinks::open_url(url);
                     }
                     self.link_picker = None;
+                }
+                _ => {}
+            }
+            self.pending_g = false;
+            return false;
+        }
+        if let Some(view) = &mut self.article_view {
+            // 기사 오버레이가 열려 있으면 모든 키를 소비한다(options/link_picker 패턴).
+            // scroll 상한은 렌더가 콘텐츠 길이로 clamp하므로 여기선 saturating만.
+            match key {
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => self.article_view = None,
+                KeyCode::Down | KeyCode::Char('j') => view.scroll = view.scroll.saturating_add(1),
+                KeyCode::Up | KeyCode::Char('k') => view.scroll = view.scroll.saturating_sub(1),
+                KeyCode::PageDown => view.scroll = view.scroll.saturating_add(10),
+                KeyCode::PageUp => view.scroll = view.scroll.saturating_sub(10),
+                KeyCode::Char('o') | KeyCode::Enter => {
+                    // 원문(언론사 기사)을 브라우저로 연다. 발췌만 보여주므로 링크는
+                    // 항상 제공: org_url 우선, 비었으면 같은 (oid,aid) 뉴스 링크로 폴백.
+                    let url = view
+                        .text
+                        .as_ref()
+                        .map(|t| t.org_url.clone())
+                        .filter(|u| !u.is_empty())
+                        .or_else(|| {
+                            self.news
+                                .iter()
+                                .find(|n| n.oid == view.oid && n.aid == view.aid)
+                                .map(|n| n.url.clone())
+                        });
+                    if let Some(u) = url {
+                        if !u.is_empty() {
+                            crate::ui::teamlinks::open_url(&u);
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -305,13 +359,25 @@ impl App {
                 self.pending_g = false;
             }
             KeyCode::Char('n') => {
-                // 현재 티커 슬롯의 뉴스 기사를 브라우저로(팁 표시 중이어도 동일
-                // 슬롯 — 회전 계산은 ui::current_news_index와 공유).
+                // 현재 티커 슬롯의 뉴스 기사를 인앱 오버레이로 연다(v0.6). 회전
+                // 계산은 티커와 공유(ui::current_news_index). oid/aid가 있으면
+                // 폴러에 본문 fetch를 요청(loading)하고, 없으면 인앱 렌더가
+                // 불가하므로 기존 브라우저 폴백으로 저하한다.
                 if !self.news.is_empty() {
                     let i = crate::ui::current_news_index(self.now_secs, self.news.len());
-                    let url = &self.news[i].url;
-                    if !url.is_empty() {
-                        crate::ui::teamlinks::open_url(url);
+                    let it = &self.news[i];
+                    if !it.oid.is_empty() && !it.aid.is_empty() {
+                        let (oid, aid) = (it.oid.clone(), it.aid.clone());
+                        self.article_view = Some(ArticleView {
+                            loading: true,
+                            text: None,
+                            scroll: 0,
+                            oid: oid.clone(),
+                            aid: aid.clone(),
+                        });
+                        self.pending_article = Some((oid, aid));
+                    } else if !it.url.is_empty() {
+                        crate::ui::teamlinks::open_url(&it.url);
                     }
                 }
                 self.pending_g = false;
@@ -406,6 +472,37 @@ impl App {
             self.tips_override = Some(t);
             return;
         }
+        if let Update::Article(a) = up {
+            // 부가 기능: News/Tips와 동일하게 stale/last_error/fetching 생명주기에
+            // 관여하지 않는다. 오버레이가 이미 닫힌 뒤(사용자가 Esc) 늦게 도착한
+            // 응답은 조용히 무시한다.
+            match a {
+                Some(text) => {
+                    if let Some(view) = &mut self.article_view {
+                        view.text = Some(text);
+                        view.loading = false;
+                    }
+                }
+                None => {
+                    // fetch 실패 → 오버레이를 닫고 브라우저로 폴백한다. 폴백 URL은
+                    // 같은 (oid,aid)의 뉴스 항목 링크에서 찾는다(실패 응답엔 org_url이
+                    // 없으므로). 못 찾거나 링크가 비면 조용히 닫기만 한다.
+                    if let Some(view) = self.article_view.take() {
+                        if let Some(url) = self
+                            .news
+                            .iter()
+                            .find(|n| n.oid == view.oid && n.aid == view.aid)
+                            .map(|n| n.url.clone())
+                        {
+                            if !url.is_empty() {
+                                crate::ui::teamlinks::open_url(&url);
+                            }
+                        }
+                    }
+                }
+            }
+            return;
+        }
         self.fetching = false;
         self.stale = false;
         // last_error는 "현재 화면이 stale인 이유"를 보여주는 값이므로 stale과
@@ -451,13 +548,14 @@ impl App {
                 self.last_error = Some(e);
                 self.stale = true;
             }
-            // compiler-mandated exhaustiveness arms; Fetching/News/Tips는 위 early return이
-            // 전부 처리한다. unreachable!()로 두면 미래 리팩토링(early return 제거)이 곧바로
-            // 런타임 패닉이 된다 — 이 함수는 렌더 루프에서 catch_unwind 없이 매 Update마다
-            // 호출된다(무패닉 원칙).
+            // compiler-mandated exhaustiveness arms; Fetching/News/Tips/Article은 위 early
+            // return이 전부 처리한다. unreachable!()로 두면 미래 리팩토링(early return 제거)이
+            // 곧바로 런타임 패닉이 된다 — 이 함수는 렌더 루프에서 catch_unwind 없이 매 Update
+            // 마다 호출된다(무패닉 원칙).
             Update::Fetching => {}
             Update::News(_) => {}
             Update::Tips(_) => {}
+            Update::Article(_) => {}
         }
     }
 
@@ -979,5 +1077,161 @@ mod tests {
         let mut app = App::new(Default::default());
         app.on_key(KeyCode::Char('n'));
         assert!(matches!(app.screen, Screen::List));
+        assert!(app.article_view.is_none());
+    }
+
+    fn news_item(oid: &str, aid: &str) -> crate::model::NewsItem {
+        crate::model::NewsItem {
+            title: "제목".into(),
+            source: "출처".into(),
+            url: "https://m.example.com/x".into(),
+            oid: oid.into(),
+            aid: aid.into(),
+        }
+    }
+
+    fn sample_article() -> crate::model::ArticleText {
+        crate::model::ArticleText {
+            title: "제목텍스트".into(),
+            body: "본문 내용".into(),
+            org_url: "https://m.example.com/x".into(),
+            reporter: "홍길동 기자".into(),
+        }
+    }
+
+    /// n: oid/aid가 있는 뉴스면 오버레이를 loading으로 열고 fetch를 요청한다.
+    #[test]
+    fn n_opens_article_view_loading_and_requests_fetch() {
+        let mut app = App::new(Default::default());
+        app.now_secs = 0;
+        app.apply(crate::poller::Update::News(vec![news_item(
+            "144",
+            "0001127744",
+        )]));
+        app.on_key(KeyCode::Char('n'));
+        assert!(
+            app.article_view
+                .as_ref()
+                .map(|v| v.loading)
+                .unwrap_or(false),
+            "n must open a loading overlay"
+        );
+        assert_eq!(
+            app.pending_article,
+            Some(("144".into(), "0001127744".into())),
+            "n must queue a fetch for the current news oid/aid"
+        );
+    }
+
+    /// oid/aid가 없는 뉴스면 오버레이 대신 브라우저 폴백(오버레이 안 열림).
+    #[test]
+    fn n_without_oid_aid_does_not_open_overlay() {
+        let mut app = App::new(Default::default());
+        app.now_secs = 0;
+        app.apply(crate::poller::Update::News(vec![crate::model::NewsItem {
+            title: "제목".into(),
+            source: "출처".into(),
+            url: "https://m.example.com/x".into(),
+            oid: String::new(),
+            aid: String::new(),
+        }]));
+        app.on_key(KeyCode::Char('n'));
+        assert!(app.article_view.is_none());
+        assert!(app.pending_article.is_none());
+    }
+
+    /// Update::Article(Some)이 text를 채우고 loading을 끄며, Esc가 닫는다.
+    #[test]
+    fn article_update_populates_then_esc_closes() {
+        let mut app = App::new(Default::default());
+        app.article_view = Some(ArticleView {
+            loading: true,
+            text: None,
+            scroll: 0,
+            oid: "1".into(),
+            aid: "2".into(),
+        });
+        app.apply(crate::poller::Update::Article(Some(sample_article())));
+        let v = app.article_view.as_ref().unwrap();
+        assert!(!v.loading, "populated overlay must stop loading");
+        assert!(v.text.is_some());
+        app.on_key(KeyCode::Esc);
+        assert!(app.article_view.is_none(), "Esc must close the overlay");
+    }
+
+    /// Update::Article(None)은 오버레이를 닫는다(브라우저 폴백 신호).
+    #[test]
+    fn article_fetch_failure_closes_and_falls_back() {
+        let mut app = App::new(Default::default());
+        app.article_view = Some(ArticleView {
+            loading: true,
+            text: None,
+            scroll: 0,
+            oid: "1".into(),
+            aid: "2".into(),
+        });
+        app.apply(crate::poller::Update::Article(None));
+        assert!(
+            app.article_view.is_none(),
+            "fetch failure must close the overlay (browser fallback)"
+        );
+    }
+
+    /// n으로 오버레이를 다시 누르면 닫힌다(토글); j/k는 scroll을 움직인다.
+    #[test]
+    fn article_overlay_consumes_keys_scroll_and_toggle_close() {
+        let mut app = App::new(Default::default());
+        app.article_view = Some(ArticleView {
+            loading: false,
+            text: Some(sample_article()),
+            scroll: 0,
+            oid: "1".into(),
+            aid: "2".into(),
+        });
+        app.on_key(KeyCode::Char('j'));
+        assert_eq!(app.article_view.as_ref().unwrap().scroll, 1);
+        app.on_key(KeyCode::Char('k'));
+        assert_eq!(app.article_view.as_ref().unwrap().scroll, 0);
+        app.on_key(KeyCode::Char('k')); // 경계: 0 밑으로 안 내려감
+        assert_eq!(app.article_view.as_ref().unwrap().scroll, 0);
+        // 오버레이가 열린 동안 Tab 등은 소비된다(하위 화면에 안 샌다).
+        let tab_before = app.tab;
+        app.on_key(KeyCode::Tab);
+        assert_eq!(app.tab, tab_before, "overlay must consume Tab");
+        app.on_key(KeyCode::Char('n')); // n 토글로 닫기
+        assert!(app.article_view.is_none());
+    }
+
+    /// 오버레이가 닫힌 뒤 늦게 도착한 Update::Article은 조용히 무시된다(패닉 없음).
+    #[test]
+    fn late_article_update_after_close_is_ignored() {
+        let mut app = App::new(Default::default());
+        assert!(app.article_view.is_none());
+        app.apply(crate::poller::Update::Article(Some(sample_article())));
+        assert!(app.article_view.is_none(), "no overlay to populate → no-op");
+    }
+
+    /// Article은 News/Tips처럼 보조 기능 — stale/last_error/fetching 생명주기에
+    /// 관여하지 않는다(리뷰 L4: 불변식 #4 회귀 방지).
+    #[test]
+    fn article_update_does_not_touch_core_lifecycle() {
+        let mut app = App::new(Default::default());
+        app.apply(crate::poller::Update::Error("boom".into()));
+        app.apply(crate::poller::Update::Fetching);
+        app.article_view = Some(ArticleView {
+            loading: true,
+            text: None,
+            scroll: 0,
+            oid: "1".into(),
+            aid: "2".into(),
+        });
+        app.apply(crate::poller::Update::Article(Some(sample_article())));
+        assert!(app.stale, "Article must not clear stale");
+        assert!(app.fetching, "Article must not clear the fetching spinner");
+        assert_eq!(
+            app.last_error.as_deref(),
+            Some("boom"),
+            "Article must not clear last_error"
+        );
     }
 }

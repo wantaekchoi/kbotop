@@ -1,3 +1,4 @@
+pub mod article;
 pub mod footer;
 pub mod games;
 pub mod header;
@@ -117,6 +118,12 @@ pub fn draw(f: &mut Frame, app: &App) {
     if app.show_help {
         help::render(f, f.area(), app);
     }
+
+    // 기사 오버레이는 최상위 — 열려 있으면 on_key가 다른 오버레이 오픈을 막으므로
+    // 실제로 겹치는 일은 없지만, 그려질 땐 가장 위에 온다.
+    if app.article_view.is_some() {
+        article::render(f, f.area(), app);
+    }
 }
 
 /// 티커·n 키가 공유하는 현재 뉴스 회전 인덱스 — 계산 드리프트 방지.
@@ -143,6 +150,8 @@ mod tests {
             title: "아주 ".repeat(60),
             source: "테스트일보".into(),
             url: String::new(),
+            oid: String::new(),
+            aid: String::new(),
         }]));
         let text = render_to_string(&app);
         assert!(text.contains("News:"));
@@ -330,6 +339,8 @@ mod tests {
             title: "타이틀A".into(),
             source: "테스트일보".into(),
             url: String::new(),
+            oid: String::new(),
+            aid: String::new(),
         }]));
         let render = |app: &App| {
             let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
@@ -394,6 +405,33 @@ mod tests {
         assert!(
             !short.contains("Tip:"),
             "tip must yield body space on short terminal"
+        );
+    }
+
+    /// draw() 최상위 층에서 기사 오버레이가 렌더된다(제목이 화면에 나타남).
+    #[test]
+    fn article_overlay_renders_through_draw() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        app.article_view = Some(crate::app::ArticleView {
+            loading: false,
+            text: Some(crate::model::ArticleText {
+                title: "제목텍스트".into(),
+                body: "본문 내용".into(),
+                org_url: String::new(),
+                reporter: String::new(),
+            }),
+            scroll: 0,
+            oid: "1".into(),
+            aid: "2".into(),
+        });
+        let compact: String = render_to_string(&app)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(
+            compact.contains("제목텍스트"),
+            "article title must render via draw:\n{compact}"
         );
     }
 

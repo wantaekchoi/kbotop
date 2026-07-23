@@ -432,6 +432,12 @@ fn run(
             let _ = tx_cmd.send(Command::SetLivePoll(app.poll_choice));
             *sent_poll = app.poll_choice;
         }
+        // 기사 본문 요청(부가 기능, v0.6): `n` 키(T3)가 app.pending_article을
+        // 세팅하면 여기서 감지해 Command::FetchArticle을 보내고 비운다 — App은
+        // 채널을 모르므로 watched_game/sent_date와 동일하게 run()이 대신 전송한다.
+        if let Some((oid, aid)) = app.pending_article.take() {
+            let _ = tx_cmd.send(Command::FetchArticle { oid, aid });
+        }
 
         // Standings 탭이 떠 있는 동안은 조건 없이 매 tick RefreshStandings를 보낸다.
         // 이전엔 `standings.is_empty()`일 때만 보내, 최초 로드 이후엔 W/L·GB가

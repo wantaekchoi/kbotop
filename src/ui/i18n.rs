@@ -34,8 +34,11 @@ pub struct Labels {
     pub title_zone: &'static str,
     pub title_side: &'static str,
     pub title_help: &'static str,
-    pub title_options: &'static str, // "Options" / "옵션" (pane 탭 조합은 코드)
-    pub title_open: &'static str,    // chooser 타이틀
+    pub title_article: &'static str,     // 기사 오버레이 상단 타이틀
+    pub article_hint: &'static str,      // 기사 오버레이 하단 조작 힌트
+    pub article_read_full: &'static str, // 발췌 고지 + 원문 전체 보기 CTA
+    pub title_options: &'static str,     // "Options" / "옵션" (pane 탭 조합은 코드)
+    pub title_open: &'static str,        // chooser 타이틀
     // 상태 문구
     pub loading: &'static str,
     pub no_games: &'static str,
@@ -99,6 +102,9 @@ pub const EN: Labels = Labels {
     title_zone: " Zone ",
     title_side: " Side ",
     title_help: " Help ",
+    title_article: " Article (excerpt) ",
+    article_hint: " Esc close · Enter/o full article · j/k scroll ",
+    article_read_full: "Excerpt — read the full article: press Enter or o",
     title_options: "Options",
     title_open: "Open in browser",
     loading: "loading...",
@@ -168,6 +174,9 @@ pub const KO: Labels = Labels {
     title_zone: " 존 ",
     title_side: " 측면 ",
     title_help: " 도움말 ",
+    title_article: " 기사 (발췌) ",
+    article_hint: " Esc 닫기 · Enter/o 원문 전체 · j/k 스크롤 ",
+    article_read_full: "발췌입니다 — 원문 전체는 Enter 또는 o를 누르세요",
     title_options: "옵션",
     title_open: "브라우저로 열기",
     loading: "불러오는 중...",
@@ -253,6 +262,9 @@ mod tests {
                 l.title_zone,
                 l.title_side,
                 l.title_help,
+                l.title_article,
+                l.article_hint,
+                l.article_read_full,
                 l.title_options,
                 l.title_open,
                 l.loading,

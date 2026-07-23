@@ -1,10 +1,11 @@
 use super::dto::{
-    ApiEnvelope, Lineup, NewsResult, PtsOption, RelayResult, ScheduleGame, ScheduleResult,
-    StandingsResult, TextRelayData,
+    ApiEnvelope, ArticleResult, Lineup, NewsResult, PtsOption, RelayResult, ScheduleGame,
+    ScheduleResult, StandingsResult, TextRelayData,
 };
 use crate::error::Result;
 use crate::model::{
-    BaseState, Count, Game, GameStatus, LiveState, NewsItem, Pitch, PitchResult, Standing, Team,
+    ArticleText, BaseState, Count, Game, GameStatus, LiveState, NewsItem, Pitch, PitchResult,
+    Standing, Team,
 };
 
 fn status_of(g: &ScheduleGame) -> GameStatus {
@@ -110,9 +111,122 @@ pub fn news_from_json(json: &str) -> Result<Vec<NewsItem>> {
                 title: a.title,
                 source: a.source_name,
                 url,
+                oid: a.oid,
+                aid: a.aid,
             }
         })
         .collect())
+}
+
+/// 인앱에 표시할 기사 본문 발췌의 최대 길이(전각 포함 char 단위). 저작권상
+/// 전문 복제를 피하기 위해 리드 발췌만 보관하고 나머지는 원문 링크로 넘긴다.
+const ARTICLE_EXCERPT_CHARS: usize = 200;
+
+/// 기사 본문(v0.6: 인앱 표시용). articleInfo.article이 아예 없으면 (레이아웃이
+/// 완전히 다른 응답) 표시할 게 없으므로 Err — article은 있지만 title/content/
+/// orgUrl 개별 필드가 비어 있는 건 다른 파서들과 동일하게 관용 처리(빈 문자열).
+///
+/// **저작권 주의:** body에는 기사 **전문이 아니라 리드 발췌만** 담는다. 뉴스
+/// 기사는 언론사·기자의 저작물이라 전문을 복제해 배포 앱에 표시하면 침해 소지가
+/// 있다. 애그리게이터 관행대로 짧은 발췌 + 원문 링크(org_url)로 넘긴다.
+pub fn article_text_from_json(json: &str) -> Result<ArticleText> {
+    let env: ApiEnvelope<ArticleResult> = serde_json::from_str(json)?;
+    let article = env
+        .result
+        .and_then(|r| r.article_info)
+        .and_then(|i| i.article)
+        .ok_or_else(|| crate::error::Error::Data("no article in response".into()))?;
+    Ok(ArticleText {
+        title: article.title,
+        body: lead_excerpt(&strip_html_to_text(&article.content), ARTICLE_EXCERPT_CHARS),
+        org_url: article.org_url,
+        reporter: article.reporter,
+    })
+}
+
+/// 평문 본문에서 **리드 발췌**만 남긴다(저작권: 전문 미표시). `max_chars`(전각
+/// 포함 char 단위)를 넘으면 단어 중간 절단을 피해 마지막 공백에서 끊고 '…'를
+/// 붙인다. 이미 짧으면 원문 그대로. 멀티바이트 경계 안전(패닉 없음).
+fn lead_excerpt(text: &str, max_chars: usize) -> String {
+    let mut end = text.len();
+    for (count, (i, _)) in text.char_indices().enumerate() {
+        if count == max_chars {
+            end = i;
+            break;
+        }
+    }
+    if end >= text.len() {
+        return text.to_string();
+    }
+    let head = &text[..end];
+    let cut = match head.rfind(char::is_whitespace) {
+        Some(p) if p > 0 => &head[..p],
+        _ => head,
+    };
+    format!("{}…", cut.trim_end())
+}
+
+/// HTML 기사 본문 → 평문. 정규식 크레이트 없이 수동 문자 스캔으로 처리한다:
+/// '<'…'>' 구간은 태그로 간주해 제거하되, br 계열(br, br/, br /)만 줄바꿈으로
+/// 치환해 문단 구분을 보존한다. 이어서 HTML 엔티티를 언이스케이프하고
+/// 줄 내부 연속 공백·연속 빈 줄을 정리한다.
+fn strip_html_to_text(html: &str) -> String {
+    let mut stripped = String::with_capacity(html.len());
+    let mut chars = html.chars();
+    while let Some(c) = chars.next() {
+        if c != '<' {
+            stripped.push(c);
+            continue;
+        }
+        let mut tag = String::new();
+        for c2 in chars.by_ref() {
+            if c2 == '>' {
+                break;
+            }
+            tag.push(c2);
+        }
+        // br 계열만 줄바꿈으로. 태그명(선행 '/'·속성 제외)이 정확히 "br"일 때만 —
+        // starts_with("br")는 <broom> 같은 다른 태그까지 오탐한다(리뷰 L3).
+        let name: String = tag
+            .trim_start_matches('/')
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric())
+            .collect::<String>()
+            .to_ascii_lowercase();
+        if name == "br" {
+            stripped.push('\n');
+        }
+    }
+    normalize_whitespace(&unescape_entities(&stripped))
+}
+
+/// &amp;는 다른 엔티티를 모두 치환한 뒤 마지막에 처리한다 — 먼저 하면
+/// "&amp;lt;"(리터럴로 "&lt;"라는 글자를 보여주려던 원문) 같은 값이 두 번
+/// 풀려 "<"로 잘못 언이스케이프된다.
+fn unescape_entities(s: &str) -> String {
+    s.replace("&nbsp;", " ")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
+/// 줄 내부 연속 공백을 한 칸으로, 연속 빈 줄을 한 줄로 축소하고 앞뒤를
+/// trim한다(예: `<br><br>` 문단 구분이 빈 줄 두 개로 남는 것을 방지).
+fn normalize_whitespace(s: &str) -> String {
+    let mut out_lines: Vec<String> = Vec::new();
+    let mut prev_blank = false;
+    for raw_line in s.split('\n') {
+        let collapsed = raw_line.split_whitespace().collect::<Vec<_>>().join(" ");
+        let blank = collapsed.is_empty();
+        if blank && prev_blank {
+            continue;
+        }
+        out_lines.push(collapsed);
+        prev_blank = blank;
+    }
+    out_lines.join("\n").trim().to_string()
 }
 
 fn parse_u8(s: &str) -> u8 {
@@ -638,6 +752,35 @@ mod tests {
         assert!(news_from_json("{}").unwrap().is_empty());
     }
 
+    /// 뉴스 목록 파싱이 oid/aid를 NewsItem에 채운다(기사 fetch 배선용).
+    #[test]
+    fn news_items_carry_oid_and_aid() {
+        let json = r#"{"result":{"newsList":[{"title":"t","sourceName":"s","oid":"144","aid":"0001127744"}]}}"#;
+        let items = news_from_json(json).unwrap();
+        assert_eq!(items[0].oid, "144");
+        assert_eq!(items[0].aid, "0001127744");
+    }
+
+    /// 기사 파싱 관용성(스펙 v0.6 §35, 파일 컨벤션): 응답 결측→Err, 하위 필드
+    /// 결측→빈 문자열(무패닉), orgUrl 중첩 pc 없음→mobile 폴백.
+    #[test]
+    fn article_text_from_json_leniency_probe() {
+        assert!(article_text_from_json("{}").is_err());
+
+        let json = r#"{"result":{"articleInfo":{"article":{}}}}"#;
+        let a = article_text_from_json(json).unwrap();
+        assert_eq!(a.title, "");
+        assert_eq!(a.body, "");
+        assert_eq!(a.org_url, "");
+        assert_eq!(a.reporter, "");
+
+        let json2 = r#"{"result":{"articleInfo":{"article":{"orgUrl":{"mobile":{"url":"https://m.example.com/x"}}}}}}"#;
+        assert_eq!(
+            article_text_from_json(json2).unwrap().org_url,
+            "https://m.example.com/x"
+        );
+    }
+
     #[test]
     fn news_from_json_builds_article_urls_from_oid_aid_leniently() {
         let json = r#"{"code":200,"success":true,"result":{"newsList":[
@@ -650,6 +793,85 @@ mod tests {
             "https://m.sports.naver.com/kbaseball/article/450/0000152707"
         );
         assert_eq!(items[1].url, "", "missing oid/aid → empty url, item kept");
+    }
+
+    /// v0.6 스파이크: 실측 fixture(articleInfo.article)를 파싱해 본문 HTML의
+    /// 태그·엔티티가 걷힌 평문을 얻는지 확인한다.
+    #[test]
+    fn article_text_from_json_parses_fixture_and_strips_html() {
+        const ARTICLE: &str = include_str!("../../../tests/fixtures/news_article_144.json");
+        let article = article_text_from_json(ARTICLE).unwrap();
+
+        assert!(!article.title.is_empty(), "title must not be empty");
+        assert!(
+            article.org_url.starts_with("http"),
+            "org_url must start with http: {}",
+            article.org_url
+        );
+        assert!(
+            article.reporter.contains("김은진"),
+            "reporter missing real content: {}",
+            article.reporter
+        );
+
+        // 저작권: 전문이 아니라 리드 발췌만 보관한다.
+        let chars = article.body.chars().count();
+        assert!(
+            chars <= ARTICLE_EXCERPT_CHARS + 1, // 발췌 + '…'
+            "body must be a lead excerpt, not the full article: {chars} chars"
+        );
+        assert!(
+            article.body.ends_with('…'),
+            "truncated excerpt must end with an ellipsis: {}",
+            article.body
+        );
+        assert!(!article.body.is_empty(), "excerpt must not be empty");
+        assert!(
+            !article.body.contains('<') && !article.body.contains('>'),
+            "tags not stripped: {}",
+            article.body
+        );
+        assert!(
+            !article.body.contains("&lt;") && !article.body.contains("&amp;"),
+            "entities not unescaped: {}",
+            article.body
+        );
+    }
+
+    /// 발췌: 짧은 글은 그대로, 긴 글은 경계에서 끊고 '…'. 멀티바이트 안전.
+    #[test]
+    fn lead_excerpt_truncates_at_word_boundary_with_ellipsis() {
+        assert_eq!(lead_excerpt("짧은 글", 100), "짧은 글");
+        let long = "가나다 라마바 ".repeat(50); // 350 chars
+        let ex = lead_excerpt(&long, 20);
+        assert!(ex.chars().count() <= 21, "len {}", ex.chars().count());
+        assert!(ex.ends_with('…'), "must mark truncation: {ex}");
+        assert!(!ex.contains("  "), "no dangling partial word spacing: {ex}");
+        // 다양한 컷 위치에서 패닉이 없어야 한다(char 경계 안전).
+        for n in 0..40 {
+            let _ = lead_excerpt(&long, n);
+        }
+    }
+
+    /// HTML 스트리퍼 단위 테스트: br 계열은 줄바꿈으로, 그 외 태그는 삭제,
+    /// 엔티티는 언이스케이프한 뒤 앞뒤 공백을 정리한다.
+    #[test]
+    fn strip_html_to_text_handles_tags_and_entities() {
+        let input = "<p>a&amp;b</p><br>c &lt;d&gt;";
+        assert_eq!(strip_html_to_text(input), "a&b\nc <d>");
+    }
+
+    /// br 계열(br, br/, br /, 속성 포함)만 줄바꿈. "br"로 시작하는 다른 태그
+    /// (<broom>)는 삭제만 하고 줄을 바꾸지 않는다(리뷰 L3 회귀 방지).
+    #[test]
+    fn only_real_br_tags_become_newlines() {
+        assert_eq!(strip_html_to_text("a<br>b<br/>c<br />d"), "a\nb\nc\nd");
+        assert_eq!(strip_html_to_text(r#"a<br class="x">b"#), "a\nb");
+        assert_eq!(
+            strip_html_to_text("a<broom>b"),
+            "ab",
+            "<broom> must not insert a newline"
+        );
     }
 
     #[test]

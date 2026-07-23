@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::model::{Game, GameStatus, LiveState, NewsItem, Standing};
+use crate::model::{ArticleText, Game, GameStatus, LiveState, NewsItem, Standing};
 use crate::source::DataSource;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
@@ -26,6 +26,10 @@ pub enum Update {
     /// 하단 팁 목록 런타임 갱신본(부가 기능). 시작 시 1회만 시도하며, 실패·기각은
     /// 조용히 임베드 폴백으로 남는다 — 뉴스와 동일하게 Update::Error로 보내지 않는다.
     Tips(Vec<String>),
+    /// `Command::FetchArticle` 1회성 요청의 응답(부가 기능). 성공 시 `Some`,
+    /// 소스 실패 시 `None` — News/Tips와 동일하게 실패를 Update::Error로 보내
+    /// 본 기능 footer를 오염시키지 않는다. UI는 `None`을 브라우저 폴백 신호로 쓴다.
+    Article(Option<ArticleText>),
 }
 
 /// App → 폴러 방향 명령.
@@ -37,6 +41,11 @@ pub enum Command {
     SetDate(String),
     /// 라이브 폴 주기 런타임 전환(하한 3s는 수신부가 보장).
     SetLivePoll(u64),
+    /// 기사 본문 1회성 요청(부가 기능, `n` 키). 게이트 없이 즉시 처리한다.
+    FetchArticle {
+        oid: String,
+        aid: String,
+    },
     Shutdown,
 }
 
@@ -180,6 +189,19 @@ pub fn spawn(
                     Command::SetLivePoll(s) => {
                         live_poll_secs = s.max(3);
                         next_live = Instant::now();
+                    }
+                    Command::FetchArticle { oid, aid } => {
+                        // 1회성 요청이라 게이트가 없다. 실패는 부가 기능이므로
+                        // Update::Error로 보내지 않고 Update::Article(None)으로
+                        // 조용히 알린다 — UI가 이를 브라우저 폴백 신호로 쓴다.
+                        match call_source(|| source.article(&oid, &aid)) {
+                            Ok(a) => {
+                                let _ = tx.send(Update::Article(Some(a)));
+                            }
+                            Err(_) => {
+                                let _ = tx.send(Update::Article(None));
+                            }
+                        }
                     }
                     Command::Shutdown => return,
                 }
@@ -583,6 +605,7 @@ mod tests {
                 Update::Fetching => {}
                 Update::News(_) => {}
                 Update::Tips(_) => {}
+                Update::Article(_) => {}
             }
         }
 
@@ -728,5 +751,111 @@ mod tests {
             "SetDate must trigger an immediate refetch with the new date, got {seen:?}"
         );
         drop(rx_up);
+    }
+
+    /// article()을 1번째=성공, 2번째=실패로 반환하는 더블 — FetchArticle이 성공/실패
+    /// 각각을 Update::Article(Some)/Update::Article(None)으로만 매핑하고, 실패가
+    /// Update::Error로 새지 않는지(부가 기능, 본 기능 footer 오염 금지) 확인한다.
+    struct ArticleEcho {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl DataSource for ArticleEcho {
+        fn games(&self, _date: &str) -> Result<Vec<Game>> {
+            Ok(vec![])
+        }
+        fn live(&self, _game: &Game) -> Result<LiveState> {
+            Err(Error::Config("unused".into()))
+        }
+        fn standings(&self, _year: u16) -> Result<Vec<Standing>> {
+            Err(Error::Config("unused".into()))
+        }
+        fn article(&self, _oid: &str, _aid: &str) -> Result<ArticleText> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if n == 1 {
+                Ok(ArticleText {
+                    title: "제목".into(),
+                    body: "본문".into(),
+                    org_url: "https://example.com".into(),
+                    reporter: "기자".into(),
+                })
+            } else {
+                Err(Error::Config("boom".into()))
+            }
+        }
+    }
+
+    #[test]
+    fn fetch_article_maps_success_and_failure_to_article_update() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let source: Arc<dyn DataSource> = Arc::new(ArticleEcho {
+            calls: calls.clone(),
+        });
+        let (tx_cmd, rx_cmd) = mpsc::channel::<Command>();
+        let (tx_up, rx_up) = mpsc::channel::<Update>();
+        let handle = spawn(
+            source,
+            "2026-07-19".into(),
+            rx_cmd,
+            tx_up,
+            5,
+            STANDINGS_POLL_SECS,
+        );
+
+        let fetch = |oid: &str, aid: &str| Command::FetchArticle {
+            oid: oid.into(),
+            aid: aid.into(),
+        };
+
+        // 1번째 요청: 소스가 성공 → Update::Article(Some), Update::Error는 없어야 한다.
+        let _ = tx_cmd.send(fetch("001", "0001"));
+        let mut got = None;
+        for _ in 0..8 {
+            match rx_up
+                .recv_timeout(Duration::from_secs(2))
+                .expect("expected an update before timeout")
+            {
+                Update::Article(a) => {
+                    got = Some(a);
+                    break;
+                }
+                Update::Error(e) => {
+                    panic!("article fetch failure must not surface as Update::Error, got {e}")
+                }
+                _ => continue,
+            }
+        }
+        assert!(
+            matches!(got, Some(Some(_))),
+            "expected Update::Article(Some) on success, got {got:?}"
+        );
+
+        // 2번째 요청: 소스가 실패 → Update::Article(None)이어야 하며 Update::Error로
+        // 새어나가면 안 된다(본 기능 footer 오염 금지).
+        let _ = tx_cmd.send(fetch("001", "0002"));
+        let mut got2 = None;
+        for _ in 0..8 {
+            match rx_up
+                .recv_timeout(Duration::from_secs(2))
+                .expect("expected an update before timeout")
+            {
+                Update::Article(a) => {
+                    got2 = Some(a);
+                    break;
+                }
+                Update::Error(e) => {
+                    panic!("article fetch failure must not surface as Update::Error, got {e}")
+                }
+                _ => continue,
+            }
+        }
+        assert_eq!(
+            got2,
+            Some(None),
+            "expected Update::Article(None) on source failure, not Update::Error"
+        );
+
+        let _ = tx_cmd.send(Command::Shutdown);
+        handle.join().unwrap();
     }
 }

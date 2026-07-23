@@ -205,6 +205,55 @@ pub struct NewsArticle {
     pub aid: String,
 }
 
+/// orgUrl은 실측 응답(뉴스 기사 API)에서 평문 문자열이 아니라
+/// `{"pc":{"url":...},"mobile":{"url":...}}` 형태의 중첩 객체로 온다 —
+/// pc.url을 우선하고 없으면 mobile.url, 둘 다 없으면(또는 애초에 문자열로
+/// 오면 그 문자열을) 빈 문자열로 완만히 처리한다. GUI 폴백 링크용 필드라 값이
+/// 없어도 기사 본문 조회 자체는 실패하면 안 된다.
+fn lenient_org_url<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let url = v.as_ref().and_then(|v| {
+        v.as_str().map(str::to_string).or_else(|| {
+            ["pc", "mobile"]
+                .iter()
+                .find_map(|k| v.get(k)?.get("url")?.as_str())
+                .map(str::to_string)
+        })
+    });
+    Ok(url.unwrap_or_default())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArticleResult {
+    #[serde(default)]
+    pub article_info: Option<ArticleInfo>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArticleInfo {
+    #[serde(default)]
+    pub article: Option<Article>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Article {
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub title: String,
+    /// 기사 본문(HTML). map.rs의 article_text_from_json이 태그를 벗겨낸다.
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub content: String,
+    #[serde(default, deserialize_with = "lenient_org_url")]
+    pub org_url: String,
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub reporter: String,
+}
+
 #[derive(Deserialize)]
 pub struct RelayResult {
     #[serde(rename = "textRelayData")]

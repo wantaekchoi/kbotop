@@ -2,7 +2,7 @@ pub mod dto;
 pub mod map;
 
 use crate::error::Result;
-use crate::model::{Game, LiveState, NewsItem, Standing};
+use crate::model::{ArticleText, Game, LiveState, NewsItem, Standing};
 use crate::source::DataSource;
 
 const BASE: &str = "https://api-gw.sports.naver.com";
@@ -64,6 +64,13 @@ impl DataSource for NaverSource {
     fn news(&self) -> Result<Vec<NewsItem>> {
         let url = format!("{BASE}/news/articles/kbo?size=20");
         map::news_from_json(&self.get(&url)?)
+    }
+
+    // v0.6 스파이크: 기사 본문(인앱 표시용). 네트워크 필요라 단위 테스트 대상이
+    // 아니고, map::article_text_from_json이 fixture로 커버한다.
+    fn article(&self, oid: &str, aid: &str) -> Result<ArticleText> {
+        let url = format!("{BASE}/news/article/{oid}/{aid}");
+        map::article_text_from_json(&self.get(&url)?)
     }
 
     // 네이버 API가 아니라 프로젝트 저장소 raw지만, HTTP 클라이언트를 가진 유일한

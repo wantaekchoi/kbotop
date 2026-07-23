@@ -1,7 +1,7 @@
 pub mod naver;
 
 use crate::error::Result;
-use crate::model::{Game, LiveState, Standing};
+use crate::model::{ArticleText, Game, LiveState, Standing};
 
 pub trait DataSource: Send + Sync {
     fn games(&self, date: &str) -> Result<Vec<Game>>;
@@ -11,6 +11,12 @@ pub trait DataSource: Send + Sync {
     /// KBO 뉴스 헤드라인(부가 기능). 기본 구현은 빈 목록 — 뉴스 없는 소스도 유효.
     fn news(&self) -> Result<Vec<crate::model::NewsItem>> {
         Ok(vec![])
+    }
+
+    /// 기사 본문(v0.6 스파이크, 인앱 표시용 부가 기능). 기본 구현은 Err —
+    /// 호출부는 실패 시 org_url로 브라우저 열기 폴백을 쓴다.
+    fn article(&self, _oid: &str, _aid: &str) -> Result<ArticleText> {
+        Err(crate::error::Error::Data("article not supported".into()))
     }
 
     /// 하단 팁 목록의 런타임 갱신본(부가 기능). 기본은 빈 목록 — 임베드 폴백.
