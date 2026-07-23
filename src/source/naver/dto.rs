@@ -186,6 +186,22 @@ pub struct TeamStat {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewsResult {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub news_list: Vec<NewsArticle>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewsArticle {
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub title: String,
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub source_name: String,
+}
+
+#[derive(Deserialize)]
 pub struct RelayResult {
     #[serde(rename = "textRelayData")]
     pub text_relay_data: Option<TextRelayData>,
@@ -292,6 +308,9 @@ pub struct PtsOption {
     pub az: f32,
     #[serde(default, deserialize_with = "lenient_string")]
     pub stance: String,
+    /// "YYMMDD_HHMMSS" 형식의 투구 식별자 — 실제 투구 시각의 유일한 출처.
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub pitch_id: String,
 }
 
 #[derive(Deserialize)]
@@ -319,4 +338,7 @@ pub struct Player {
     pub pcode: String,
     #[serde(default, deserialize_with = "lenient_string")]
     pub name: String,
+    /// 타순(1~9). 교체 선수는 같은 batOrder를 공유한다. 0이면 미상.
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub bat_order: u8,
 }

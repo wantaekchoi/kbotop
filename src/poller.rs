@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::model::{Game, GameStatus, LiveState, Standing};
+use crate::model::{Game, GameStatus, LiveState, NewsItem, Standing};
 use crate::source::DataSource;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
@@ -18,6 +18,11 @@ pub enum Update {
     Live(String, LiveState),
     Standings(Vec<Standing>),
     Error(String),
+    /// HTTP 호출 직전 신호 — UI 스피너용. 데이터/에러 Update 도착이 완료 신호다.
+    Fetching,
+    /// KBO 뉴스 헤드라인(부가 기능). 실패는 절대 Update::Error로 보내지 않고
+    /// 조용히 무시한다 — 뉴스 실패가 footer의 본 기능 에러 표시를 오염시키면 안 된다.
+    News(Vec<NewsItem>),
 }
 
 /// App → 폴러 방향 명령.
@@ -61,6 +66,9 @@ pub const STANDINGS_POLL_SECS: u64 = 90;
 /// 경기는 relay 데이터가 더 바뀌지 않으므로 라이브 기본 주기(3~5s)로 계속 두드릴
 /// 이유가 없다(design §12: "과도한 폴링으로 차단·민폐" 대응).
 const FINAL_LIVE_POLL_SECS: u64 = 30;
+
+/// 뉴스 헤드라인 폴링 주기. 부가 기능이라 games(60s)보다도 느슨하게 둔다.
+const NEWS_POLL_SECS: u64 = 300;
 
 /// 지수 백오프 상한. `base`가 이미 이보다 크면(games 기본 60s처럼) 그 base를
 /// 그대로 상한으로 쓴다 — 원래 느슨한 주기가 에러 중에도 더 느려지지는 않는다.
@@ -110,6 +118,7 @@ pub fn spawn(
         // 10s 블로킹) 커맨드 드레인 루프가 요청마다 블로킹 HTTP를 반복 호출해
         // Games/Live 폴링이 굶주리고 Shutdown 처리까지 지연된다.
         let mut next_standings = Instant::now();
+        let mut next_news = Instant::now();
         let mut games_errors: u32 = 0;
         let mut live_errors: u32 = 0;
 
@@ -132,6 +141,7 @@ pub fn spawn(
                         let now = Instant::now();
                         if now >= next_standings {
                             let year = date.get(0..4).and_then(|y| y.parse().ok()).unwrap_or(2026);
+                            let _ = tx.send(Update::Fetching);
                             match call_source(|| source.standings(year)) {
                                 Ok(s) => {
                                     let _ = tx.send(Update::Standings(s));
@@ -153,6 +163,7 @@ pub fn spawn(
 
             let now = Instant::now();
             if now >= next_games {
+                let _ = tx.send(Update::Fetching);
                 match call_source(|| source.games(&date)) {
                     Ok(g) => {
                         let _ = tx.send(Update::Games(g));
@@ -165,6 +176,14 @@ pub fn spawn(
                 }
                 next_games = now + backoff_delay(Duration::from_secs(60), games_errors);
             }
+            if now >= next_news {
+                // 뉴스는 부가 기능: 실패를 Update::Error로 보내면 본 기능(footer)이
+                // 오염되므로 성공만 반영하고 실패는 조용히 다음 주기로 미룬다.
+                if let Ok(n) = call_source(|| source.news()) {
+                    let _ = tx.send(Update::News(n));
+                }
+                next_news = now + Duration::from_secs(NEWS_POLL_SECS);
+            }
             if let Some(g) = &watching {
                 if now >= next_live {
                     // 종료된 경기는 relay 데이터가 더 바뀌지 않으므로 완화된 주기를 쓴다
@@ -174,6 +193,7 @@ pub fn spawn(
                     } else {
                         Duration::from_secs(live_poll_secs)
                     };
+                    let _ = tx.send(Update::Fetching);
                     match call_source(|| source.live(g)) {
                         Ok(l) => {
                             let _ = tx.send(Update::Live(g.id.clone(), l));
@@ -282,6 +302,13 @@ mod tests {
             5,
             STANDINGS_POLL_SECS,
         );
+
+        // 첫 메시지는 호출 직전 스피너용 Fetching이므로 건너뛰고, 패닉이
+        // 흡수돼 나온 실제 결과(Update::Error)를 확인한다.
+        let fetching = rx_up
+            .recv_timeout(Duration::from_secs(2))
+            .expect("expected an Update before timeout");
+        assert!(matches!(fetching, Update::Fetching));
 
         let up = rx_up
             .recv_timeout(Duration::from_secs(2))
@@ -409,6 +436,7 @@ mod tests {
             away_win_rate: None,
             relay_log: vec![],
             current_pitches: vec![],
+            next_batter_name: String::new(),
         }
     }
 
@@ -467,6 +495,8 @@ mod tests {
             {
                 Update::Live(..) | Update::Error(_) => live_events_at.push(Instant::now()),
                 Update::Games(_) | Update::Standings(_) => {}
+                Update::Fetching => {}
+                Update::News(_) => {}
             }
         }
 
@@ -509,6 +539,31 @@ mod tests {
         fn standings(&self, _year: u16) -> Result<Vec<Standing>> {
             Err(Error::Config("not used in this test".into()))
         }
+    }
+
+    /// 폴러는 각 HTTP 호출 직전 Fetching을 보낸다 — games 첫 폴링에서 확인.
+    #[test]
+    fn poller_announces_fetching_before_each_call() {
+        let source: Arc<dyn DataSource> = Arc::new(PanickingGamesSource);
+        let (tx_cmd, rx_cmd) = mpsc::channel::<Command>();
+        let (tx_up, rx_up) = mpsc::channel::<Update>();
+        let handle = spawn(
+            source,
+            "2026-07-19".into(),
+            rx_cmd,
+            tx_up,
+            5,
+            STANDINGS_POLL_SECS,
+        );
+        let first = rx_up.recv_timeout(Duration::from_secs(2)).expect("update");
+        assert!(
+            matches!(first, Update::Fetching),
+            "first message must be Fetching"
+        );
+        let second = rx_up.recv_timeout(Duration::from_secs(2)).expect("update");
+        assert!(matches!(second, Update::Error(_)));
+        let _ = tx_cmd.send(Command::Shutdown);
+        assert!(handle.join().is_ok());
     }
 
     #[test]

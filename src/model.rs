@@ -51,18 +51,19 @@ pub struct Count {
     pub out: u8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum PitchResult {
     Ball,
     StrikeLooking,
     StrikeSwinging,
     Foul,
     InPlay,
+    #[default]
     Unknown,
 }
 
 /// 한 구의 PTS 추적 데이터.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Pitch {
     pub order: u8,              // 타석 내 구 순번 (ballcount)
     pub plate_x: f32,           // crossPlateX (ft, 포수 시점 좌우)
@@ -71,7 +72,16 @@ pub struct Pitch {
     pub sz_bottom: f32, // bottomSz (타자별 존 하단)
     pub speed_kmh: Option<u16>, // 릴리스 속도벡터로 계산 (없으면 None)
     pub result: PitchResult,
-    pub text: String, // "1구 파울" 등 원문
+    pub text: String,             // "1구 파울" 등 원문
+    pub time_hms: Option<String>, // pitchId(YYMMDD_HHMMSS)에서 파싱한 "HH:MM:SS"
+    pub plate_t: f32,             // 릴리스→플레이트 통과 시간(s), 궤적 샘플링용(미상 0)
+    // 측면 뷰 궤적 재계산용 릴리스 파라미터(ft, ft/s, ft/s^2)
+    pub y0: f32,
+    pub vy0: f32,
+    pub ay: f32,
+    pub z0: f32,
+    pub vz0: f32,
+    pub az: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -89,6 +99,15 @@ pub struct LiveState {
     pub away_win_rate: Option<f32>,
     pub relay_log: Vec<String>,      // 최근 문자중계 텍스트 (오래된→최신)
     pub current_pitches: Vec<Pitch>, // 현재 타석 투구들
+    /// 다음 타순의 타자 이름(라인업 batOrder 기반, 미상이면 빈 문자열 — 표시 생략).
+    pub next_batter_name: String,
+}
+
+/// KBO 뉴스 헤드라인 한 건(하단 티커용).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewsItem {
+    pub title: String,
+    pub source: String, // 언론사명(출처 표시용, 결측 시 빈 문자열)
 }
 
 #[derive(Debug, Clone, PartialEq)]

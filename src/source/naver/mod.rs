@@ -2,7 +2,7 @@ pub mod dto;
 pub mod map;
 
 use crate::error::Result;
-use crate::model::{Game, LiveState, Standing};
+use crate::model::{Game, LiveState, NewsItem, Standing};
 use crate::source::DataSource;
 
 const BASE: &str = "https://api-gw.sports.naver.com";
@@ -59,6 +59,11 @@ impl DataSource for NaverSource {
     fn standings(&self, year: u16) -> Result<Vec<Standing>> {
         let url = format!("{BASE}/statistics/categories/kbo/seasons/{year}/teams");
         map::standings_from_json(&self.get(&url)?)
+    }
+
+    fn news(&self) -> Result<Vec<NewsItem>> {
+        let url = format!("{BASE}/news/articles/kbo?size=20");
+        map::news_from_json(&self.get(&url)?)
     }
 }
 

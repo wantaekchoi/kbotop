@@ -11,6 +11,8 @@
 
 ![demo](docs/demo.gif)
 
+[한국어](README.ko.md)
+
 </div>
 
 ## Introduction
@@ -31,7 +33,7 @@ cargo install kbotop
 brew install wantaekchoi/tap/kbotop
 
 # prebuilt binary (macOS arm64/x64, Linux)
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/releases/download/v0.1.2/kbotop-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/releases/latest/download/kbotop-installer.sh | sh
 ```
 
 ## Usage
@@ -39,7 +41,7 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/rele
 ```sh
 kbotop                    # today's games
 kbotop --team lg          # straight into your team's live game
-kbotop --date 2026-07-19  # a past date
+kbotop --date yesterday   # also: YYYY-MM-DD, YYYYMMDD, today, tomorrow, +N, -N
 ```
 
 Vim-style navigation; the in-app `?` help is the source of truth.
@@ -47,6 +49,7 @@ Vim-style navigation; the in-app `?` help is the source of truth.
 - Move: `j` / `k` or arrow keys
 - Open live view: `Enter`
 - Games / Standings: `Tab`
+- Inspect pitches: `Left` / `Right` (live view)
 - Help: `?`
 - Quit: `q`
 

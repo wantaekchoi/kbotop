@@ -1,7 +1,7 @@
 use super::strikezone;
 use super::theme::team_badge_style;
 use crate::app::{App, Screen};
-use crate::model::{GameStatus, LiveState};
+use crate::model::{Game, GameStatus, LiveState};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -46,10 +46,10 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(4), Constraint::Min(0)])
+        .constraints([Constraint::Length(5), Constraint::Min(0)])
         .split(area);
 
-    render_scoreline(f, rows[0], s, game.status);
+    render_scoreline(f, rows[0], s, game, app.live_pitch_sel);
 
     // 폭이 좁거나 아직 투구 데이터가 없으면 존을 숨기고 중계에 본문 전체를 준다(우아한 저하).
     let wide = rows[1].width >= 70 && !s.current_pitches.is_empty();
@@ -59,7 +59,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(rows[1]);
         render_relay(f, cols[0], s);
-        strikezone::render(f, cols[1], &s.current_pitches);
+        strikezone::render(f, cols[1], &s.current_pitches, app.live_pitch_sel);
     } else {
         render_relay(f, rows[1], s);
     }
@@ -70,7 +70,8 @@ fn win_pct(rate: Option<f32>) -> String {
         .unwrap_or_else(|| "-".into())
 }
 
-fn render_scoreline(f: &mut Frame, area: Rect, s: &LiveState, status: GameStatus) {
+fn render_scoreline(f: &mut Frame, area: Rect, s: &LiveState, game: &Game, sel: Option<usize>) {
+    let status = game.status;
     // 3슬롯 ASCII 주자 표시: [3루 2루 1루], 빈 베이스는 '-' — 폭 고정.
     let bases = format!(
         "[{} {} {}]",
@@ -114,12 +115,82 @@ fn render_scoreline(f: &mut Frame, area: Rect, s: &LiveState, status: GameStatus
     ]);
     let score_line = Line::from(spans);
 
-    let detail_line = Line::from(format!("P: {}   B: {}", s.pitcher_name, s.batter_name));
+    // "HH:MM" 경기 시작 시각("....THH:MM:SS"에서 추출, 실패 시 생략).
+    let start_hhmm = game
+        .start
+        .split('T')
+        .nth(1)
+        .and_then(|t| t.get(0..5))
+        .unwrap_or("");
+    let mut detail = format!("P: {}   B: {}", s.pitcher_name, s.batter_name);
+    if !s.next_batter_name.is_empty() {
+        detail.push_str(&format!("   Next: {}", s.next_batter_name));
+    }
+    if !start_hhmm.is_empty() {
+        detail.push_str(&format!("   Start {start_hhmm}"));
+    }
+    let detail_line = Line::from(detail);
+
+    // 셋째 줄: 선택된 투구 상세(시각·상대시간·결과 원문) 또는 네비 힌트.
+    let pitch_line = match sel.and_then(|i| s.current_pitches.get(i).map(|p| (i, p))) {
+        Some((i, p)) => {
+            let speed = p
+                .speed_kmh
+                .map(|k| format!("{k}km"))
+                .unwrap_or_else(|| "-".into());
+            let time = p.time_hms.as_deref().unwrap_or("-");
+            let rel = p
+                .time_hms
+                .as_deref()
+                .and_then(|t| elapsed_label(&game.start, t))
+                .unwrap_or_default();
+            // 결과 원문이 길면 좁은 터미널에서 조용히 잘린다 — 정직한 말줄임
+            // (테두리 2칸 제외한 내부 폭 기준, §15 오버플로 정책).
+            Line::from(super::text::ellipsize(
+                &format!(
+                    "Pitch {}/{}  {}  {} {}  {}",
+                    i + 1,
+                    s.current_pitches.len(),
+                    speed,
+                    time,
+                    rel,
+                    p.text
+                ),
+                area.width.saturating_sub(2) as usize,
+            ))
+        }
+        None if !s.current_pitches.is_empty() => Line::from(format!(
+            "Pitches {}  (Left/Right to inspect)",
+            s.current_pitches.len()
+        )),
+        None => Line::from(""),
+    };
 
     f.render_widget(
-        Paragraph::new(vec![score_line, detail_line]).block(Block::bordered().title(" Live ")),
+        Paragraph::new(vec![score_line, detail_line, pitch_line])
+            .block(Block::bordered().title(" Live ")),
         area,
     );
+}
+
+/// 경기 시작("....THH:MM:SS")과 투구 시각("HH:MM:SS")의 차 → "(+H:MM)".
+/// 자정 넘김(투구 < 시작)은 +24h 보정. 파싱 실패는 None(관용 — 표시 생략).
+fn elapsed_label(game_start: &str, pitch_hms: &str) -> Option<String> {
+    fn secs(hms: &str) -> Option<i64> {
+        let mut it = hms.split(':');
+        let h: i64 = it.next()?.parse().ok()?;
+        let m: i64 = it.next()?.parse().ok()?;
+        let s: i64 = it.next().unwrap_or("0").parse().ok()?;
+        ((0..24).contains(&h) && (0..60).contains(&m) && (0..60).contains(&s))
+            .then_some(h * 3600 + m * 60 + s)
+    }
+    let start = secs(game_start.split('T').nth(1)?)?;
+    let pitch = secs(pitch_hms)?;
+    let mut d = pitch - start;
+    if d < 0 {
+        d += 24 * 3600;
+    }
+    Some(format!("(+{}:{:02})", d / 3600, (d % 3600) / 60))
 }
 
 fn render_relay(f: &mut Frame, area: Rect, s: &LiveState) {
@@ -281,6 +352,79 @@ mod tests {
         assert!(
             has_badge,
             "scoreline away team name should render on OB team-color background"
+        );
+    }
+
+    /// 선택된 투구의 상세줄: 순번/전체, 구속, 시각, 상대시간, 결과 원문 전부.
+    #[test]
+    fn selected_pitch_detail_line_shows_speed_time_elapsed_and_text() {
+        let mut app = App::new(Default::default());
+        app.screen = live_screen(); // fixture 기반
+                                    // fixture의 첫 투구를 선택하고 시각을 주입해 결정적으로 검증한다.
+        if let Screen::Live {
+            game,
+            state: Some(s),
+        } = &mut app.screen
+        {
+            game.start = "2026-07-19T18:30:00".into();
+            s.current_pitches[0].time_hms = Some("20:56:14".into());
+        }
+        app.live_pitch_sel = Some(0);
+        let text = render_live_view_only(&app, 100, 30);
+        assert!(text.contains("Pitch 1/"), "detail line missing:\n{text}");
+        assert!(text.contains("20:56:14"));
+        assert!(text.contains("(+2:26)"));
+    }
+
+    #[test]
+    fn unselected_live_view_advertises_pitch_navigation() {
+        let mut app = App::new(Default::default());
+        app.screen = live_screen();
+        let text = render_live_view_only(&app, 100, 30);
+        assert!(text.contains("Left/Right"), "nav hint missing:\n{text}");
+    }
+
+    #[test]
+    fn detail_line_shows_next_batter_when_known() {
+        let mut app = App::new(Default::default());
+        app.screen = live_screen();
+        if let Screen::Live { state: Some(s), .. } = &mut app.screen {
+            s.next_batter_name = "홍창기".into();
+        }
+        let text = render_live_view_only(&app, 100, 30);
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            compact.contains("Next:홍창기"),
+            "next batter missing:\n{text}"
+        );
+    }
+
+    #[test]
+    fn elapsed_label_formats_and_handles_midnight_rollover() {
+        assert_eq!(
+            super::elapsed_label("2026-07-19T18:30:00", "20:56:14").as_deref(),
+            Some("(+2:26)")
+        );
+        assert_eq!(
+            super::elapsed_label("2026-07-19T23:30:00", "00:10:00").as_deref(),
+            Some("(+0:40)") // 자정 넘김 보정
+        );
+        assert_eq!(super::elapsed_label("garbage", "20:56:14"), None);
+    }
+
+    /// 긴 결과 원문은 상세줄에서 말줄임된다(§15 오버플로 정책).
+    #[test]
+    fn long_pitch_text_is_ellipsized_in_the_detail_line() {
+        let mut app = App::new(Default::default());
+        app.screen = live_screen();
+        if let Screen::Live { state: Some(s), .. } = &mut app.screen {
+            s.current_pitches[0].text = "매우 긴 결과 설명 ".repeat(20);
+        }
+        app.live_pitch_sel = Some(0);
+        let text = render_live_view_only(&app, 80, 30);
+        assert!(
+            text.contains('…'),
+            "expected honest ellipsis in detail line"
         );
     }
 

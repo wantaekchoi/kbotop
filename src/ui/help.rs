@@ -14,6 +14,7 @@ pub fn render(f: &mut Frame, area: Rect) {
         Line::from("Open live  Enter"),
         Line::from("Back       Esc"),
         Line::from("Switch tab Tab / F5"),
+        Line::from("Pitch      Left / Right (live view)"),
         Line::from("Find       / (coming soon)"),
         Line::from("Help       ? / F1"),
         Line::from("Quit       q / F10"),

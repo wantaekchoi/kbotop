@@ -8,6 +8,15 @@ use ratatui::{
     Frame,
 };
 
+/// 순위는 --date와 무관한 시즌 "현재" 스냅샷이다(source.standings(year)) —
+/// 과거 날짜를 조회 중이어도 순위만은 오늘 기준임을 타이틀로 밝힌다.
+fn block_title(app: &App) -> String {
+    match app.date.get(0..4) {
+        Some(y) => format!(" Standings {y} (current) "),
+        None => " Standings (current) ".into(),
+    }
+}
+
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
     // games.rs와 동일한 원칙: 첫 Standings 업데이트가 아직 안 왔으면(앱 기동
     // 직후 Standings 탭으로 전환한 경우) "loading"을, 왔는데 배열이 비어
@@ -15,14 +24,15 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     // 헤더 행만 있는 동일한 화면으로 보인다.
     if !app.standings_loaded {
         f.render_widget(
-            Paragraph::new("loading...").block(Block::bordered().title(" Standings ")),
+            Paragraph::new("loading...").block(Block::bordered().title(block_title(app))),
             area,
         );
         return;
     }
     if app.standings.is_empty() {
         f.render_widget(
-            Paragraph::new("No standings available").block(Block::bordered().title(" Standings ")),
+            Paragraph::new("No standings available")
+                .block(Block::bordered().title(block_title(app))),
             area,
         );
         return;
@@ -63,7 +73,11 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
 
     let table = Table::new(rows, widths)
         .header(header)
-        .block(Block::default().borders(Borders::ALL).title(" Standings "))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(block_title(app)),
+        )
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .highlight_symbol("> ");
 
@@ -106,5 +120,16 @@ mod tests {
         let text = render_to_string(&app);
         assert!(text.contains("No standings available"));
         assert!(!text.contains("loading"));
+    }
+
+    /// STANDINGS는 --date와 무관한 "시즌 현재" 순위임을 타이틀이 밝혀야 한다.
+    #[test]
+    fn block_title_says_season_current_not_the_query_date() {
+        let mut app = App::new(Default::default());
+        app.date = "2026-05-29".into();
+        app.apply(Update::Standings(vec![]));
+        let text = render_to_string(&app);
+        assert!(text.contains("Standings 2026 (current)"));
+        assert!(!text.contains("05-29"));
     }
 }

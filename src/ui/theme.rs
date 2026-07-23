@@ -26,6 +26,8 @@ pub fn team_color(code: &str) -> Color {
 pub fn contrast_fg(bg: Color) -> Color {
     let (r, g, b) = match bg {
         Color::Rgb(r, g, b) => (r as f32, g as f32, b as f32),
+        // 미등록 팀 폴백(Gray) 배지: 흰 글자는 저대비 → 검정(리뷰 Minor).
+        Color::Gray => return Color::Black,
         _ => return Color::White,
     };
     // ITU-R BT.601 luma
@@ -89,5 +91,10 @@ mod tests {
         let style = team_badge_style("OB"); // 어두운 남색
         assert_eq!(style.bg, Some(team_color("OB")));
         assert_eq!(style.fg, Some(Color::White));
+    }
+
+    #[test]
+    fn contrast_fg_picks_black_on_gray_fallback_badge() {
+        assert_eq!(contrast_fg(Color::Gray), Color::Black);
     }
 }

@@ -30,7 +30,7 @@ struct Cli {
     /// Favorite team code to enter live view directly (lg, kt, ssg, ...)
     #[arg(long)]
     team: Option<String>,
-    /// Query date YYYY-MM-DD (default: today, KST)
+    /// Date: YYYY-MM-DD, YYYYMMDD, today, yesterday, tomorrow, +N, -N (default: today, KST)
     #[arg(long)]
     date: Option<String>,
 }
@@ -89,6 +89,63 @@ fn kst_today() -> String {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
     kst_date_from_utc_secs(secs)
+}
+
+/// civil_from_days의 역함수 (Howard Hinnant days_from_civil): 그레고리력
+/// (y, m, d) → epoch(1970-01-01)로부터의 일수. resolve_date의 ±N 산술과
+/// "실존 날짜" 왕복 검증에 쓴다.
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
+fn format_civil(days: i64) -> String {
+    let (y, m, d) = civil_from_days(days);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// --date 입력을 YYYY-MM-DD로 정규화한다. 지원: YYYY-MM-DD, YYYYMMDD,
+/// today/yesterday/tomorrow, +N/-N(오늘±N일, KST). 잘못된 입력은 조용히
+/// 오늘로 폴백하지 않고 Err — 호출부가 TUI 진입 전에 정직하게 종료한다.
+fn resolve_date(input: &str, today_days: i64) -> Result<String, String> {
+    let s = input.trim();
+    match s.to_ascii_lowercase().as_str() {
+        "today" => return Ok(format_civil(today_days)),
+        "yesterday" => return Ok(format_civil(today_days - 1)),
+        "tomorrow" => return Ok(format_civil(today_days + 1)),
+        _ => {}
+    }
+    if let Some(rest) = s.strip_prefix('+').or_else(|| s.strip_prefix('-')) {
+        if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
+            let n: i64 = rest
+                .parse()
+                .map_err(|_| format!("day offset too large: {s}"))?;
+            let sign = if s.starts_with('-') { -1 } else { 1 };
+            return Ok(format_civil(today_days + sign * n));
+        }
+    }
+    let bytes = s.as_bytes();
+    let dashed = s.len() == 10 && bytes[4] == b'-' && bytes[7] == b'-';
+    let compact = s.len() == 8;
+    let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() == 8 && (dashed || compact) {
+        let y: i64 = digits[0..4].parse().unwrap();
+        let m: i64 = digits[4..6].parse().unwrap();
+        let d: i64 = digits[6..8].parse().unwrap();
+        // 왕복 변환으로 실존 날짜만 통과시킨다(2월 31일 등 거부).
+        if civil_from_days(days_from_civil(y, m, d)) == (y, m, d) {
+            return Ok(format!("{y:04}-{m:02}-{d:02}"));
+        }
+        return Err(format!("not a real calendar date: {s}"));
+    }
+    Err(format!(
+        "unsupported date: {s} (use YYYY-MM-DD, YYYYMMDD, today, yesterday, tomorrow, +N, -N)"
+    ))
 }
 
 type Tui = Terminal<CrosstermBackend<Stdout>>;
@@ -175,7 +232,35 @@ fn install_term_signal_handler() -> Result<Arc<AtomicBool>> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let cfg = config::load();
-    let date = cli.date.clone().unwrap_or_else(kst_today);
+
+    // KST 오늘의 epoch 일수 — kst_today()와 동일 산술(+9h) 공유.
+    let today_days = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        (secs + 9 * 3600).div_euclid(86400)
+    };
+    let date = match cli.date.as_deref() {
+        None => kst_today(),
+        Some(s) => match resolve_date(s, today_days) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("kbotop: {e}");
+                std::process::exit(2);
+            }
+        },
+    };
+    // 알 수 없는 --team 별칭은 조용히 무시하지 않는다(v0.1.2 리뷰 Minor).
+    if let Some(alias) = cli.team.as_deref() {
+        if team_code(alias).is_none() {
+            eprintln!(
+                "kbotop: unknown team alias: {alias} (valid: lg kt ssg/sk nc kia/ht lotte/lt samsung/ss hanwha/hh kiwoom/wo doosan/ob)"
+            );
+            std::process::exit(2);
+        }
+    }
 
     // raw mode 진입 전에 등록해야, 등록 직후~raw mode 진입 사이의 좁은 창에서
     // 신호가 와도 놓치지 않는다.
@@ -189,6 +274,8 @@ fn main() -> Result<()> {
     // config.toml의 poll_secs(하한 3s 적용)를 라이브 뷰 폴링 주기로 흘려보낸다 —
     // cfg 자체는 이후 App::new(cfg)로 이동하므로 여기서 먼저 값을 뽑아둔다.
     let live_poll_secs = cfg.effective_poll_secs();
+    // date는 poller::spawn으로 move되므로, App에도 필요한 값은 미리 clone해 둔다.
+    let date_for_app = date.clone();
     let handle = poller::spawn(
         source,
         date,
@@ -199,6 +286,13 @@ fn main() -> Result<()> {
     );
 
     let mut app = App::new(cfg);
+    app.date = date_for_app;
+    app.fav_code = cli
+        .team
+        .as_deref()
+        .or(app.config.favorite_team.as_deref())
+        .and_then(team_code)
+        .map(str::to_string);
     let mut watching_id: Option<String> = None;
 
     let res = run(
@@ -319,6 +413,19 @@ fn run(
             let _ = tx_cmd.send(Command::RefreshStandings);
         }
 
+        // 스피너 프레임: fetch가 in-flight인 동안 매 tick(~100ms) 회전.
+        if app.fetching {
+            app.spinner_frame = app.spinner_frame.wrapping_add(1);
+        }
+
+        // 초보용 팁 회전(tips::current)이 참조하는 현재 시각. 매 tick 갱신하면
+        // 충분하다 — 1분 단위 회전이라 100ms 해상도는 과분하지만 스피너 갱신과
+        // 같은 자리에 두면 별도 타이머 없이 자연히 최신 상태를 유지한다.
+        app.now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
         term.draw(|f: &mut Frame| ui::draw(f, app))?;
 
         // 입력(100ms 폴링으로 렌더 갱신 보장).
@@ -416,5 +523,38 @@ mod tests {
         assert_eq!(team_code("kia"), Some("HT"));
         assert_eq!(team_code("doosan"), Some("OB"));
         assert_eq!(team_code("nope"), None);
+    }
+
+    #[test]
+    fn days_from_civil_roundtrips_with_civil_from_days() {
+        for days in [0i64, 19782, 20819, 20657] {
+            let (y, m, d) = civil_from_days(days);
+            assert_eq!(days_from_civil(y, m, d), days);
+        }
+    }
+
+    #[test]
+    fn resolve_date_accepts_iso_compact_and_keywords() {
+        // 2026-07-23 == days_from_civil(2026, 7, 23)
+        let today = days_from_civil(2026, 7, 23);
+        assert_eq!(resolve_date("2026-05-29", today).unwrap(), "2026-05-29");
+        assert_eq!(resolve_date("20260529", today).unwrap(), "2026-05-29");
+        assert_eq!(resolve_date("today", today).unwrap(), "2026-07-23");
+        assert_eq!(resolve_date("yesterday", today).unwrap(), "2026-07-22");
+        assert_eq!(resolve_date("tomorrow", today).unwrap(), "2026-07-24");
+        assert_eq!(resolve_date("-1", today).unwrap(), "2026-07-22");
+        assert_eq!(resolve_date("+7", today).unwrap(), "2026-07-30");
+        // 월말/연말 경계
+        assert_eq!(resolve_date("-23", today).unwrap(), "2026-06-30");
+        assert_eq!(resolve_date("+162", today).unwrap(), "2027-01-01");
+    }
+
+    #[test]
+    fn resolve_date_rejects_bad_input() {
+        let today = days_from_civil(2026, 7, 23);
+        assert!(resolve_date("2026-02-31", today).is_err()); // 존재하지 않는 날짜
+        assert!(resolve_date("05-29", today).is_err());
+        assert!(resolve_date("nonsense", today).is_err());
+        assert!(resolve_date("2026/05/29", today).is_err());
     }
 }

@@ -3,25 +3,45 @@ pub mod games;
 pub mod header;
 pub mod help;
 pub mod live;
+pub mod sideview;
 pub mod standings;
 pub mod strikezone;
+pub mod text;
 pub mod theme;
+pub mod tips;
 
 use crate::app::{App, Screen, Tab};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::Paragraph,
     Frame,
 };
 
 /// htop 계승: header(요약) + 본문(Min) + footer(기능키 바) 3단 레이아웃.
+/// 높이가 충분하면 본문과 footer 사이에 초보용 팁 한 줄이 끼어드는 4단이 된다
+/// (아래 show_tip 분기).
 pub fn draw(f: &mut Frame, app: &App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
+    // 높이 20 이상이면 본문-푸터 사이에 초보용 팁 한 줄을 끼운다(부족하면 본문 우선).
+    let show_tip = f.area().height >= 20;
+    let constraints: Vec<Constraint> = if show_tip {
+        vec![
             Constraint::Length(4),
             Constraint::Min(0),
             Constraint::Length(1),
-        ])
+            Constraint::Length(1),
+        ]
+    } else {
+        vec![
+            Constraint::Length(4),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ]
+    };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
         .split(f.area());
 
     header::render(f, chunks[0], app);
@@ -34,7 +54,39 @@ pub fn draw(f: &mut Frame, app: &App) {
         },
     }
 
-    footer::render(f, chunks[2], app);
+    if show_tip {
+        let minute = app.now_secs / 60;
+        // 뉴스 제목은 동적이라 얼마든지 길 수 있다 — 정직한 말줄임(§15).
+        // 팁은 소스에서 폭을 강제하지만 같은 벨트를 채워 둔다.
+        let width = chunks[2].width as usize;
+        let line = if !app.news.is_empty() && minute % 2 == 0 {
+            let n = &app.news[((minute / 2) as usize) % app.news.len()];
+            let full = if n.source.is_empty() {
+                n.title.clone()
+            } else {
+                format!("{} — {}", n.title, n.source)
+            };
+            Line::from(vec![
+                Span::styled("News: ", Style::default().add_modifier(Modifier::DIM)),
+                Span::styled(
+                    text::ellipsize(&full, width.saturating_sub(6)),
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("Tip: ", Style::default().add_modifier(Modifier::DIM)),
+                Span::styled(
+                    text::ellipsize(tips::current(app.now_secs), width.saturating_sub(5)),
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
+            ])
+        };
+        f.render_widget(Paragraph::new(line), chunks[2]);
+        footer::render(f, chunks[3], app);
+    } else {
+        footer::render(f, chunks[2], app);
+    }
 
     if app.show_help {
         help::render(f, f.area());
@@ -47,6 +99,23 @@ mod tests {
     use crate::model::{Game, GameStatus, Team};
     use crate::poller::Update;
     use ratatui::{backend::TestBackend, Terminal};
+
+    /// 긴 뉴스 제목은 티커에서 정직하게 말줄임된다(§15 오버플로 정책).
+    #[test]
+    fn long_news_title_is_ellipsized_in_the_ticker() {
+        let mut app = App::new(Default::default());
+        app.now_secs = 0; // 짝수 분 → News
+        app.apply(Update::News(vec![crate::model::NewsItem {
+            title: "아주 ".repeat(60),
+            source: "테스트일보".into(),
+        }]));
+        let text = render_to_string(&app);
+        assert!(text.contains("News:"));
+        assert!(
+            text.contains('…'),
+            "expected honest ellipsis in ticker:\n{text}"
+        );
+    }
 
     fn game(id: &str, status: GameStatus, label: &str) -> Game {
         Game {
@@ -188,5 +257,107 @@ mod tests {
             .collect();
         assert!(text.contains("기아타이거즈"));
         assert!(text.contains("두산베어스"));
+    }
+
+    #[test]
+    fn games_and_standings_bodies_render_distinct_identifying_titles() {
+        let mut app = App::new(Default::default());
+        app.date = "2026-05-29".into();
+        app.apply(Update::Games(vec![game("g1", GameStatus::Final, "종료")]));
+        app.apply(Update::Standings(vec![crate::model::Standing {
+            rank: 1,
+            team: Team {
+                code: "HT".into(),
+                name: "KIA".into(),
+            },
+            games: 10,
+            wins: 7,
+            losses: 3,
+            draws: 0,
+            win_rate: 0.7,
+            game_behind: 0.0,
+        }]));
+        let games_text = render_to_string(&app);
+        app.tab = Tab::Standings;
+        let standings_text = render_to_string(&app);
+        assert!(games_text.contains("Games 2026-05-29"));
+        assert!(!games_text.contains("(current)"));
+        assert!(standings_text.contains("Standings 2026 (current)"));
+        assert!(!standings_text.contains("Games 2026-05-29"));
+    }
+
+    /// 짝수 분에는 News(출처 포함), 홀수 분에는 Tip이 하단 줄에 뜬다.
+    /// 뉴스가 없으면 항상 Tip(우아한 저하).
+    #[test]
+    fn bottom_ticker_alternates_news_and_tip_by_minute() {
+        let mut app = App::new(Default::default());
+        app.apply(crate::poller::Update::News(vec![crate::model::NewsItem {
+            title: "타이틀A".into(),
+            source: "테스트일보".into(),
+        }]));
+        let render = |app: &App| {
+            let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            term.draw(|f| draw(f, app)).unwrap();
+            term.backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>()
+        };
+        app.now_secs = 0; // 분 0 = 짝수 → News
+        let even = render(&app);
+        let even_c: String = even.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            even_c.contains("News:"),
+            "even minute must show news:\n{even}"
+        );
+        assert!(
+            even_c.contains("타이틀A") && even_c.contains("테스트일보"),
+            "news must carry title+source"
+        );
+        app.now_secs = 60; // 분 1 = 홀수 → Tip
+        let odd = render(&app);
+        assert!(odd.contains("Tip:"), "odd minute must show tip:\n{odd}");
+        // 뉴스 없으면 짝수 분에도 Tip
+        app.news.clear();
+        app.now_secs = 0;
+        let fallback = render(&app);
+        assert!(
+            fallback.contains("Tip:"),
+            "no news → tip fallback:\n{fallback}"
+        );
+    }
+
+    /// 높이가 충분하면 본문과 푸터 사이에 Tip 줄이 렌더된다(초보 도움).
+    #[test]
+    fn tip_line_renders_on_tall_terminal_and_hides_on_short() {
+        let mut app = App::new(Default::default());
+        app.now_secs = 0;
+        let tall = {
+            let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            term.draw(|f| draw(f, &app)).unwrap();
+            term.backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>()
+        };
+        assert!(tall.contains("Tip:"), "tip line missing on 24-row terminal");
+        let short = {
+            let mut term = Terminal::new(TestBackend::new(80, 16)).unwrap();
+            term.draw(|f| draw(f, &app)).unwrap();
+            term.backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>()
+        };
+        assert!(
+            !short.contains("Tip:"),
+            "tip must yield body space on short terminal"
+        );
     }
 }

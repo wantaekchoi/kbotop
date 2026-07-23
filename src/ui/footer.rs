@@ -19,7 +19,9 @@ use ratatui::{
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let (text, style) = match &app.last_error {
         Some(err) => (
-            format!(" ERROR: {err}"),
+            // 긴 에러(HTTP 본문 조각 등)는 한 줄 footer에서 조용히 잘린다 —
+            // 정직한 말줄임(§15 오버플로 정책).
+            super::text::ellipsize(&format!(" ERROR: {err}"), area.width as usize),
             Style::default()
                 .fg(Color::White)
                 .bg(Color::Red)
@@ -27,7 +29,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         ),
         None => {
             let hint = match (&app.screen, app.tab) {
-                (Screen::Live { .. }, _) => " F1 Help   Esc Back   q Quit",
+                (Screen::Live { .. }, _) => " F1 Help   Esc Back   Left/Right Pitch   q Quit",
                 (Screen::List, Tab::Games) => " F1 Help   Tab Switch   Enter Live   q Quit",
                 (Screen::List, Tab::Standings) => " F1 Help   Tab Switch   q Quit",
             };
@@ -102,5 +104,15 @@ mod tests {
         let text = render_to_string(&app);
         assert!(!text.contains("Enter Live"));
         assert!(!text.contains("Esc"));
+    }
+
+    /// 긴 에러는 footer 폭에 맞춰 정직하게 말줄임된다(§15 오버플로 정책) —
+    /// 조용한 클리핑이면 '…'가 없어 실패한다.
+    #[test]
+    fn long_error_is_ellipsized_to_the_footer_width() {
+        let mut app = App::new(Default::default());
+        app.last_error = Some("x".repeat(200));
+        let text = render_to_string(&app);
+        assert!(text.contains('…'), "expected honest ellipsis in:\n{text}");
     }
 }

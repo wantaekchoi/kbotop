@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::model::{Game, GameStatus, LiveState, Standing};
+use crate::model::{Game, GameStatus, LiveState, NewsItem, Standing};
 use crate::poller::Update;
 use crossterm::event::KeyCode;
 
@@ -41,6 +41,24 @@ pub struct App {
     pub stale: bool,
     pub show_help: bool,
     pub pending_g: bool,
+    /// 조회 날짜(YYYY-MM-DD, main이 설정). games 본문 타이틀("Games <date>")과
+    /// standings 타이틀의 시즌 연도 표기에 쓴다.
+    pub date: String,
+    /// fetch가 in-flight인지 — 헤더 스피너 표시 여부.
+    pub fetching: bool,
+    /// 스피너 애니메이션 프레임 카운터(main.rs가 tick마다 증가).
+    pub spinner_frame: u8,
+    /// 라이브 화면에서 현재 타석 투구 중 짚어보고 있는 순번(None = 전체 보기).
+    pub live_pitch_sel: Option<usize>,
+    /// 응원 팀 KBO 코드(main이 --team/config favorite_team 별칭을 해석해 주입).
+    /// UI 테마 액센트와 헤더 응원 배지에 쓴다.
+    pub fav_code: Option<String>,
+    /// UTC epoch 초(main.rs가 tick마다 갱신). 초보용 팁 회전(tips::current)의
+    /// 입력으로만 쓰인다 — 실제 벽시계와 무관하게 결정적으로 테스트 가능하다.
+    pub now_secs: u64,
+    /// KBO 뉴스 헤드라인(부가 기능). 하단 티커가 짝수 분에 이 목록에서 순환
+    /// 표시하고, 비어 있으면 항상 Tip으로 우아하게 저하한다.
+    pub news: Vec<NewsItem>,
 }
 
 impl App {
@@ -58,6 +76,13 @@ impl App {
             stale: false,
             show_help: false,
             pending_g: false,
+            date: String::new(),
+            fetching: false,
+            spinner_frame: 0,
+            live_pitch_sel: None,
+            fav_code: None,
+            now_secs: 0,
+            news: vec![],
         }
     }
 
@@ -100,6 +125,22 @@ impl App {
                 }
                 self.pending_g = false;
             }
+            KeyCode::Left | KeyCode::Right => {
+                // 라이브 화면에서 현 타석 투구를 하나씩 짚어본다(순환 없음).
+                // 선택 없음 = 전체 보기; Right는 처음부터, Left는 마지막부터 진입.
+                if let Screen::Live { state: Some(s), .. } = &self.screen {
+                    let n = s.current_pitches.len();
+                    if n > 0 {
+                        self.live_pitch_sel = Some(match (self.live_pitch_sel, key) {
+                            (None, KeyCode::Right) => 0,
+                            (None, _) => n - 1,
+                            (Some(i), KeyCode::Right) => (i + 1).min(n - 1),
+                            (Some(i), _) => i.saturating_sub(1),
+                        });
+                    }
+                }
+                self.pending_g = false;
+            }
             KeyCode::Char('g') => {
                 if self.pending_g {
                     self.selected = 0;
@@ -121,13 +162,18 @@ impl App {
                                 game: g,
                                 state: None,
                             };
+                            // 이전 게임에서 짚어보던 투구 선택이 새 게임으로 넘어오지 않도록.
+                            self.live_pitch_sel = None;
                         }
                     }
                 }
                 self.pending_g = false;
             }
             KeyCode::Esc => {
-                if matches!(self.screen, Screen::Live { .. }) {
+                if self.live_pitch_sel.is_some() {
+                    // 1단계: 투구 선택 해제(전체 보기 복귀). 화면은 유지.
+                    self.live_pitch_sel = None;
+                } else if matches!(self.screen, Screen::Live { .. }) {
                     self.screen = Screen::List;
                 }
                 self.pending_g = false;
@@ -163,6 +209,18 @@ impl App {
     }
 
     pub fn apply(&mut self, up: Update) {
+        if matches!(up, Update::Fetching) {
+            // 시도 신호일 뿐 회복이 아니다 — stale/last_error에 손대지 않는다.
+            self.fetching = true;
+            return;
+        }
+        if let Update::News(n) = up {
+            // 부가 기능: 본 기능의 stale/last_error 생명주기에 관여하지 않는다.
+            self.news = n;
+            self.fetching = false;
+            return;
+        }
+        self.fetching = false;
         self.stale = false;
         // last_error는 "현재 화면이 stale인 이유"를 보여주는 값이므로 stale과
         // 생명주기를 맞춘다 — 에러가 아닌 갱신이 오면 지워야 회복 후에도 footer에
@@ -187,6 +245,18 @@ impl App {
                 // 게임의 라이브 상태를 덮어쓰지 않도록 game id를 확인한다.
                 if let Screen::Live { game, state } = &mut self.screen {
                     if game.id == id {
+                        // 새 타석(투구 수 감소)이면 선택 리셋; 같은 타석에 투구가
+                        // 추가된 경우는 선택 유지. 방어적으로 범위 밖 선택도 해제.
+                        if let Some(prev) = state {
+                            if l.current_pitches.len() < prev.current_pitches.len() {
+                                self.live_pitch_sel = None;
+                            }
+                        }
+                        if let Some(i) = self.live_pitch_sel {
+                            if i >= l.current_pitches.len() {
+                                self.live_pitch_sel = None;
+                            }
+                        }
                         *state = Some(l);
                     }
                 }
@@ -195,6 +265,12 @@ impl App {
                 self.last_error = Some(e);
                 self.stale = true;
             }
+            // compiler-mandated exhaustiveness arms; Fetching/News는 위 early return이 전부
+            // 처리한다. unreachable!()로 두면 미래 리팩토링(early return 제거)이 곧바로 런타임
+            // 패닉이 된다 — 이 함수는 렌더 루프에서 catch_unwind 없이 매 Update마다 호출된다
+            // (무패닉 원칙).
+            Update::Fetching => {}
+            Update::News(_) => {}
         }
     }
 
@@ -393,6 +469,26 @@ mod tests {
     }
 
     #[test]
+    fn fetching_update_raises_flag_and_next_data_update_clears_it() {
+        let mut app = App::new(Default::default());
+        assert!(!app.fetching);
+        app.apply(crate::poller::Update::Fetching);
+        assert!(app.fetching);
+        app.apply(crate::poller::Update::Games(vec![]));
+        assert!(!app.fetching);
+    }
+
+    /// Fetching은 "시도"지 "회복"이 아니다 — stale/last_error를 지우면 안 된다.
+    #[test]
+    fn fetching_does_not_clear_stale_or_last_error() {
+        let mut app = App::new(Default::default());
+        app.apply(crate::poller::Update::Error("boom".into()));
+        app.apply(crate::poller::Update::Fetching);
+        assert!(app.stale);
+        assert_eq!(app.last_error.as_deref(), Some("boom"));
+    }
+
+    #[test]
     fn g_then_other_key_clears_pending() {
         let mut app = App::new(Default::default());
         app.apply(crate::poller::Update::Games(vec![
@@ -405,5 +501,106 @@ mod tests {
         app.on_key(KeyCode::Down); // interleaved key → must clear pending_g, selected = 2
         app.on_key(KeyCode::Char('g')); // lone g: arms pending again, must NOT jump to top
         assert_ne!(app.selected, 0); // if pending had lingered, this g would have jumped to 0
+    }
+
+    fn live_app_with_pitches(n: u8) -> App {
+        let mut app = App::new(Default::default());
+        let pitches: Vec<crate::model::Pitch> = (1..=n)
+            .map(|i| crate::model::Pitch {
+                order: i,
+                ..Default::default()
+            })
+            .collect();
+        let state = crate::model::LiveState {
+            inning_label: "T1".into(),
+            home: Team {
+                code: "LG".into(),
+                name: "LG".into(),
+            },
+            away: Team {
+                code: "KT".into(),
+                name: "KT".into(),
+            },
+            home_score: 0,
+            away_score: 0,
+            count: crate::model::Count {
+                ball: 0,
+                strike: 0,
+                out: 0,
+            },
+            bases: crate::model::BaseState {
+                first: false,
+                second: false,
+                third: false,
+            },
+            pitcher_name: String::new(),
+            batter_name: String::new(),
+            home_win_rate: None,
+            away_win_rate: None,
+            relay_log: vec![],
+            current_pitches: pitches,
+            next_batter_name: String::new(),
+        };
+        app.screen = Screen::Live {
+            game: game("g"),
+            state: Some(state),
+        };
+        app
+    }
+
+    #[test]
+    fn right_selects_first_pitch_then_advances_and_stops_at_last() {
+        let mut app = live_app_with_pitches(3);
+        assert_eq!(app.live_pitch_sel, None);
+        app.on_key(KeyCode::Right);
+        assert_eq!(app.live_pitch_sel, Some(0));
+        app.on_key(KeyCode::Right);
+        app.on_key(KeyCode::Right);
+        app.on_key(KeyCode::Right); // 경계 정지
+        assert_eq!(app.live_pitch_sel, Some(2));
+    }
+
+    #[test]
+    fn left_enters_from_the_last_pitch() {
+        let mut app = live_app_with_pitches(3);
+        app.on_key(KeyCode::Left);
+        assert_eq!(app.live_pitch_sel, Some(2));
+        app.on_key(KeyCode::Left);
+        assert_eq!(app.live_pitch_sel, Some(1));
+    }
+
+    #[test]
+    fn esc_clears_selection_first_then_leaves_live() {
+        let mut app = live_app_with_pitches(2);
+        app.on_key(KeyCode::Right);
+        assert_eq!(app.live_pitch_sel, Some(0));
+        app.on_key(KeyCode::Esc); // 1단계: 선택 해제, 화면 유지
+        assert_eq!(app.live_pitch_sel, None);
+        assert!(matches!(app.screen, Screen::Live { .. }));
+        app.on_key(KeyCode::Esc); // 2단계: 목록 복귀
+        assert!(matches!(app.screen, Screen::List));
+    }
+
+    #[test]
+    fn arrows_are_noop_on_list_screen() {
+        let mut app = App::new(Default::default());
+        app.on_key(KeyCode::Right);
+        assert_eq!(app.live_pitch_sel, None);
+    }
+
+    #[test]
+    fn new_at_bat_with_fewer_pitches_resets_selection() {
+        let mut app = live_app_with_pitches(3);
+        app.on_key(KeyCode::Right);
+        app.on_key(KeyCode::Right); // sel = 1
+                                    // 같은 게임 id로 투구 1개짜리(새 타석) 상태 도착 → 선택 리셋
+        let fresh = {
+            let Screen::Live { state: Some(s), .. } = &live_app_with_pitches(1).screen else {
+                unreachable!()
+            };
+            s.clone()
+        };
+        app.apply(crate::poller::Update::Live("g".into(), fresh));
+        assert_eq!(app.live_pitch_sel, None);
     }
 }

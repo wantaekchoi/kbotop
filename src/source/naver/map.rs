@@ -1,10 +1,10 @@
 use super::dto::{
-    ApiEnvelope, Lineup, PtsOption, RelayResult, ScheduleGame, ScheduleResult, StandingsResult,
-    TextRelayData,
+    ApiEnvelope, Lineup, NewsResult, PtsOption, RelayResult, ScheduleGame, ScheduleResult,
+    StandingsResult, TextRelayData,
 };
 use crate::error::Result;
 use crate::model::{
-    BaseState, Count, Game, GameStatus, LiveState, Pitch, PitchResult, Standing, Team,
+    BaseState, Count, Game, GameStatus, LiveState, NewsItem, Pitch, PitchResult, Standing, Team,
 };
 
 fn status_of(g: &ScheduleGame) -> GameStatus {
@@ -89,6 +89,21 @@ pub fn standings_from_json(json: &str) -> Result<Vec<Standing>> {
     Ok(out)
 }
 
+/// 뉴스 목록: title 없는 항목은 건너뛰고, 깨진 응답은 빈 목록(관용 — 뉴스는
+/// 부가 기능이라 실패가 앱에 전파되면 안 된다).
+pub fn news_from_json(json: &str) -> Result<Vec<NewsItem>> {
+    let env: ApiEnvelope<NewsResult> = serde_json::from_str(json)?;
+    let list = env.result.map(|r| r.news_list).unwrap_or_default();
+    Ok(list
+        .into_iter()
+        .filter(|a| !a.title.trim().is_empty())
+        .map(|a| NewsItem {
+            title: a.title,
+            source: a.source_name,
+        })
+        .collect())
+}
+
 fn parse_u8(s: &str) -> u8 {
     s.trim().parse().unwrap_or(0)
 }
@@ -111,29 +126,23 @@ fn speed_kmh(p: &PtsOption) -> Option<u16> {
     Some((v * 1.09728).round() as u16) // ft/s → km/h (×0.3048×3.6)
 }
 
-/// crossPlateY는 실제로는 "플레이트를 통과했다고 보는 y거리"(포수 쪽 기준
-/// 상수, 모든 투구에 걸쳐 ~0.708ft로 동일)이지 높이가 아니다 — 이걸 그대로
-/// Pitch.plate_y(스트존 세로축)에 넣으면 모든 투구가 같은 높이에 찍힌다.
-/// 실제 높이는 릴리스 위치/속도/가속도(투사체 운동)로 직접 계산해야 한다:
-/// y0 + vy0*t + 0.5*ay*t^2 = crossPlateY를 만족하는 양의 근 t(플레이트 통과
-/// 시각, vy0는 음수 — 공이 플레이트 쪽으로 날아간다)를 구한 뒤,
-/// plate_z = z0 + vz0*t + 0.5*az*t^2로 그 시각의 높이를 구한다.
-fn plate_height(p: &PtsOption) -> f32 {
+/// 릴리스→플레이트 통과 시각 t(s). y0 + vy0*t + 0.5*ay*t^2 = crossPlateY의
+/// 작은 양의 근. 퇴화(속도·가속 모두 ~0)나 해가 없으면 None.
+fn plate_cross_t(p: &PtsOption) -> Option<f32> {
     let a = 0.5 * p.ay;
     let b = p.vy0;
     let c = p.y0 - p.cross_plate_y;
     let t = if a.abs() < 1e-6 {
         if b.abs() < 1e-6 {
-            return p.cross_plate_y; // degenerate, fall back
+            return None;
         }
         -c / b
     } else {
         let disc = b * b - 4.0 * a * c;
         if disc < 0.0 {
-            return p.z0;
+            return None;
         }
         let sq = disc.sqrt();
-        // pick the smaller positive root (first crossing)
         let t1 = (-b - sq) / (2.0 * a);
         let t2 = (-b + sq) / (2.0 * a);
         [t1, t2]
@@ -141,10 +150,40 @@ fn plate_height(p: &PtsOption) -> f32 {
             .filter(|t| *t > 0.0)
             .fold(f32::MAX, f32::min)
     };
-    if !t.is_finite() || t <= 0.0 {
-        return p.z0;
+    (t.is_finite() && t > 0.0 && t < 100.0).then_some(t)
+}
+
+/// crossPlateY는 실제로는 "플레이트를 통과했다고 보는 y거리"(포수 쪽 기준
+/// 상수, 모든 투구에 걸쳐 ~0.708ft로 동일)이지 높이가 아니다 — 이걸 그대로
+/// Pitch.plate_y(스트존 세로축)에 넣으면 모든 투구가 같은 높이에 찍힌다.
+/// 실제 높이는 릴리스 위치/속도/가속도(투사체 운동)로 직접 계산해야 한다:
+/// plate_cross_t()로 플레이트 통과 시각을 구한 뒤,
+/// plate_z = z0 + vz0*t + 0.5*az*t^2로 그 시각의 높이를 구한다.
+fn plate_height(p: &PtsOption) -> f32 {
+    match plate_cross_t(p) {
+        Some(t) => p.z0 + p.vz0 * t + 0.5 * p.az * t * t,
+        // 기존 폴백 보존: 완전 퇴화(ay·vy0 모두 ~0)는 crossPlateY, 그 외 z0.
+        None => {
+            if (0.5 * p.ay).abs() < 1e-6 && p.vy0.abs() < 1e-6 {
+                p.cross_plate_y
+            } else {
+                p.z0
+            }
+        }
     }
-    p.z0 + p.vz0 * t + 0.5 * p.az * t * t
+}
+
+/// pitchId "YYMMDD_HHMMSS" → "HH:MM:SS". 형식이 다르면 None(관용 — 이 필드
+/// 하나 때문에 투구 전체를 버리지 않는다).
+fn time_from_pitch_id(id: &str) -> Option<String> {
+    let (date, time) = id.split_once('_')?;
+    if date.len() != 6 || time.len() != 6 {
+        return None;
+    }
+    if !date.chars().chain(time.chars()).all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("{}:{}:{}", &time[0..2], &time[2..4], &time[4..6]))
 }
 
 fn result_of(text: &str) -> PitchResult {
@@ -255,9 +294,40 @@ pub fn live_from_relay(json: &str, home: Team, away: Team) -> Result<LiveState> 
                 speed_kmh: speed_kmh(p),
                 result: result_of(&text),
                 text,
+                time_hms: time_from_pitch_id(&p.pitch_id),
+                plate_t: plate_cross_t(p).unwrap_or(0.0),
+                y0: p.y0,
+                vy0: p.vy0,
+                ay: p.ay,
+                z0: p.z0,
+                vz0: p.vz0,
+                az: p.az,
             });
         }
     }
+
+    // 다음 타자: 공격 팀 라인업에서 현재 타자의 batOrder를 찾아 다음 타순
+    // (9→1 순환)의 첫 항목을 고른다. 교체로 같은 batOrder가 여럿이면 첫
+    // 항목을 채택(관용 — 틀릴 수 있는 추정이므로 실패 시 빈 문자열로 생략).
+    let batting_lineup = current.and_then(|t| match t.home_or_away.as_str() {
+        "0" => trd.away_lineup.as_ref(), // 초 = 원정 공격
+        "1" => trd.home_lineup.as_ref(), // 말 = 홈 공격
+        _ => None,
+    });
+    let next_batter_name = batting_lineup
+        .and_then(|lu| {
+            let cur = lu
+                .batter
+                .iter()
+                .find(|b| !cgs.batter.is_empty() && b.pcode == cgs.batter)?;
+            if cur.bat_order == 0 {
+                return None;
+            }
+            let next = cur.bat_order % 9 + 1;
+            lu.batter.iter().find(|b| b.bat_order == next)
+        })
+        .map(|b| b.name.clone())
+        .unwrap_or_default();
 
     let metric = trd.last_valid_metric_option;
     Ok(LiveState {
@@ -281,6 +351,7 @@ pub fn live_from_relay(json: &str, home: Team, away: Team) -> Result<LiveState> 
             .map(|r| r / 100.0),
         relay_log,
         current_pitches,
+        next_batter_name,
     })
 }
 
@@ -475,7 +546,104 @@ mod tests {
             ay: 0.0,
             az: 0.0,
             stance: String::new(),
+            pitch_id: String::new(),
         };
         assert_eq!(speed_kmh(&p), None);
+    }
+
+    #[test]
+    fn time_from_pitch_id_parses_yymmdd_hhmmss() {
+        assert_eq!(
+            time_from_pitch_id("260529_205614"),
+            Some("20:56:14".to_string())
+        );
+    }
+
+    #[test]
+    fn time_from_pitch_id_is_lenient_on_malformed_ids() {
+        assert_eq!(time_from_pitch_id(""), None);
+        assert_eq!(time_from_pitch_id("260529"), None);
+        assert_eq!(time_from_pitch_id("260529_20561"), None); // 5자리 시각
+        assert_eq!(time_from_pitch_id("260529_2056xx"), None);
+        assert_eq!(time_from_pitch_id("abcdef_205614"), None);
+    }
+
+    /// fixture의 투구들이 실제 시각과 궤적 파라미터를 실어 나르는지 — 스트존/측면
+    /// 뷰가 소비할 데이터의 완전성.
+    #[test]
+    fn relay_fixture_pitches_carry_time_and_trajectory_params() {
+        let state = live_from_relay(
+            include_str!("../../../tests/fixtures/relay_20260719KTLG.json"),
+            Team {
+                code: "LG".into(),
+                name: "LG".into(),
+            },
+            Team {
+                code: "KT".into(),
+                name: "KT".into(),
+            },
+        )
+        .unwrap();
+        assert!(!state.current_pitches.is_empty());
+        for p in &state.current_pitches {
+            // 궤적 파라미터: 실측 relay에서 y0(릴리스 거리)는 40~60ft 범위.
+            assert!(p.y0 > 40.0 && p.y0 < 60.0, "y0 out of range: {}", p.y0);
+            assert!(p.plate_t > 0.0, "plate_t must be positive");
+        }
+        // fixture 실측: 이 fixture는 pitchId를 싣고 있어(구버전과 달리) 5구
+        // 모두 시각이 실린다 — "HH:MM:SS", 초 단위로 상승.
+        let times: Vec<Option<String>> = state
+            .current_pitches
+            .iter()
+            .map(|p| p.time_hms.clone())
+            .collect();
+        assert_eq!(
+            times,
+            vec![
+                Some("21:05:40".to_string()),
+                Some("21:05:59".to_string()),
+                Some("21:06:21".to_string()),
+                Some("21:06:46".to_string()),
+                Some("21:07:06".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn news_from_json_parses_titles_and_sources_leniently() {
+        let json = r#"{"code":200,"success":true,"result":{"newsList":[
+            {"title":"제목1","sourceName":"연합뉴스"},
+            {"title":"제목2"},
+            {"sourceName":"출처만"},
+            {"title":null,"sourceName":null}
+        ]}}"#;
+        let items = news_from_json(json).unwrap();
+        // 완전성: title이 있는 항목은 전부 수집(2개), 없는 항목은 조용히 건너뜀.
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].title, "제목1");
+        assert_eq!(items[0].source, "연합뉴스");
+        assert_eq!(items[1].source, ""); // sourceName 결측 관용
+                                         // 깨진 응답도 에러 아닌 빈 목록
+        assert!(news_from_json("{}").unwrap().is_empty());
+    }
+
+    #[test]
+    fn next_batter_follows_current_batter_in_the_batting_lineup() {
+        let state = live_from_relay(
+            include_str!("../../../tests/fixtures/relay_20260719KTLG.json"),
+            Team {
+                code: "LG".into(),
+                name: "LG".into(),
+            },
+            Team {
+                code: "KT".into(),
+                name: "KT".into(),
+            },
+        )
+        .unwrap();
+        // fixture 실측: 현재 타자는 천성호(batOrder 9, home 라인업, 말공격).
+        // 9 % 9 + 1 = 1번 타순인 문성주가 다음 타자로 계산되어야 한다.
+        assert_eq!(state.batter_name, "천성호");
+        assert_eq!(state.next_batter_name, "문성주");
     }
 }

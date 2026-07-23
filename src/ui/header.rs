@@ -1,3 +1,4 @@
+use super::theme::{team_badge_style, team_color};
 use crate::app::{App, Tab};
 use crate::model::GameStatus;
 use ratatui::{
@@ -24,7 +25,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    let counts = Line::from(vec![
+    let mut counts_spans: Vec<Span> = vec![
         Span::styled(
             format!("LIVE {live}"),
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
@@ -38,24 +39,45 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             format!("OTHER {other}"),
             Style::default().fg(Color::Magenta),
         ),
-    ]);
-
-    let games_style = if app.tab == Tab::Games {
-        Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
-    } else {
-        Style::default()
-    };
-    let standings_style = if app.tab == Tab::Standings {
-        Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
-    } else {
-        Style::default()
-    };
-
-    let mut tab_spans = vec![
-        Span::styled(" GAMES ", games_style),
-        Span::raw(" | "),
-        Span::styled(" STANDINGS ", standings_style),
     ];
+
+    // 응원 팀 액센트: 테두리·타이틀을 팀 컬러로, 1행 우측에 배지 + GO!.
+    let accent = app.fav_code.as_deref().map(team_color);
+    if let Some(code) = app.fav_code.as_deref() {
+        counts_spans.push(Span::raw("   "));
+        counts_spans.push(Span::styled(format!(" {code} "), team_badge_style(code)));
+        counts_spans.push(Span::styled(
+            " GO!",
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    let counts = Line::from(counts_spans);
+
+    let active = Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD);
+    let inactive = Style::default().add_modifier(Modifier::DIM);
+    // 활성 탭은 브래킷으로도 표시한다: 반전이 미묘한 터미널·색각 사용자도
+    // 텍스트만으로 현재 탭을 읽을 수 있다(v0.2 Tab UX fix). 라벨 폭을
+    // 활성/비활성 동일하게 맞춰 토글 시 우측 요소가 흔들리지 않게 한다.
+    let (games_label, games_style, standings_label, standings_style) = match app.tab {
+        Tab::Games => ("[ GAMES ]", active, "  STANDINGS  ", inactive),
+        Tab::Standings => ("  GAMES  ", inactive, "[ STANDINGS ]", active),
+    };
+    let mut tab_spans = vec![
+        Span::styled(games_label, games_style),
+        Span::raw(" | "),
+        Span::styled(standings_label, standings_style),
+    ];
+    // fetch in-flight 동안 도는 ASCII 스피너(docker pull 스타일) — 폴링이
+    // "지금 뭔가 하고 있음"을 구석에서 알린다. 유휴 시에는 아무것도 없다.
+    const SPINNER: [char; 4] = ['|', '/', '-', '\\'];
+    if app.fetching {
+        tab_spans.push(Span::raw("   "));
+        tab_spans.push(Span::styled(
+            SPINNER[(app.spinner_frame % 4) as usize].to_string(),
+            Style::default().fg(Color::Cyan),
+        ));
+    }
     if app.stale {
         tab_spans.push(Span::raw("   "));
         tab_spans.push(Span::styled(
@@ -65,8 +87,12 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     }
     let tabs = Line::from(tab_spans);
 
-    let paragraph = Paragraph::new(vec![counts, tabs])
-        .block(Block::default().borders(Borders::ALL).title(" kbotop "));
+    let mut block = Block::default().borders(Borders::ALL).title(" kbotop ");
+    if let Some(c) = accent {
+        block = block.border_style(Style::default().fg(c));
+    }
+
+    let paragraph = Paragraph::new(vec![counts, tabs]).block(block);
     f.render_widget(paragraph, area);
 }
 
@@ -125,5 +151,68 @@ mod tests {
         assert!(text.contains("SCHED 1"));
         assert!(text.contains("FINAL 1"));
         assert!(text.contains("OTHER 2"));
+    }
+
+    /// 활성 탭은 브래킷 텍스트 단서로도 식별돼야 한다(REVERSED 반전이 안 보이는
+    /// 터미널·색각 사용자 대응, WCAG 1.4.1) — v0.2 Tab UX 버그의 핵심 회귀 방지.
+    #[test]
+    fn active_tab_is_bracketed_games_first() {
+        let app = App::new(Default::default());
+        let text = render_to_string(&app);
+        assert!(text.contains("[ GAMES ]"));
+        assert!(!text.contains("[ STANDINGS ]"));
+    }
+
+    #[test]
+    fn active_tab_bracket_moves_to_standings_on_switch() {
+        let mut app = App::new(Default::default());
+        app.tab = Tab::Standings;
+        let text = render_to_string(&app);
+        assert!(text.contains("[ STANDINGS ]"));
+        assert!(!text.contains("[ GAMES ]"));
+    }
+
+    /// fetch가 in-flight인 동안 헤더 구석에 스피너가 돈다(docker pull 스타일).
+    /// '/' 프레임으로 고정해 탭 구분자 '|'와의 모호성을 피한다.
+    #[test]
+    fn spinner_shows_while_fetching_and_hides_when_idle() {
+        let mut app = App::new(Default::default());
+        app.fetching = true;
+        app.spinner_frame = 1; // SPINNER[1] == '/'
+        let busy = render_to_string(&app);
+        assert!(busy.contains('/'), "spinner frame missing:\n{busy}");
+        app.fetching = false;
+        let idle = render_to_string(&app);
+        assert!(!idle.contains('/'));
+    }
+
+    /// 응원 팀이 설정되면 헤더가 팀 컬러 액센트(테두리)와 응원 배지("GO!")를 단다.
+    #[test]
+    fn favorite_team_gets_accent_border_and_cheer_badge() {
+        let mut app = App::new(Default::default());
+        app.fav_code = Some("LG".into());
+        let text = render_to_string(&app);
+        assert!(text.contains("GO!"), "cheer badge missing:\n{text}");
+        let mut term = Terminal::new(TestBackend::new(80, 4)).unwrap();
+        term.draw(|f| render(f, f.area(), &app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let accent = crate::ui::theme::team_color("LG");
+        assert_eq!(
+            buf[(0, 0)].fg,
+            accent,
+            "border must carry team accent color"
+        );
+        assert!(
+            buf.content().iter().any(|c| c.bg == accent),
+            "cheer badge must render on team color background"
+        );
+    }
+
+    #[test]
+    fn no_favorite_team_no_cheer_badge() {
+        let app = App::new(Default::default());
+        assert_eq!(app.fav_code, None);
+        let text = render_to_string(&app);
+        assert!(!text.contains("GO!"));
     }
 }
