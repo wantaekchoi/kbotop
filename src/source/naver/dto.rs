@@ -277,6 +277,19 @@ pub struct PtsOption {
     pub vy0: f32,
     #[serde(default, deserialize_with = "lenient_float")]
     pub vz0: f32,
+    /// 릴리스 위치(y, ft) — 홈플레이트로부터의 y거리(추적 시작점, 대략 50~55ft).
+    /// plate_height()가 crossPlateY(플레이트 통과 y거리)까지의 낙하 시간을 구할 때 쓴다.
+    #[serde(default, deserialize_with = "lenient_float")]
+    pub y0: f32,
+    /// 릴리스 위치(z, ft) — 투구 높이의 시작점.
+    #[serde(default, deserialize_with = "lenient_float")]
+    pub z0: f32,
+    /// y축 가속도(ft/s^2) — plate_height()가 통과 시각을 구하는 이차식의 계수.
+    #[serde(default, deserialize_with = "lenient_float")]
+    pub ay: f32,
+    /// z축 가속도(ft/s^2, 중력+매그너스 효과 포함) — plate_height()가 통과 높이를 구한다.
+    #[serde(default, deserialize_with = "lenient_float")]
+    pub az: f32,
     #[serde(default, deserialize_with = "lenient_string")]
     pub stance: String,
 }

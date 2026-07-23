@@ -111,6 +111,42 @@ fn speed_kmh(p: &PtsOption) -> Option<u16> {
     Some((v * 1.09728).round() as u16) // ft/s → km/h (×0.3048×3.6)
 }
 
+/// crossPlateY는 실제로는 "플레이트를 통과했다고 보는 y거리"(포수 쪽 기준
+/// 상수, 모든 투구에 걸쳐 ~0.708ft로 동일)이지 높이가 아니다 — 이걸 그대로
+/// Pitch.plate_y(스트존 세로축)에 넣으면 모든 투구가 같은 높이에 찍힌다.
+/// 실제 높이는 릴리스 위치/속도/가속도(투사체 운동)로 직접 계산해야 한다:
+/// y0 + vy0*t + 0.5*ay*t^2 = crossPlateY를 만족하는 양의 근 t(플레이트 통과
+/// 시각, vy0는 음수 — 공이 플레이트 쪽으로 날아간다)를 구한 뒤,
+/// plate_z = z0 + vz0*t + 0.5*az*t^2로 그 시각의 높이를 구한다.
+fn plate_height(p: &PtsOption) -> f32 {
+    let a = 0.5 * p.ay;
+    let b = p.vy0;
+    let c = p.y0 - p.cross_plate_y;
+    let t = if a.abs() < 1e-6 {
+        if b.abs() < 1e-6 {
+            return p.cross_plate_y; // degenerate, fall back
+        }
+        -c / b
+    } else {
+        let disc = b * b - 4.0 * a * c;
+        if disc < 0.0 {
+            return p.z0;
+        }
+        let sq = disc.sqrt();
+        // pick the smaller positive root (first crossing)
+        let t1 = (-b - sq) / (2.0 * a);
+        let t2 = (-b + sq) / (2.0 * a);
+        [t1, t2]
+            .into_iter()
+            .filter(|t| *t > 0.0)
+            .fold(f32::MAX, f32::min)
+    };
+    if !t.is_finite() || t <= 0.0 {
+        return p.z0;
+    }
+    p.z0 + p.vz0 * t + 0.5 * p.az * t * t
+}
+
 fn result_of(text: &str) -> PitchResult {
     if text.contains("헛스윙") {
         PitchResult::StrikeSwinging
@@ -213,7 +249,7 @@ pub fn live_from_relay(json: &str, home: Team, away: Team) -> Result<LiveState> 
             current_pitches.push(Pitch {
                 order: p.ballcount,
                 plate_x: p.cross_plate_x,
-                plate_y: p.cross_plate_y,
+                plate_y: plate_height(p),
                 sz_top: p.top_sz,
                 sz_bottom: p.bottom_sz,
                 speed_kmh: speed_kmh(p),
@@ -434,6 +470,10 @@ mod tests {
             vx0: 0.0,
             vy0: 0.0,
             vz0: 0.0,
+            y0: 0.0,
+            z0: 0.0,
+            ay: 0.0,
+            az: 0.0,
             stance: String::new(),
         };
         assert_eq!(speed_kmh(&p), None);

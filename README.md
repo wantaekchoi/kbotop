@@ -9,6 +9,8 @@
 [![Built with Ratatui](https://img.shields.io/badge/built%20with-ratatui-1c1c1c?style=flat-square)](https://ratatui.rs)
 [![License: MIT](https://img.shields.io/github/license/wantaekchoi/kbotop?style=flat-square)](LICENSE)
 
+![demo](docs/demo.gif)
+
 </div>
 
 ## Introduction
@@ -29,7 +31,7 @@ cargo install kbotop
 brew install wantaekchoi/tap/kbotop
 
 # prebuilt binary (macOS arm64/x64, Linux)
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/releases/download/v0.1.1/kbotop-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/releases/download/v0.1.2/kbotop-installer.sh | sh
 ```
 
 ## Usage

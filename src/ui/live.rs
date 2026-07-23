@@ -1,5 +1,5 @@
 use super::strikezone;
-use super::theme::team_color;
+use super::theme::team_badge_style;
 use crate::app::{App, Screen};
 use crate::model::{GameStatus, LiveState};
 use ratatui::{
@@ -81,23 +81,13 @@ fn render_scoreline(f: &mut Frame, area: Rect, s: &LiveState, status: GameStatus
 
     let bold = Style::default().add_modifier(Modifier::BOLD);
     let mut spans = vec![
-        Span::styled(
-            s.away.name.as_str(),
-            Style::default()
-                .fg(team_color(&s.away.code))
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(s.away.name.as_str(), team_badge_style(&s.away.code)),
         Span::raw(" "),
         Span::styled(s.away_score.to_string(), bold),
         Span::raw(" : "),
         Span::styled(s.home_score.to_string(), bold),
         Span::raw(" "),
-        Span::styled(
-            s.home.name.as_str(),
-            Style::default()
-                .fg(team_color(&s.home.code))
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(s.home.name.as_str(), team_badge_style(&s.home.code)),
         Span::raw("   "),
         Span::raw(s.inning_label.as_str()),
     ];
@@ -258,6 +248,40 @@ mod tests {
         let text = render_live_view_only(&app, 100, 30);
         assert!(!text.contains("SUSPENDED"));
         assert!(!text.contains("FINAL"));
+    }
+
+    #[test]
+    fn scoreline_team_name_has_team_color_badge() {
+        let mut app = App::new(Default::default());
+        // away = 두산(OB) 로 스코어라인 렌더
+        let state =
+            crate::source::naver::map::live_from_relay(RELAY, team("OB", "두산"), team("LG", "LG"))
+                .unwrap();
+        let game = Game {
+            id: "g".into(),
+            start: "".into(),
+            status: GameStatus::Live,
+            status_label: state.inning_label.clone(),
+            home: team("LG", "LG"),
+            away: team("OB", "두산"),
+            home_score: Some(state.home_score),
+            away_score: Some(state.away_score),
+        };
+        app.screen = Screen::Live {
+            game,
+            state: Some(state),
+        };
+        let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        term.draw(|f| super::render(f, f.area(), &app)).unwrap();
+        let buf = term.backend().buffer();
+        let has_badge = buf
+            .content()
+            .iter()
+            .any(|c| c.bg == super::super::theme::team_color("OB"));
+        assert!(
+            has_badge,
+            "scoreline away team name should render on OB team-color background"
+        );
     }
 
     #[test]

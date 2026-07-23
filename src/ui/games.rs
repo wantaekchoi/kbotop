@@ -1,4 +1,4 @@
-use super::theme::team_color;
+use super::theme::team_badge_style;
 use crate::app::App;
 use crate::model::GameStatus;
 use ratatui::{
@@ -57,12 +57,12 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
                 Cell::from(Span::styled(tag, tag_style)),
                 Cell::from(Span::styled(
                     g.away.name.as_str(),
-                    Style::default().fg(team_color(&g.away.code)),
+                    team_badge_style(&g.away.code),
                 )),
                 Cell::from(score),
                 Cell::from(Span::styled(
                     g.home.name.as_str(),
-                    Style::default().fg(team_color(&g.home.code)),
+                    team_badge_style(&g.home.code),
                 )),
                 Cell::from(g.status_label.as_str()),
             ])
@@ -122,5 +122,39 @@ mod tests {
         let text = render_to_string(&app);
         assert!(text.contains("No games scheduled"));
         assert!(!text.contains("loading"));
+    }
+
+    #[test]
+    fn team_name_uses_team_color_background_badge() {
+        use crate::model::{Game, GameStatus, Team};
+        let mut app = App::new(Default::default());
+        // away = 두산(OB, 어두운 남색) — 배지 배경으로 렌더되어야 한다
+        app.apply(Update::Games(vec![Game {
+            id: "g".into(),
+            start: "".into(),
+            status: GameStatus::Final,
+            status_label: "".into(),
+            home: Team {
+                code: "LG".into(),
+                name: "LG".into(),
+            },
+            away: Team {
+                code: "OB".into(),
+                name: "두산".into(),
+            },
+            home_score: Some(3),
+            away_score: Some(10),
+        }]));
+        let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        term.draw(|f| render(f, f.area(), &app)).unwrap();
+        let buf = term.backend().buffer();
+        let has_badge = buf
+            .content()
+            .iter()
+            .any(|c| c.bg == super::super::theme::team_color("OB"));
+        assert!(
+            has_badge,
+            "away team name should render on OB team-color background"
+        );
     }
 }

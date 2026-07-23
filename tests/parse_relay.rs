@@ -31,6 +31,37 @@ fn extracts_pitches_with_plate_coords() {
     assert!(p.sz_top > p.sz_bottom);
 }
 
+/// crossPlateY(~0.7083ft)는 모든 투구에 걸쳐 동일한 "플레이트까지의 y거리"
+/// 상수일 뿐 높이가 아니다 — plate_y에 그대로 넣으면 스트존에서 모든 공이
+/// 같은 줄에 찍힌다(회귀). 투사체 운동으로 계산한 실제 높이는 투구마다
+/// 달라야 하고, 대부분 사람 키 범위(대략 0~6ft)에 들어와야 한다.
+#[test]
+fn computed_plate_y_varies_across_pitches_and_is_mostly_in_a_plausible_height_band() {
+    let live = live_from_relay(RELAY, team("LG", "LG"), team("KT", "KT")).unwrap();
+    let heights: Vec<f32> = live.current_pitches.iter().map(|p| p.plate_y).collect();
+    assert!(heights.len() >= 2, "need multiple pitches to compare");
+
+    // crossPlateY(0.7083)로 죄다 뭉치는 옛 회귀와 달리 서로 달라야 한다.
+    let first = heights[0];
+    assert!(
+        heights.iter().any(|h| (h - first).abs() > 1e-3),
+        "plate_y must vary across pitches, got: {heights:?}"
+    );
+    // 옛 버그의 상수값(crossPlateY)에 그대로 고정돼있지 않은지도 확인한다.
+    assert!(
+        heights.iter().any(|h| (h - 0.7083).abs() > 1e-3),
+        "plate_y must not collapse to the old crossPlateY constant, got: {heights:?}"
+    );
+
+    // 공이 그라운드에 닿고 넘어가는 등 물리 모델이 실측 트래킹을 벗어나는
+    // 극단값(예: 땅볼성 변화구)이 섞일 수 있으므로 "대부분"만 요구한다.
+    let plausible = heights.iter().filter(|h| (0.0..6.0).contains(*h)).count();
+    assert!(
+        plausible * 2 >= heights.len(),
+        "expected most plate_y values within a plausible height band (0.0..6.0ft), got: {heights:?}"
+    );
+}
+
 #[test]
 fn builds_relay_log_lines() {
     let live = live_from_relay(RELAY, team("LG", "LG"), team("KT", "KT")).unwrap();

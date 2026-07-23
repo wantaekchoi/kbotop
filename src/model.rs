@@ -66,9 +66,9 @@ pub enum PitchResult {
 pub struct Pitch {
     pub order: u8,              // 타석 내 구 순번 (ballcount)
     pub plate_x: f32,           // crossPlateX (ft, 포수 시점 좌우)
-    pub plate_y: f32,           // crossPlateY (ft, 높이)
-    pub sz_top: f32,            // topSz (타자별 존 상단)
-    pub sz_bottom: f32,         // bottomSz (타자별 존 하단)
+    pub plate_y: f32, // 플레이트 통과 높이(ft), 투사체 운동으로 계산 (crossPlateY는 거리라 못 씀)
+    pub sz_top: f32,  // topSz (타자별 존 상단)
+    pub sz_bottom: f32, // bottomSz (타자별 존 하단)
     pub speed_kmh: Option<u16>, // 릴리스 속도벡터로 계산 (없으면 None)
     pub result: PitchResult,
     pub text: String, // "1구 파울" 등 원문

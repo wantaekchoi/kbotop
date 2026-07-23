@@ -5,7 +5,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{
         canvas::{Canvas, Rectangle},
-        Block,
+        Block, Paragraph, Wrap,
     },
     Frame,
 };
@@ -54,10 +54,10 @@ pub fn render(f: &mut Frame, area: Rect, pitches: &[Pitch]) {
         return;
     }
 
-    let (zone_area, list_area) = if area.height > 6 {
+    let (zone_area, list_area) = if area.height > 7 {
         let rows = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(6), Constraint::Length(2)])
+            .constraints([Constraint::Min(6), Constraint::Length(3)])
             .split(area);
         (rows[0], Some(rows[1]))
     } else {
@@ -73,7 +73,7 @@ pub fn render(f: &mut Frame, area: Rect, pitches: &[Pitch]) {
     let canvas = Canvas::default()
         .block(Block::bordered().title(" Zone "))
         .x_bounds([-2.5, 2.5])
-        .y_bounds([0.0, 5.0])
+        .y_bounds([-0.5, 5.5])
         .paint(move |ctx| {
             ctx.draw(&Rectangle {
                 x: -PLATE_HALF_WIDTH_FT,
@@ -126,7 +126,8 @@ fn render_speed_list(f: &mut Frame, area: Rect, pitches: &[Pitch]) {
         }
         spans.push(Span::styled(text, Style::default().fg(color)));
     }
-    f.render_widget(Line::from(spans), area);
+    let para = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: false });
+    f.render_widget(para, area);
 }
 
 #[cfg(test)]
@@ -212,5 +213,69 @@ mod tests {
     fn short_area_hides_speed_list_but_still_renders_zone() {
         // height <= 6 → 리스트를 숨기고 존만 렌더. 패닉 없이 동작해야 한다.
         let _text = render_to_string(40, 5, &sample_pitches());
+    }
+
+    fn many_pitches() -> Vec<Pitch> {
+        // 구속이 서로 다른 8개 — 한 줄에 안 들어가 잘리던 케이스
+        (1u8..=8)
+            .map(|i| Pitch {
+                order: i,
+                plate_x: (i as f32 - 4.0) * 0.2,
+                plate_y: 2.0 + (i as f32) * 0.1,
+                sz_top: 3.3,
+                sz_bottom: 1.5,
+                speed_kmh: Some(130 + i as u16), // 131..=138, 모두 다름
+                result: PitchResult::Ball,
+                text: format!("{i}구"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn speed_list_shows_all_pitches_not_truncated() {
+        let pitches = many_pitches();
+        // 존 우측 폭이 좁아도(40) 8개 구속이 전부 보여야 한다
+        let text = render_to_string(40, 20, &pitches);
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        for kmh in 131..=138u16 {
+            assert!(
+                compact.contains(&format!("{kmh}km")),
+                "speed {kmh}km missing (legend truncated) in:\n{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn outlier_pitch_marker_renders_in_canvas_zone_not_just_legend() {
+        let mut pitches = sample_pitches();
+        pitches.push(Pitch {
+            order: 9,
+            plate_x: 0.0,
+            plate_y: -0.3, // 존 아래(y_bounds 밖이면 canvas에서 클립됨)
+            sz_top: 3.3,
+            sz_bottom: 1.5,
+            speed_kmh: None, // 범례엔 순번만
+            result: PitchResult::InPlay,
+            text: "9구".into(),
+        });
+        let mut term = Terminal::new(TestBackend::new(40, 20)).unwrap();
+        term.draw(|f| render(f, f.area(), &pitches)).unwrap();
+        let buf = term.backend().buffer().clone();
+        // 하단 범례 3줄을 제외한 canvas(존) 영역에서만 마커 '9' 를 찾는다 →
+        // 범례 순번에서 주워오는 tautology 를 배제한다.
+        let h = buf.area().height;
+        let zone_bottom = h.saturating_sub(3);
+        let mut in_zone = false;
+        for y in 0..zone_bottom {
+            for x in 0..buf.area().width {
+                if buf[(x, y)].symbol() == "9" {
+                    in_zone = true;
+                }
+            }
+        }
+        assert!(
+            in_zone,
+            "outlier (plate_y=-0.3) marker must render in the canvas zone, not only the legend"
+        );
     }
 }
