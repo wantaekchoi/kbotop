@@ -65,6 +65,14 @@ impl DataSource for NaverSource {
         let url = format!("{BASE}/news/articles/kbo?size=20");
         map::news_from_json(&self.get(&url)?)
     }
+
+    // 네이버 API가 아니라 프로젝트 저장소 raw지만, HTTP 클라이언트를 가진 유일한
+    // 소스 객체라 여기 얹는다 — 별도 소스 추상화는 YAGNI.
+    fn tips(&self) -> Result<Vec<String>> {
+        let raw =
+            self.get("https://raw.githubusercontent.com/wantaekchoi/kbotop/main/data/tips.txt")?;
+        Ok(crate::ui::tips::parse_remote(&raw).unwrap_or_default())
+    }
 }
 
 #[cfg(test)]

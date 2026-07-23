@@ -29,9 +29,20 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         ),
         None => {
             let hint = match (&app.screen, app.tab) {
-                (Screen::Live { .. }, _) => " F1 Help   Esc Back   Left/Right Pitch   q Quit",
-                (Screen::List, Tab::Games) => " F1 Help   Tab Switch   Enter Live   q Quit",
-                (Screen::List, Tab::Standings) => " F1 Help   Tab Switch   q Quit",
+                (Screen::Live { .. }, _) => {
+                    if app.live_pitch_sel.is_some() {
+                        // 선택 중: Esc 1회 = 전체보기 복귀임을 명시(직관성).
+                        " F1 Help   Esc All pitches   Left/Right Pitch   q Quit"
+                    } else {
+                        " F1 Help   Esc Back   Left/Right Pitch   q Quit"
+                    }
+                }
+                (Screen::List, Tab::Games) => {
+                    " F1 Help   F2 Options   Tab Switch   o Links   n News   Enter Live   q Quit"
+                }
+                (Screen::List, Tab::Standings) => {
+                    " F1 Help   F2 Options   Tab Switch   o Links   n News   q Quit"
+                }
             };
             (
                 hint.to_string(),
@@ -114,5 +125,37 @@ mod tests {
         app.last_error = Some("x".repeat(200));
         let text = render_to_string(&app);
         assert!(text.contains('…'), "expected honest ellipsis in:\n{text}");
+    }
+
+    /// 선택 중에는 Esc가 "전체보기 복귀"임을 힌트로 알린다 — 상태별 전환 검증.
+    #[test]
+    fn live_hint_switches_to_all_pitches_while_a_pitch_is_selected() {
+        let mut app = App::new(Default::default());
+        app.screen = Screen::Live {
+            game: Game {
+                id: "g".into(),
+                start: "".into(),
+                status: GameStatus::Live,
+                status_label: "".into(),
+                home: Team {
+                    code: "LG".into(),
+                    name: "LG".into(),
+                },
+                away: Team {
+                    code: "KT".into(),
+                    name: "KT".into(),
+                },
+                home_score: None,
+                away_score: None,
+            },
+            state: None,
+        };
+        let unselected = render_to_string(&app);
+        assert!(unselected.contains("Esc Back"));
+        assert!(!unselected.contains("All pitches"));
+        app.live_pitch_sel = Some(0);
+        let selected = render_to_string(&app);
+        assert!(selected.contains("Esc All pitches"));
+        assert!(!selected.contains("Esc Back"));
     }
 }

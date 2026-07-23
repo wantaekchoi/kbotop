@@ -199,6 +199,10 @@ pub struct NewsArticle {
     pub title: String,
     #[serde(default, deserialize_with = "lenient_string")]
     pub source_name: String,
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub oid: String,
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub aid: String,
 }
 
 #[derive(Deserialize)]

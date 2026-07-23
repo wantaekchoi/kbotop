@@ -97,9 +97,20 @@ pub fn news_from_json(json: &str) -> Result<Vec<NewsItem>> {
     Ok(list
         .into_iter()
         .filter(|a| !a.title.trim().is_empty())
-        .map(|a| NewsItem {
-            title: a.title,
-            source: a.source_name,
+        .map(|a| {
+            let url = if a.oid.is_empty() || a.aid.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "https://m.sports.naver.com/kbaseball/article/{}/{}",
+                    a.oid, a.aid
+                )
+            };
+            NewsItem {
+                title: a.title,
+                source: a.source_name,
+                url,
+            }
         })
         .collect())
 }
@@ -625,6 +636,20 @@ mod tests {
         assert_eq!(items[1].source, ""); // sourceName 결측 관용
                                          // 깨진 응답도 에러 아닌 빈 목록
         assert!(news_from_json("{}").unwrap().is_empty());
+    }
+
+    #[test]
+    fn news_from_json_builds_article_urls_from_oid_aid_leniently() {
+        let json = r#"{"code":200,"success":true,"result":{"newsList":[
+            {"title":"제목1","sourceName":"A","oid":"450","aid":"0000152707"},
+            {"title":"제목2","sourceName":"B"}
+        ]}}"#;
+        let items = news_from_json(json).unwrap();
+        assert_eq!(
+            items[0].url,
+            "https://m.sports.naver.com/kbaseball/article/450/0000152707"
+        );
+        assert_eq!(items[1].url, "", "missing oid/aid → empty url, item kept");
     }
 
     #[test]

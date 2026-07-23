@@ -117,6 +117,11 @@ pub fn render(f: &mut Frame, area: Rect, pitches: &[Pitch], selected: Option<usi
                 color: Color::White,
             });
             for (idx, p) in pitches.iter().enumerate() {
+                if let Some(sel) = selected {
+                    if idx != sel {
+                        continue; // 선택 모드: 그 구만(겹침 해소)
+                    }
+                }
                 let color = result_color(p.result);
                 let x = p.plate_x as f64;
                 let y = p.plate_y as f64;
@@ -138,7 +143,7 @@ pub fn render(f: &mut Frame, area: Rect, pitches: &[Pitch], selected: Option<usi
     f.render_widget(canvas, fit_zone(zone_area));
 
     if let Some(side_area) = side_area {
-        sideview::render(f, side_area, pitches);
+        sideview::render(f, side_area, pitches, selected);
     }
 
     if let Some(list_area) = list_area {
@@ -438,5 +443,46 @@ mod tests {
             reversed_exists,
             "selected pitch must be visibly highlighted"
         );
+    }
+
+    /// 선택 시 Zone 캔버스에는 그 구만 남는다(마커 겹침 해소) — 범례는 전 항목 유지.
+    #[test]
+    fn selection_filters_zone_canvas_to_the_selected_pitch_only() {
+        let pitches = sample_pitches(); // order 1,2,3
+        let mut term = Terminal::new(TestBackend::new(40, 20)).unwrap();
+        term.draw(|f| render(f, f.area(), &pitches, Some(1)))
+            .unwrap(); // order 2 선택
+        let buf = term.backend().buffer().clone();
+        let h = buf.area().height;
+        let zone_bottom = h.saturating_sub(LEGEND_HEIGHT + super::super::sideview::SIDE_HEIGHT);
+        let (mut saw1, mut saw2, mut saw3) = (false, false, false);
+        for y in 0..zone_bottom {
+            for x in 0..buf.area().width {
+                match buf[(x, y)].symbol() {
+                    "1" => saw1 = true,
+                    "2" => saw2 = true,
+                    "3" => saw3 = true,
+                    _ => {}
+                }
+            }
+        }
+        assert!(saw2, "selected pitch must render in the zone");
+        assert!(
+            !saw1 && !saw3,
+            "unselected pitches must be filtered out of the zone"
+        );
+        // 범례(하단 LEGEND_HEIGHT줄)에는 전 순번 유지 — 컨텍스트 보존.
+        let mut legend = String::new();
+        for y in zone_bottom + super::super::sideview::SIDE_HEIGHT..h {
+            for x in 0..buf.area().width {
+                legend.push_str(buf[(x, y)].symbol());
+            }
+        }
+        for tag in ["1B", "2S", "3F"] {
+            assert!(
+                legend.replace(' ', "").contains(tag),
+                "legend must keep all entries: {tag}"
+            );
+        }
     }
 }

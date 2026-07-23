@@ -7,7 +7,7 @@ use ratatui::{
 
 /// 화면 중앙에 고정 크기(50x14) 도움말 오버레이를 그린다.
 pub fn render(f: &mut Frame, area: Rect) {
-    let rect = centered_rect(50, 14, area);
+    let rect = help_rect(50, 14, area);
     let lines = vec![
         Line::from("Move       j / k or Up / Down"),
         Line::from("Top/Bottom gg / G"),
@@ -15,6 +15,9 @@ pub fn render(f: &mut Frame, area: Rect) {
         Line::from("Back       Esc"),
         Line::from("Switch tab Tab / F5"),
         Line::from("Pitch      Left / Right (live view)"),
+        Line::from("Options    F2 (date / team / poll)"),
+        Line::from("Team links o (official / goods)"),
+        Line::from("Open news  n (current headline)"),
         Line::from("Find       / (coming soon)"),
         Line::from("Help       ? / F1"),
         Line::from("Quit       q / F10"),
@@ -27,8 +30,8 @@ pub fn render(f: &mut Frame, area: Rect) {
 }
 
 /// 주어진 영역 내부에서 고정 크기(width x height)의 중앙 사각형을 계산한다.
-/// area보다 크면 area에 맞춰 줄인다.
-fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+/// area보다 크면 area에 맞춰 줄인다. options::chooser도 재사용한다.
+pub(crate) fn help_rect(width: u16, height: u16, area: Rect) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
 

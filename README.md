@@ -2,7 +2,7 @@
 
 # kbotop
 
-**A terminal viewer for live KBO baseball**: scores, text play-by-play, and strike-zone pitch tracking, updating in place.
+**터미널에서 보는 KBO 프로야구 라이브 뷰어** — 스코어, 문자중계, 스트라이크존 투구 추적이 화면 안에서 계속 갱신됩니다.
 
 [![crates.io](https://img.shields.io/crates/v/kbotop?style=flat-square)](https://crates.io/crates/kbotop)
 [![Release](https://img.shields.io/github/v/release/wantaekchoi/kbotop?style=flat-square)](https://github.com/wantaekchoi/kbotop/releases)
@@ -11,19 +11,19 @@
 
 ![demo](docs/demo.gif)
 
-[한국어](README.ko.md)
+[English](README.en.md)
 
 </div>
 
-## Introduction
+## 소개
 
-`kbotop` is an interactive viewer for KBO (Korea Baseball Organization) games. It shows today's games as a live, self-refreshing dashboard: the score, the count, the runners, and the text play-by-play, all updating in place while you watch.
+`kbotop`은 KBO 프로야구를 터미널에서 보는 인터랙티브 뷰어입니다. 오늘의 경기를 라이브 대시보드로 보여줍니다. 점수, 볼카운트, 주자, 문자중계가 한 화면에서 알아서 갱신됩니다.
 
-For a game in progress it draws each pitch in the strike zone from Naver's pitch-tracking data, so you see location and speed, not just the line score.
+경기가 진행 중이면 네이버 투구 추적 데이터로 공 하나하나를 스트라이크존에 그려 줍니다. 라인스코어만이 아니라 로케이션과 구속까지 보입니다.
 
-No API key. A single static binary.
+API 키가 필요 없습니다. 정적 바이너리 하나로 동작합니다.
 
-## Install
+## 설치
 
 ```sh
 # crates.io
@@ -32,35 +32,38 @@ cargo install kbotop
 # Homebrew
 brew install wantaekchoi/tap/kbotop
 
-# prebuilt binary (macOS arm64/x64, Linux)
+# 미리 빌드된 바이너리 (macOS arm64/x64, Linux)
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/releases/latest/download/kbotop-installer.sh | sh
 ```
 
-## Usage
+## 사용법
 
 ```sh
-kbotop                    # today's games
-kbotop --team lg          # straight into your team's live game
-kbotop --date yesterday   # also: YYYY-MM-DD, YYYYMMDD, today, tomorrow, +N, -N
+kbotop                    # 오늘 경기
+kbotop --team lg          # 내 팀 라이브 경기로 바로 진입
+kbotop --date yesterday   # 다른 날짜: YYYY-MM-DD, YYYYMMDD, today, tomorrow, +N, -N
 ```
 
-Vim-style navigation; the in-app `?` help is the source of truth.
+Vim 스타일로 움직입니다. 최신 키 목록은 앱 안 `?` 도움말이 기준입니다.
 
-- Move: `j` / `k` or arrow keys
-- Open live view: `Enter`
-- Games / Standings: `Tab`
-- Inspect pitches: `Left` / `Right` (live view)
-- Help: `?`
-- Quit: `q`
+- 이동: `j` / `k` 또는 방향키
+- 라이브 뷰 열기: `Enter`
+- 경기 / 순위 전환: `Tab`
+- 옵션 픽커(날짜·팀·폴링 주기): `F2`
+- 구단 공홈·굿즈몰 열기: `o`
+- 뉴스 기사 열기: `n`
+- 투구 하나씩 보기: `Left` / `Right` (라이브 뷰)
+- 도움말: `?`
+- 종료: `q`
 
-## Configuration
+## 설정
 
-`$XDG_CONFIG_HOME/kbotop/config.toml`, falling back to `~/.config/kbotop/config.toml`. Sets your favorite team and the poll interval.
+`$XDG_CONFIG_HOME/kbotop/config.toml` (없으면 `~/.config/kbotop/config.toml`). 응원 팀과 폴링 주기를 설정합니다.
 
-## Disclaimer
+## 고지
 
-A fan-made, unofficial tool. Data comes from Naver Sports' public (unofficial) endpoints, and all rights to it belong to the KBO and Naver. For personal, non-commercial use; we respond promptly to any rights-holder request.
+팬이 만든 비공식 도구입니다. 데이터는 네이버 스포츠의 공개(비공식) 엔드포인트에서 가져오며, 데이터의 모든 권리는 KBO와 네이버에 있습니다. 개인·비상업 용도로만 사용해 주세요. 권리자가 요청하면 즉시 조치합니다.
 
-## License
+## 라이선스
 
 [MIT](LICENSE)

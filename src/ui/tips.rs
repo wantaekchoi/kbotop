@@ -30,6 +30,26 @@ pub fn current(now_secs: u64) -> &'static str {
     t[((now_secs / 60) as usize) % t.len()]
 }
 
+/// 원격 tips.txt 파싱: 주석/빈 줄 제거 후 유효 줄이 10개 이상일 때만 채택 —
+/// 깨진/부분 응답이 임베드 팁을 대체하지 못하게 하는 관용 가드.
+pub fn parse_remote(raw: &str) -> Option<Vec<String>> {
+    let lines: Vec<String> = raw
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(str::to_string)
+        .collect();
+    (lines.len() >= 10).then_some(lines)
+}
+
+/// 런타임 override 우선, 없으면 임베드본으로 회전.
+pub fn pick(override_: &Option<Vec<String>>, now_secs: u64) -> &str {
+    match override_ {
+        Some(list) if !list.is_empty() => &list[((now_secs / 60) as usize) % list.len()],
+        _ => current(now_secs),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,5 +91,28 @@ mod tests {
                 "tip too wide for 80-col terminal ({width} > 75): {t}"
             );
         }
+    }
+
+    /// 런타임 목록이 있으면 그것으로 회전, 없으면 임베드본.
+    #[test]
+    fn pick_prefers_the_runtime_override() {
+        let over = Some(vec!["원격 팁 A".to_string(), "원격 팁 B".to_string()]);
+        assert_eq!(pick(&over, 0), "원격 팁 A");
+        assert_eq!(pick(&over, 60), "원격 팁 B");
+        assert_eq!(pick(&over, 120), "원격 팁 A"); // wrap
+        let none: Option<Vec<String>> = None;
+        assert_eq!(pick(&none, 0), current(0)); // 임베드 폴백
+    }
+
+    /// 원격 파싱: 유효 줄 10개 미만이면 기각(None) — 깨진 응답이 팁을 비우지 않게.
+    #[test]
+    fn parse_remote_rejects_short_or_garbage_payloads() {
+        assert!(parse_remote("").is_none());
+        assert!(parse_remote("# comment only\n\n").is_none());
+        let nine: String = (0..9).map(|i| format!("팁 {i}\n")).collect();
+        assert!(parse_remote(&nine).is_none());
+        let ten: String = (0..10).map(|i| format!("팁 {i}\n")).collect();
+        let parsed = parse_remote(&ten).expect("10 valid lines must be accepted");
+        assert_eq!(parsed.len(), 10);
     }
 }

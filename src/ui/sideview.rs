@@ -33,7 +33,7 @@ pub fn trajectory_points(p: &Pitch, n: usize) -> Vec<(f64, f64)> {
 /// 측면 뷰: x축 = 홈플레이트로부터의 거리(ft, 좌=플레이트/우=릴리스),
 /// y축 = 높이(ft). 투구 궤적(낙차)을 결과색 선으로 그리고 플레이트 통과점에
 /// 순번을 찍는다. 플레이트 위치(x≈0.7)에 존 상·하한 눈금을 세로선으로 표시.
-pub fn render(f: &mut Frame, area: Rect, pitches: &[Pitch]) {
+pub fn render(f: &mut Frame, area: Rect, pitches: &[Pitch], selected: Option<usize>) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -50,7 +50,12 @@ pub fn render(f: &mut Frame, area: Rect, pitches: &[Pitch]) {
                 y2: sz_top,
                 color: Color::White,
             });
-            for p in pitches {
+            for (idx, p) in pitches.iter().enumerate() {
+                if let Some(sel) = selected {
+                    if idx != sel {
+                        continue; // 선택 모드: 그 구만(겹침 해소)
+                    }
+                }
                 let color = result_color(p.result);
                 let pts = trajectory_points(p, 16);
                 for w in pts.windows(2) {
@@ -133,7 +138,7 @@ mod tests {
     fn side_view_renders_every_pitch_order_marker() {
         let pitches: Vec<Pitch> = (1u8..=3).map(traj_pitch).collect();
         let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
-        term.draw(|f| render(f, f.area(), &pitches)).unwrap();
+        term.draw(|f| render(f, f.area(), &pitches, None)).unwrap();
         let text: String = term
             .backend()
             .buffer()
@@ -149,7 +154,28 @@ mod tests {
     #[test]
     fn tiny_area_does_not_panic() {
         let mut term = Terminal::new(TestBackend::new(1, 1)).unwrap();
-        term.draw(|f| render(f, f.area(), &[traj_pitch(1)]))
+        term.draw(|f| render(f, f.area(), &[traj_pitch(1)], None))
             .unwrap();
+    }
+
+    /// 선택 시 Side 밴드에도 그 구 궤적만 남는다.
+    #[test]
+    fn selection_filters_side_band_to_the_selected_trajectory_only() {
+        let pitches: Vec<Pitch> = (1u8..=3).map(traj_pitch).collect();
+        let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
+        term.draw(|f| render(f, f.area(), &pitches, Some(2)))
+            .unwrap(); // order 3 선택
+        let text: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains('3'));
+        assert!(
+            !text.contains('1') && !text.contains('2'),
+            "unselected trajectories filtered:\n{text}"
+        );
     }
 }

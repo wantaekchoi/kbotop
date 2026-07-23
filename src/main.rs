@@ -15,6 +15,7 @@ use ratatui::{backend::CrosstermBackend, Frame, Terminal};
 
 use kbotop::app::{App, Screen, Tab};
 use kbotop::config;
+use kbotop::dateutil::{civil_from_days, days_from_civil, format_civil, kst_days};
 use kbotop::poller::{self, Command, Update};
 use kbotop::source::naver::NaverSource;
 use kbotop::source::DataSource;
@@ -24,10 +25,13 @@ use kbotop::ui;
 #[command(
     name = "kbotop",
     version,
-    about = "Watch KBO baseball from your terminal."
+    about = "Watch KBO baseball from your terminal.",
+    after_long_help = "Examples:\n  kbotop                     today's games\n  kbotop --date yesterday    also: YYYY-MM-DD, YYYYMMDD, today, tomorrow, +N, -N\n  kbotop --date 2026-05-29   a specific date\n  kbotop --team lg           straight into your team's live game (theme + cheer)\n\nKeys:\n  Tab switch · Enter live · Left/Right pitches · F2 options · o team links · n news · ? help · q quit",
+    after_help = "Run with --help for examples and key summary."
 )]
 struct Cli {
-    /// Favorite team code to enter live view directly (lg, kt, ssg, ...)
+    /// Favorite team code to enter live view directly.
+    /// Aliases: lg, kt, ssg/sk, nc, kia/ht, lotte/lt, samsung/ss, hanwha/hh, kiwoom/wo, doosan/ob
     #[arg(long)]
     team: Option<String>,
     /// Date: YYYY-MM-DD, YYYYMMDD, today, yesterday, tomorrow, +N, -N (default: today, KST)
@@ -52,33 +56,11 @@ fn team_code(alias: &str) -> Option<&'static str> {
     })
 }
 
-/// civil_from_days (Howard Hinnant): UTC epoch(1970-01-01)로부터 지난 날짜 수
-/// (`days`)를 그레고리력 (y, m, d)로 변환하는 순수 함수. kst_today()는 이
-/// 함수를 감싸는 얇은 wrapper일 뿐이라, 여기서 알려진 경계값(윤년 2/29,
-/// epoch 0)으로 직접 검증할 수 있다 — 출력 "모양"(길이/대시 위치)만 보는
-/// 테스트로는 이 산술의 off-by-one(예: `days` 계산이 하루 밀림)을 못 잡는다.
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
-}
-
 /// UTC epoch 초 → KST 기준 "YYYY-MM-DD". kst_today()가 SystemTime::now()로
 /// 얻은 값을 넘기는 얇은 wrapper이고, 테스트는 고정된 epoch 초를 직접 넘겨
 /// UTC→KST 자정 넘김(연도 롤오버 포함)까지 검증한다.
 fn kst_date_from_utc_secs(utc_secs: i64) -> String {
-    let secs = utc_secs + 9 * 3600; // KST = UTC+9
-    let days = secs.div_euclid(86400);
-    let (y, m, d) = civil_from_days(days);
-    format!("{y:04}-{m:02}-{d:02}")
+    format_civil(kst_days(utc_secs as u64))
 }
 
 /// 외부 크레이트(chrono) 없이 `SystemTime`만으로 KST 기준 오늘 날짜를 계산한다.
@@ -89,24 +71,6 @@ fn kst_today() -> String {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
     kst_date_from_utc_secs(secs)
-}
-
-/// civil_from_days의 역함수 (Howard Hinnant days_from_civil): 그레고리력
-/// (y, m, d) → epoch(1970-01-01)로부터의 일수. resolve_date의 ±N 산술과
-/// "실존 날짜" 왕복 검증에 쓴다.
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let mp = if m > 2 { m - 3 } else { m + 9 };
-    let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe - 719468
-}
-
-fn format_civil(days: i64) -> String {
-    let (y, m, d) = civil_from_days(days);
-    format!("{y:04}-{m:02}-{d:02}")
 }
 
 /// --date 입력을 YYYY-MM-DD로 정규화한다. 지원: YYYY-MM-DD, YYYYMMDD,
@@ -238,9 +202,9 @@ fn main() -> Result<()> {
         use std::time::{SystemTime, UNIX_EPOCH};
         let secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
+            .map(|d| d.as_secs())
             .unwrap_or(0);
-        (secs + 9 * 3600).div_euclid(86400)
+        kst_days(secs)
     };
     let date = match cli.date.as_deref() {
         None => kst_today(),
@@ -286,7 +250,8 @@ fn main() -> Result<()> {
     );
 
     let mut app = App::new(cfg);
-    app.date = date_for_app;
+    app.date = date_for_app.clone();
+    app.poll_choice = live_poll_secs;
     app.fav_code = cli
         .team
         .as_deref()
@@ -294,6 +259,11 @@ fn main() -> Result<()> {
         .and_then(team_code)
         .map(str::to_string);
     let mut watching_id: Option<String> = None;
+    // F2 픽커가 바꾼 app.date/app.poll_choice를 폴러에 통지하기 위한 "마지막으로
+    // 전송한 값" 기억(watching_id와 동일 패턴) — App은 채널을 모르므로 run()이
+    // 매 tick 변화를 감지해 대신 보낸다.
+    let mut sent_date = date_for_app;
+    let mut sent_poll = live_poll_secs;
 
     let res = run(
         &mut term,
@@ -303,6 +273,8 @@ fn main() -> Result<()> {
         &mut watching_id,
         &cli,
         &term_signal,
+        &mut sent_date,
+        &mut sent_poll,
     );
 
     // 터미널 복구는 run()의 성공 여부와 무관하게 항상 실행한다 — 복구 먼저, 에러 전파는 그 다음.
@@ -341,6 +313,8 @@ fn run(
     watching_id: &mut Option<String>,
     cli: &Cli,
     term_signal: &AtomicBool,
+    sent_date: &mut String,
+    sent_poll: &mut u64,
 ) -> Result<()> {
     // 팀 지정 시 첫 Games 수신 후 자동 진입 처리 플래그. `--team`이 없으면
     // config.toml의 favorite_team을 대신 쓴다 — 그러지 않으면 config 파일로만
@@ -404,6 +378,16 @@ fn run(
             }
             *watching_id = current;
         }
+        // F2 픽커 적용 감지: App은 채널을 모르므로 여기서 변화를 폴러에 통지한다.
+        if app.date != *sent_date {
+            let _ = tx_cmd.send(Command::SetDate(app.date.clone()));
+            *sent_date = app.date.clone();
+        }
+        if app.poll_choice != *sent_poll {
+            let _ = tx_cmd.send(Command::SetLivePoll(app.poll_choice));
+            *sent_poll = app.poll_choice;
+        }
+
         // Standings 탭이 떠 있는 동안은 조건 없이 매 tick RefreshStandings를 보낸다.
         // 이전엔 `standings.is_empty()`일 때만 보내, 최초 로드 이후엔 W/L·GB가
         // 바뀌어도 세션 내내 스냅샷이 얼어붙었다(버그 수정). 실제 fetch는
@@ -458,16 +442,6 @@ mod tests {
                 c.is_ascii_digit()
             }
         }));
-    }
-
-    #[test]
-    fn civil_from_days_converts_known_boundary_dates() {
-        // epoch 0 == 1970-01-01.
-        assert_eq!(civil_from_days(0), (1970, 1, 1));
-        // 2024-02-29 (윤년) == 19782 days since epoch (python: (date(2024,2,29) - date(1970,1,1)).days).
-        assert_eq!(civil_from_days(19782), (2024, 2, 29));
-        // 2027-01-01 == 20819 days since epoch.
-        assert_eq!(civil_from_days(20819), (2027, 1, 1));
     }
 
     #[test]
@@ -526,14 +500,6 @@ mod tests {
     }
 
     #[test]
-    fn days_from_civil_roundtrips_with_civil_from_days() {
-        for days in [0i64, 19782, 20819, 20657] {
-            let (y, m, d) = civil_from_days(days);
-            assert_eq!(days_from_civil(y, m, d), days);
-        }
-    }
-
-    #[test]
     fn resolve_date_accepts_iso_compact_and_keywords() {
         // 2026-07-23 == days_from_civil(2026, 7, 23)
         let today = days_from_civil(2026, 7, 23);
@@ -556,5 +522,23 @@ mod tests {
         assert!(resolve_date("05-29", today).is_err());
         assert!(resolve_date("nonsense", today).is_err());
         assert!(resolve_date("2026/05/29", today).is_err());
+    }
+
+    /// --help가 예시와 키 요약까지 보여준다 — 초행 사용자의 발견 가능성.
+    #[test]
+    fn long_help_carries_examples_and_key_summary() {
+        use clap::CommandFactory;
+        let help = Cli::command().render_long_help().to_string();
+        for needle in [
+            "Examples:",
+            "kbotop --date yesterday",
+            "kbotop --team lg",
+            "YYYY-MM-DD",
+            "tomorrow",
+            "Keys:",
+            "F2",
+        ] {
+            assert!(help.contains(needle), "--help missing {needle:?}:\n{help}");
+        }
     }
 }

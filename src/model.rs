@@ -108,6 +108,7 @@ pub struct LiveState {
 pub struct NewsItem {
     pub title: String,
     pub source: String, // 언론사명(출처 표시용, 결측 시 빈 문자열)
+    pub url: String,    // 기사 링크. 빈 값=링크 없음 — 열기 생략.
 }
 
 #[derive(Debug, Clone, PartialEq)]

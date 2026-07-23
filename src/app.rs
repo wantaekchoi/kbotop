@@ -9,6 +9,26 @@ pub enum Tab {
     Standings,
 }
 
+/// F2 옵션 픽커의 세 pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pane {
+    Date,
+    Team,
+    Poll,
+}
+
+/// F2 옵션 오버레이가 열려 있는 동안의 상태(어느 pane, 커서 위치).
+pub struct OptionsState {
+    pub pane: Pane,
+    pub cursor: usize,
+}
+
+/// `o` 링크 픽커가 열려 있는 동안의 상태.
+pub struct LinkPickerState {
+    pub items: Vec<(String, String)>, // (라벨, URL)
+    pub cursor: usize,
+}
+
 /// `Live`가 `List`보다 훨씬 커서 clippy가 boxing을 권하지만, `App`이 화면당
 /// 하나만 들고 있고 교체 빈도도 낮으므로(라이브 진입/이탈, 5s 갱신) 간접 참조를
 /// 추가할 실익이 없다 — 브리프의 타입을 그대로 유지.
@@ -59,6 +79,17 @@ pub struct App {
     /// KBO 뉴스 헤드라인(부가 기능). 하단 티커가 짝수 분에 이 목록에서 순환
     /// 표시하고, 비어 있으면 항상 Tip으로 우아하게 저하한다.
     pub news: Vec<NewsItem>,
+    /// F2 옵션 오버레이가 열려 있는지 + 어느 pane/커서인지(None = 닫힘).
+    pub options: Option<OptionsState>,
+    /// 현재 라이브 폴 주기(초). main이 초기값(config.effective_poll_secs())을
+    /// 주입하고, F2 Poll pane에서 Enter로 바꾸면 run()이 변화를 감지해 폴러에
+    /// Command::SetLivePoll로 통지한다(watched_game과 동일 패턴).
+    pub poll_choice: u64,
+    /// 하단 팁의 런타임 갱신본(부가 기능, None = 임베드 폴백). 폴러가 시작 시
+    /// 1회 GitHub raw에서 가져와 채운다 — 실패해도 이 필드는 None으로 남는다.
+    pub tips_override: Option<Vec<String>>,
+    /// `o` 링크 픽커가 열려 있는지 + 항목/커서(None = 닫힘).
+    pub link_picker: Option<LinkPickerState>,
 }
 
 impl App {
@@ -83,6 +114,10 @@ impl App {
             fav_code: None,
             now_secs: 0,
             news: vec![],
+            options: None,
+            poll_choice: 5,
+            tips_override: None,
+            link_picker: None,
         }
     }
 
@@ -91,6 +126,79 @@ impl App {
         if self.show_help {
             // 도움말 화면에서는 아무 키나 눌러 닫는다.
             self.show_help = false;
+            self.pending_g = false;
+            return false;
+        }
+
+        if let Some(opt) = &mut self.options {
+            match key {
+                KeyCode::Esc | KeyCode::F(2) => self.options = None,
+                KeyCode::Left => {
+                    opt.pane = match opt.pane {
+                        Pane::Date => Pane::Poll,
+                        Pane::Team => Pane::Date,
+                        Pane::Poll => Pane::Team,
+                    };
+                    opt.cursor = 0;
+                }
+                KeyCode::Right => {
+                    opt.pane = match opt.pane {
+                        Pane::Date => Pane::Team,
+                        Pane::Team => Pane::Poll,
+                        Pane::Poll => Pane::Date,
+                    };
+                    opt.cursor = 0;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    let len = crate::ui::options::pane_len(opt.pane, self.now_secs);
+                    if len > 0 && opt.cursor + 1 < len {
+                        opt.cursor += 1;
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    opt.cursor = opt.cursor.saturating_sub(1);
+                }
+                KeyCode::Enter => self.apply_option(),
+                _ => {} // 오버레이가 나머지 키 소비
+            }
+            self.pending_g = false;
+            return false;
+        }
+        if let Some(picker) = &mut self.link_picker {
+            match key {
+                KeyCode::Esc | KeyCode::Char('o') => self.link_picker = None,
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if picker.cursor + 1 < picker.items.len() {
+                        picker.cursor += 1;
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') => picker.cursor = picker.cursor.saturating_sub(1),
+                KeyCode::Enter => {
+                    if let Some((_, url)) = picker.items.get(picker.cursor) {
+                        crate::ui::teamlinks::open_url(url);
+                    }
+                    self.link_picker = None;
+                }
+                _ => {}
+            }
+            self.pending_g = false;
+            return false;
+        }
+        // opener들은 모든 오버레이 consumer 뒤에 둔다 — 링크픽커가 열린 채 F2를
+        // 누르면 오버레이가 이중으로 열리던 결함(최종 리뷰 I-1) 방지.
+        if key == KeyCode::F(2) {
+            self.options = Some(OptionsState {
+                pane: Pane::Date,
+                cursor: 0,
+            });
+            self.pending_g = false;
+            return false;
+        }
+        if key == KeyCode::Char('o') {
+            let items = crate::ui::teamlinks::link_items_for_screen(self);
+            if !items.is_empty() {
+                self.link_picker = Some(LinkPickerState { items, cursor: 0 });
+            }
             self.pending_g = false;
             return false;
         }
@@ -105,6 +213,12 @@ impl App {
                 self.pending_g = false;
             }
             KeyCode::Tab | KeyCode::F(5) => {
+                // Live에서 Tab은 "다른 화면을 보고 싶다"는 의도 — 목록으로
+                // 나가면서 탭을 전환한다(헤더만 바뀌고 본문이 안 바뀌던 혼란 해소).
+                if matches!(self.screen, Screen::Live { .. }) {
+                    self.screen = Screen::List;
+                    self.live_pitch_sel = None;
+                }
                 self.tab = match self.tab {
                     Tab::Games => Tab::Standings,
                     Tab::Standings => Tab::Games,
@@ -178,6 +292,18 @@ impl App {
                 }
                 self.pending_g = false;
             }
+            KeyCode::Char('n') => {
+                // 현재 티커 슬롯의 뉴스 기사를 브라우저로(팁 표시 중이어도 동일
+                // 슬롯 — 회전 계산은 ui::current_news_index와 공유).
+                if !self.news.is_empty() {
+                    let i = crate::ui::current_news_index(self.now_secs, self.news.len());
+                    let url = &self.news[i].url;
+                    if !url.is_empty() {
+                        crate::ui::teamlinks::open_url(url);
+                    }
+                }
+                self.pending_g = false;
+            }
             KeyCode::Char('/')
             | KeyCode::F(3)
             | KeyCode::F(4)
@@ -201,6 +327,47 @@ impl App {
         !matches!(status, GameStatus::Canceled | GameStatus::Scheduled)
     }
 
+    /// 옵션 픽커 Enter: 현재 pane·커서의 항목을 적용하고 닫는다.
+    /// 폴러 통지는 run() 루프가 상태 변화 감지로 수행(App은 채널을 모른다 —
+    /// watched_game과 동일 패턴).
+    fn apply_option(&mut self) {
+        let Some(opt) = self.options.take() else {
+            return;
+        };
+        match opt.pane {
+            Pane::Date => {
+                if let Some((_, date)) = crate::ui::options::date_items(self.now_secs)
+                    .into_iter()
+                    .nth(opt.cursor)
+                {
+                    if date != self.date {
+                        self.date = date;
+                        self.games_loaded = false;
+                        self.games.clear();
+                        self.selected = 0;
+                        self.live_pitch_sel = None;
+                        // 다른 날짜의 라이브 화면은 무의미 — 목록으로 복귀.
+                        self.screen = Screen::List;
+                    }
+                }
+            }
+            Pane::Team => {
+                if let Some((_, code)) =
+                    crate::ui::options::team_items().into_iter().nth(opt.cursor)
+                {
+                    self.fav_code = code;
+                }
+            }
+            Pane::Poll => {
+                if let Some((_, secs)) =
+                    crate::ui::options::poll_items().into_iter().nth(opt.cursor)
+                {
+                    self.poll_choice = secs;
+                }
+            }
+        }
+    }
+
     fn current_len(&self) -> usize {
         match self.tab {
             Tab::Games => self.games.len(),
@@ -215,9 +382,13 @@ impl App {
             return;
         }
         if let Update::News(n) = up {
-            // 부가 기능: 본 기능의 stale/last_error 생명주기에 관여하지 않는다.
+            // 부가 기능: 본 기능의 stale/last_error, 스피너 생명주기에 관여하지 않는다.
             self.news = n;
-            self.fetching = false;
+            return;
+        }
+        if let Update::Tips(t) = up {
+            // 부가 기능: stale/last_error/fetching 생명주기에 관여하지 않는다.
+            self.tips_override = Some(t);
             return;
         }
         self.fetching = false;
@@ -265,12 +436,13 @@ impl App {
                 self.last_error = Some(e);
                 self.stale = true;
             }
-            // compiler-mandated exhaustiveness arms; Fetching/News는 위 early return이 전부
-            // 처리한다. unreachable!()로 두면 미래 리팩토링(early return 제거)이 곧바로 런타임
-            // 패닉이 된다 — 이 함수는 렌더 루프에서 catch_unwind 없이 매 Update마다 호출된다
-            // (무패닉 원칙).
+            // compiler-mandated exhaustiveness arms; Fetching/News/Tips는 위 early return이
+            // 전부 처리한다. unreachable!()로 두면 미래 리팩토링(early return 제거)이 곧바로
+            // 런타임 패닉이 된다 — 이 함수는 렌더 루프에서 catch_unwind 없이 매 Update마다
+            // 호출된다(무패닉 원칙).
             Update::Fetching => {}
             Update::News(_) => {}
+            Update::Tips(_) => {}
         }
     }
 
@@ -602,5 +774,195 @@ mod tests {
         };
         app.apply(crate::poller::Update::Live("g".into(), fresh));
         assert_eq!(app.live_pitch_sel, None);
+    }
+
+    /// Live에서 Tab: 헤더만 바뀌고 화면이 안 바뀌던 혼란(v0.2 최종 리뷰 기록) 해소 —
+    /// 목록으로 나가면서 탭 전환("순위 보고 싶다"를 한 키로).
+    #[test]
+    fn tab_in_live_returns_to_list_with_the_switched_tab() {
+        let mut app = live_app_with_pitches(2);
+        app.on_key(KeyCode::Right); // 선택도 있는 상태에서
+        assert!(matches!(app.screen, Screen::Live { .. }));
+        app.on_key(KeyCode::Tab);
+        assert!(
+            matches!(app.screen, Screen::List),
+            "Tab must leave the live view"
+        );
+        assert_eq!(app.tab, Tab::Standings);
+        assert_eq!(
+            app.live_pitch_sel, None,
+            "selection must not survive the exit"
+        );
+        assert_eq!(app.selected, 0);
+    }
+
+    /// News는 보조 기능 — 스피너(fetching) 상태에 관여하면 안 된다(v0.2 최종
+    /// 리뷰 권고). 진행 중이던 fetch 표시를 News 도착이 지우지 않는다.
+    #[test]
+    fn news_update_does_not_touch_the_spinner_flag() {
+        let mut app = App::new(Default::default());
+        app.apply(crate::poller::Update::Fetching);
+        assert!(app.fetching);
+        app.apply(crate::poller::Update::News(vec![]));
+        assert!(
+            app.fetching,
+            "auxiliary news must not clear the in-flight spinner"
+        );
+    }
+
+    #[test]
+    fn f2_opens_options_and_esc_closes_without_change() {
+        let mut app = App::new(Default::default());
+        app.date = "2026-07-23".into();
+        assert!(app.options.is_none());
+        app.on_key(KeyCode::F(2));
+        assert!(app.options.is_some());
+        app.on_key(KeyCode::Esc);
+        assert!(app.options.is_none());
+        assert_eq!(app.date, "2026-07-23"); // 무변경
+    }
+
+    /// 오버레이가 열려 있으면 하위 화면 키(Tab/j/k 등)를 소비한다.
+    #[test]
+    fn options_overlay_consumes_navigation_keys() {
+        let mut app = App::new(Default::default());
+        app.on_key(KeyCode::F(2));
+        let tab_before = app.tab;
+        app.on_key(KeyCode::Tab);
+        assert_eq!(app.tab, tab_before, "Tab must be consumed by the overlay");
+    }
+
+    #[test]
+    fn options_left_right_switch_pane_and_enter_applies_team() {
+        let mut app = App::new(Default::default());
+        app.on_key(KeyCode::F(2));
+        app.on_key(KeyCode::Right); // Date → Team
+        assert!(matches!(app.options.as_ref().unwrap().pane, Pane::Team));
+        app.on_key(KeyCode::Down); // cursor 1 = 첫 실제 팀(0 = None 해제 항목)
+        app.on_key(KeyCode::Enter);
+        assert!(app.options.is_none(), "apply closes the overlay");
+        assert!(app.fav_code.is_some(), "team selection applies to fav_code");
+    }
+
+    /// Date 적용: date 갱신 + games_loaded 리셋 + Live였다면 List 복귀.
+    #[test]
+    fn options_date_apply_resets_list_and_leaves_live() {
+        let mut app = live_app_with_pitches(2); // 기존 헬퍼(Task 6에서 도입) 재사용
+        app.now_secs = 1_800_000_000; // 임의 고정 시각
+        app.games_loaded = true;
+        app.on_key(KeyCode::F(2)); // Date pane이 기본
+        app.on_key(KeyCode::Down); // Today → Yesterday
+        app.on_key(KeyCode::Enter);
+        assert!(matches!(app.screen, Screen::List));
+        assert!(!app.games_loaded);
+        assert_eq!(app.selected, 0);
+        assert_eq!(
+            app.date,
+            crate::dateutil::format_civil(crate::dateutil::kst_days(1_800_000_000) - 1)
+        );
+    }
+
+    #[test]
+    fn options_poll_apply_updates_poll_choice() {
+        let mut app = App::new(Default::default());
+        app.poll_choice = 5;
+        app.on_key(KeyCode::F(2));
+        app.on_key(KeyCode::Left); // Date → Poll (좌측 순환: Date↔Poll↔Team)
+        app.on_key(KeyCode::Down); // 3s → 5s? 항목 순서는 [3,5,10,30] — cursor 1 = 5
+        app.on_key(KeyCode::Down); // cursor 2 = 10
+        app.on_key(KeyCode::Enter);
+        assert_eq!(app.poll_choice, 10);
+    }
+
+    /// Tips는 News처럼 보조 — stale/last_error/fetching에 관여하지 않는다.
+    #[test]
+    fn tips_update_sets_override_without_touching_lifecycles() {
+        let mut app = App::new(Default::default());
+        app.apply(crate::poller::Update::Error("boom".into()));
+        app.apply(crate::poller::Update::Fetching);
+        app.apply(crate::poller::Update::Tips(vec!["원격".into(); 12]));
+        assert_eq!(app.tips_override.as_ref().map(|v| v.len()), Some(12));
+        assert!(app.stale);
+        assert!(app.fetching);
+        assert_eq!(app.last_error.as_deref(), Some("boom"));
+    }
+
+    /// games 탭에서 o: 선택 경기의 원정/홈 × 공홈/굿즈몰 4항목 픽커가 열린다.
+    #[test]
+    fn o_on_games_opens_four_link_items_for_the_selected_game() {
+        let mut app = App::new(Default::default());
+        app.apply(crate::poller::Update::Games(vec![game("g")])); // 기존 헬퍼: KT@LG
+        app.on_key(KeyCode::Char('o'));
+        let items = &app.link_picker.as_ref().expect("picker must open").items;
+        assert_eq!(items.len(), 4);
+        let labels: String = items
+            .iter()
+            .map(|(l, _)| l.as_str())
+            .collect::<Vec<_>>()
+            .join("|");
+        assert!(labels.contains("KT") && labels.contains("LG"));
+    }
+
+    /// standings 탭에서 o: 선택 팀의 2항목(공홈/굿즈몰).
+    #[test]
+    fn o_on_standings_opens_two_link_items_for_the_selected_team() {
+        let mut app = App::new(Default::default());
+        app.tab = Tab::Standings;
+        app.apply(crate::poller::Update::Standings(vec![
+            crate::model::Standing {
+                rank: 1,
+                team: crate::model::Team {
+                    code: "SS".into(),
+                    name: "삼성".into(),
+                },
+                games: 1,
+                wins: 1,
+                losses: 0,
+                draws: 0,
+                win_rate: 1.0,
+                game_behind: 0.0,
+            },
+        ]));
+        app.on_key(KeyCode::Char('o'));
+        let items = &app.link_picker.as_ref().expect("picker must open").items;
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().all(|(_, url)| url.starts_with("https://")));
+    }
+
+    /// 링크픽커가 열려 있을 때 F2는 소비만 된다 — 오버레이 이중 오픈 금지
+    /// (최종 리뷰 I-1 회귀 방지).
+    #[test]
+    fn f2_while_link_picker_open_does_not_stack_overlays() {
+        let mut app = App::new(Default::default());
+        app.apply(crate::poller::Update::Games(vec![game("g")]));
+        app.on_key(KeyCode::Char('o'));
+        assert!(app.link_picker.is_some());
+        app.on_key(KeyCode::F(2));
+        assert!(
+            app.options.is_none(),
+            "F2 must not open options over the link picker"
+        );
+        assert!(app.link_picker.is_some(), "link picker must stay open");
+    }
+
+    #[test]
+    fn esc_closes_link_picker_without_opening() {
+        let mut app = App::new(Default::default());
+        app.apply(crate::poller::Update::Games(vec![game("g")]));
+        app.on_key(KeyCode::Char('o'));
+        app.on_key(KeyCode::Esc);
+        assert!(app.link_picker.is_none());
+        assert!(
+            matches!(app.screen, Screen::List),
+            "Esc must close picker, not navigate"
+        );
+    }
+
+    /// n 키: 뉴스가 없으면 아무 일도 안 일어난다(패닉·상태 변화 없음).
+    #[test]
+    fn n_with_no_news_is_a_noop() {
+        let mut app = App::new(Default::default());
+        app.on_key(KeyCode::Char('n'));
+        assert!(matches!(app.screen, Screen::List));
     }
 }

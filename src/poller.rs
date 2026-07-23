@@ -23,6 +23,9 @@ pub enum Update {
     /// KBO 뉴스 헤드라인(부가 기능). 실패는 절대 Update::Error로 보내지 않고
     /// 조용히 무시한다 — 뉴스 실패가 footer의 본 기능 에러 표시를 오염시키면 안 된다.
     News(Vec<NewsItem>),
+    /// 하단 팁 목록 런타임 갱신본(부가 기능). 시작 시 1회만 시도하며, 실패·기각은
+    /// 조용히 임베드 폴백으로 남는다 — 뉴스와 동일하게 Update::Error로 보내지 않는다.
+    Tips(Vec<String>),
 }
 
 /// App → 폴러 방향 명령.
@@ -30,6 +33,10 @@ pub enum Command {
     WatchGame(Game), // 라이브 화면 진입: 이 게임을 relay 폴링
     StopWatch,       // 목록 화면 복귀
     RefreshStandings,
+    /// 조회 날짜 런타임 전환(F2 픽커): date 교체 + games 게이트 즉시 리셋.
+    SetDate(String),
+    /// 라이브 폴 주기 런타임 전환(하한 3s는 수신부가 보장).
+    SetLivePoll(u64),
     Shutdown,
 }
 
@@ -109,6 +116,9 @@ pub fn spawn(
     standings_poll_secs: u64,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
+        // F2 픽커의 SetDate/SetLivePoll이 이 값들을 런타임에 재할당한다.
+        let mut date = date;
+        let mut live_poll_secs = live_poll_secs;
         let mut watching: Option<Game> = None;
         let mut next_games = Instant::now();
         let mut next_live = Instant::now();
@@ -121,6 +131,11 @@ pub fn spawn(
         let mut next_news = Instant::now();
         let mut games_errors: u32 = 0;
         let mut live_errors: u32 = 0;
+
+        // 팁 런타임 갱신 플래그(1회성): 부가 기능이 첫 games 로드를 막지 않도록
+        // 루프 안, games 게이트 뒤에서 발동한다(최종 리뷰 I-2 — 루프 밖 블로킹
+        // 호출은 GitHub 지연 시 첫 화면을 최대 10s 세웠다).
+        let mut tips_done = false;
 
         loop {
             // 논블로킹 명령 처리
@@ -157,6 +172,15 @@ pub fn spawn(
                         // 게이트 주기로만 나간다(버그 수정: 게이트 경과 후엔 다시 통과해
                         // 갱신이 세션 내내 반복된다).
                     }
+                    Command::SetDate(d) => {
+                        date = d;
+                        next_games = Instant::now();
+                        games_errors = 0;
+                    }
+                    Command::SetLivePoll(s) => {
+                        live_poll_secs = s.max(3);
+                        next_live = Instant::now();
+                    }
                     Command::Shutdown => return,
                 }
             }
@@ -175,6 +199,16 @@ pub fn spawn(
                     }
                 }
                 next_games = now + backoff_delay(Duration::from_secs(60), games_errors);
+            }
+            if !tips_done {
+                // 시작 후 첫 games 폴링이 나간 다음에야 1회 시도 — 실패·기각은
+                // 조용히 임베드 폴백(부가 기능이 본 기능에 관여 금지).
+                tips_done = true;
+                if let Ok(t) = call_source(|| source.tips()) {
+                    if !t.is_empty() {
+                        let _ = tx.send(Update::Tips(t));
+                    }
+                }
             }
             if now >= next_news {
                 // 뉴스는 부가 기능: 실패를 Update::Error로 보내면 본 기능(footer)이
@@ -366,6 +400,57 @@ mod tests {
         drop(rx_up);
     }
 
+    /// tips 원샷은 첫 games 폴링 뒤에 나간다 — 부가 기능(원격 팁)이 첫 화면
+    /// 로드를 막지 않는다(최종 리뷰 I-2 회귀 방지: 루프 밖 블로킹 fetch였음).
+    #[test]
+    fn first_games_update_arrives_before_the_one_shot_tips() {
+        struct TipsySource;
+        impl DataSource for TipsySource {
+            fn games(&self, _d: &str) -> Result<Vec<Game>> {
+                Ok(vec![])
+            }
+            fn live(&self, _g: &Game) -> Result<LiveState> {
+                Err(Error::Config("unused".into()))
+            }
+            fn standings(&self, _y: u16) -> Result<Vec<Standing>> {
+                Err(Error::Config("unused".into()))
+            }
+            fn tips(&self) -> Result<Vec<String>> {
+                Ok(vec!["팁".into(); 12])
+            }
+        }
+        let source: Arc<dyn DataSource> = Arc::new(TipsySource);
+        let (tx_cmd, rx_cmd) = mpsc::channel::<Command>();
+        let (tx_up, rx_up) = mpsc::channel::<Update>();
+        let handle = spawn(
+            source,
+            "2026-07-19".into(),
+            rx_cmd,
+            tx_up,
+            5,
+            STANDINGS_POLL_SECS,
+        );
+        let mut first_data = None;
+        for _ in 0..4 {
+            match rx_up
+                .recv_timeout(Duration::from_secs(2))
+                .expect("expected an update")
+            {
+                Update::Fetching => continue,
+                other => {
+                    first_data = Some(other);
+                    break;
+                }
+            }
+        }
+        assert!(
+            matches!(first_data, Some(Update::Games(_))),
+            "first data update must be Games — tips must not preempt the first screen"
+        );
+        let _ = tx_cmd.send(Command::Shutdown);
+        handle.join().unwrap();
+    }
+
     #[test]
     fn backoff_delay_grows_with_errors_then_caps() {
         let base = Duration::from_secs(5);
@@ -497,6 +582,7 @@ mod tests {
                 Update::Games(_) | Update::Standings(_) => {}
                 Update::Fetching => {}
                 Update::News(_) => {}
+                Update::Tips(_) => {}
             }
         }
 
@@ -595,6 +681,52 @@ mod tests {
 
         let _ = tx_cmd.send(Command::Shutdown);
         handle.join().unwrap();
+        drop(rx_up);
+    }
+
+    /// SetDate는 게이트를 리셋해 즉시 재조회한다.
+    #[test]
+    fn set_date_refetches_games_immediately_with_the_new_date() {
+        struct DateEcho {
+            dates: Arc<std::sync::Mutex<Vec<String>>>,
+        }
+        impl DataSource for DateEcho {
+            fn games(&self, date: &str) -> Result<Vec<Game>> {
+                self.dates.lock().unwrap().push(date.to_string());
+                Ok(vec![])
+            }
+            fn live(&self, _g: &Game) -> Result<LiveState> {
+                Err(Error::Config("unused".into()))
+            }
+            fn standings(&self, _y: u16) -> Result<Vec<Standing>> {
+                Err(Error::Config("unused".into()))
+            }
+        }
+        let dates = Arc::new(std::sync::Mutex::new(vec![]));
+        let source: Arc<dyn DataSource> = Arc::new(DateEcho {
+            dates: dates.clone(),
+        });
+        let (tx_cmd, rx_cmd) = mpsc::channel::<Command>();
+        let (tx_up, rx_up) = mpsc::channel::<Update>();
+        let handle = spawn(
+            source,
+            "2026-07-19".into(),
+            rx_cmd,
+            tx_up,
+            5,
+            STANDINGS_POLL_SECS,
+        );
+        std::thread::sleep(Duration::from_millis(300)); // 첫 폴링(60s 게이트 시작)
+        let _ = tx_cmd.send(Command::SetDate("2026-05-29".into()));
+        std::thread::sleep(Duration::from_millis(500)); // 게이트 리셋 → 즉시 재조회 관찰
+        let _ = tx_cmd.send(Command::Shutdown);
+        handle.join().unwrap();
+        let seen = dates.lock().unwrap().clone();
+        assert!(seen.contains(&"2026-07-19".to_string()));
+        assert!(
+            seen.contains(&"2026-05-29".to_string()),
+            "SetDate must trigger an immediate refetch with the new date, got {seen:?}"
+        );
         drop(rx_up);
     }
 }

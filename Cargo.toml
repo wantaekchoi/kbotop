@@ -1,13 +1,13 @@
 [package]
 name = "kbotop"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.75"
 description = "Watch KBO baseball from your terminal — live scoreboard & strike-zone pitch tracking, in the spirit of htop."
 repository = "https://github.com/wantaekchoi/kbotop"
 homepage = "https://github.com/wantaekchoi/kbotop"
 license = "MIT"
-readme = "README.md"
+readme = "README.en.md"
 keywords = ["kbo", "baseball", "tui", "terminal", "scoreboard"]
 categories = ["command-line-utilities"]
 # crate 패키징 화이트리스트 — 내부 문서(docs/superpowers·adr·상태문서)가
@@ -18,7 +18,7 @@ include = [
     "data/tips.txt",
     "LICENSE",
     "README.md",
-    "README.ko.md",
+    "README.en.md",
 ]
 
 [dependencies]

@@ -3,12 +3,17 @@ pub mod games;
 pub mod header;
 pub mod help;
 pub mod live;
+pub mod options;
 pub mod sideview;
 pub mod standings;
 pub mod strikezone;
+pub mod teamlinks;
 pub mod text;
 pub mod theme;
 pub mod tips;
+
+// options::chooser가 help.rs의 중앙정렬 계산을 재사용한다.
+pub(crate) use help::help_rect;
 
 use crate::app::{App, Screen, Tab};
 use ratatui::{
@@ -60,7 +65,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         // 팁은 소스에서 폭을 강제하지만 같은 벨트를 채워 둔다.
         let width = chunks[2].width as usize;
         let line = if !app.news.is_empty() && minute % 2 == 0 {
-            let n = &app.news[((minute / 2) as usize) % app.news.len()];
+            let n = &app.news[current_news_index(app.now_secs, app.news.len())];
             let full = if n.source.is_empty() {
                 n.title.clone()
             } else {
@@ -77,7 +82,10 @@ pub fn draw(f: &mut Frame, app: &App) {
             Line::from(vec![
                 Span::styled("Tip: ", Style::default().add_modifier(Modifier::DIM)),
                 Span::styled(
-                    text::ellipsize(tips::current(app.now_secs), width.saturating_sub(5)),
+                    text::ellipsize(
+                        tips::pick(&app.tips_override, app.now_secs),
+                        width.saturating_sub(5),
+                    ),
                     Style::default().add_modifier(Modifier::DIM),
                 ),
             ])
@@ -88,9 +96,30 @@ pub fn draw(f: &mut Frame, app: &App) {
         footer::render(f, chunks[2], app);
     }
 
+    if app.options.is_some() {
+        options::render(f, f.area(), app);
+    }
+
+    if let Some(picker) = &app.link_picker {
+        let items: Vec<ratatui::text::Line> = picker
+            .items
+            .iter()
+            .map(|(l, _)| ratatui::text::Line::from(l.as_str()))
+            .collect();
+        options::chooser(f, f.area(), "Open in browser", &items, picker.cursor);
+    }
+
     if app.show_help {
         help::render(f, f.area());
     }
+}
+
+/// 티커·n 키가 공유하는 현재 뉴스 회전 인덱스 — 계산 드리프트 방지.
+pub fn current_news_index(now_secs: u64, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    ((now_secs / 60 / 2) as usize) % len
 }
 
 #[cfg(test)]
@@ -108,6 +137,7 @@ mod tests {
         app.apply(Update::News(vec![crate::model::NewsItem {
             title: "아주 ".repeat(60),
             source: "테스트일보".into(),
+            url: String::new(),
         }]));
         let text = render_to_string(&app);
         assert!(text.contains("News:"));
@@ -294,6 +324,7 @@ mod tests {
         app.apply(crate::poller::Update::News(vec![crate::model::NewsItem {
             title: "타이틀A".into(),
             source: "테스트일보".into(),
+            url: String::new(),
         }]));
         let render = |app: &App| {
             let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
@@ -359,5 +390,12 @@ mod tests {
             !short.contains("Tip:"),
             "tip must yield body space on short terminal"
         );
+    }
+
+    #[test]
+    fn current_news_index_matches_ticker_rotation() {
+        assert_eq!(current_news_index(0, 3), 0); // minute 0 → (0/2)%3
+        assert_eq!(current_news_index(120, 3), 1); // minute 2 → 1
+        assert_eq!(current_news_index(600, 3), 2); // minute 10 → 5%3
     }
 }

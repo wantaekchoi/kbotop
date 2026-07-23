@@ -12,4 +12,9 @@ pub trait DataSource: Send + Sync {
     fn news(&self) -> Result<Vec<crate::model::NewsItem>> {
         Ok(vec![])
     }
+
+    /// 하단 팁 목록의 런타임 갱신본(부가 기능). 기본은 빈 목록 — 임베드 폴백.
+    fn tips(&self) -> Result<Vec<String>> {
+        Ok(vec![])
+    }
 }
