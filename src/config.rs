@@ -5,6 +5,7 @@ use serde::Deserialize;
 pub struct Config {
     pub favorite_team: Option<String>,
     pub poll_secs: u64,
+    pub lang: Option<String>,
 }
 
 impl Default for Config {
@@ -12,6 +13,7 @@ impl Default for Config {
         Config {
             favorite_team: None,
             poll_secs: 5,
+            lang: None,
         }
     }
 }
@@ -56,6 +58,7 @@ mod tests {
         let c = Config {
             favorite_team: None,
             poll_secs: 1,
+            lang: None,
         };
         assert_eq!(c.effective_poll_secs(), 3);
     }

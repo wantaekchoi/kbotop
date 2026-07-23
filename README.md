@@ -42,6 +42,7 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/rele
 kbotop                    # 오늘 경기
 kbotop --team lg          # 내 팀 라이브 경기로 바로 진입
 kbotop --date yesterday   # 다른 날짜: YYYY-MM-DD, YYYYMMDD, today, tomorrow, +N, -N
+kbotop --lang en          # UI 언어 (기본: 로케일 자동, ko/en)
 ```
 
 Vim 스타일로 움직입니다. 최신 키 목록은 앱 안 `?` 도움말이 기준입니다.
@@ -55,6 +56,8 @@ Vim 스타일로 움직입니다. 최신 키 목록은 앱 안 `?` 도움말이 
 - 투구 하나씩 보기: `Left` / `Right` (라이브 뷰)
 - 도움말: `?`
 - 종료: `q`
+
+앱 화면은 ko 로케일에서 한국어로 나옵니다. 영어는 `--lang en`.
 
 ## 설정
 

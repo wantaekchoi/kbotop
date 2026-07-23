@@ -37,6 +37,33 @@ struct Cli {
     /// Date: YYYY-MM-DD, YYYYMMDD, today, yesterday, tomorrow, +N, -N (default: today, KST)
     #[arg(long)]
     date: Option<String>,
+    /// UI language: ko | en (default: auto by locale)
+    #[arg(long)]
+    lang: Option<String>,
+}
+
+/// 언어 결정: CLI > config > env(LC_ALL→LANG, "ko" 접두) > En.
+fn detect_lang(
+    cli: Option<&str>,
+    config: Option<&str>,
+    env_lang: Option<&str>,
+) -> Result<kbotop::ui::i18n::Lang, String> {
+    use kbotop::ui::i18n::Lang;
+    let parse = |s: &str| match s.to_ascii_lowercase().as_str() {
+        "ko" | "kr" | "korean" => Ok(Lang::Ko),
+        "en" | "english" => Ok(Lang::En),
+        other => Err(format!("unsupported --lang: {other} (use ko or en)")),
+    };
+    if let Some(s) = cli {
+        return parse(s);
+    }
+    if let Some(s) = config {
+        return parse(s);
+    }
+    Ok(match env_lang {
+        Some(e) if e.to_ascii_lowercase().starts_with("ko") => Lang::Ko,
+        _ => Lang::En,
+    })
 }
 
 /// 팀 별칭 → KBO 내부 코드.
@@ -225,6 +252,20 @@ fn main() -> Result<()> {
             std::process::exit(2);
         }
     }
+    let env_lang = std::env::var("LC_ALL")
+        .ok()
+        .or_else(|| std::env::var("LANG").ok());
+    let lang = match detect_lang(
+        cli.lang.as_deref(),
+        cfg.lang.as_deref(),
+        env_lang.as_deref(),
+    ) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("kbotop: {e}");
+            std::process::exit(2);
+        }
+    };
 
     // raw mode 진입 전에 등록해야, 등록 직후~raw mode 진입 사이의 좁은 창에서
     // 신호가 와도 놓치지 않는다.
@@ -252,6 +293,7 @@ fn main() -> Result<()> {
     let mut app = App::new(cfg);
     app.date = date_for_app.clone();
     app.poll_choice = live_poll_secs;
+    app.lang = lang;
     app.fav_code = cli
         .team
         .as_deref()
@@ -522,6 +564,29 @@ mod tests {
         assert!(resolve_date("05-29", today).is_err());
         assert!(resolve_date("nonsense", today).is_err());
         assert!(resolve_date("2026/05/29", today).is_err());
+    }
+
+    #[test]
+    fn detect_lang_priority_cli_config_env() {
+        use kbotop::ui::i18n::Lang;
+        assert_eq!(
+            detect_lang(Some("en"), Some("ko"), Some("ko_KR.UTF-8")).unwrap(),
+            Lang::En
+        );
+        assert_eq!(
+            detect_lang(None, Some("en"), Some("ko_KR.UTF-8")).unwrap(),
+            Lang::En
+        );
+        assert_eq!(
+            detect_lang(None, None, Some("ko_KR.UTF-8")).unwrap(),
+            Lang::Ko
+        );
+        assert_eq!(
+            detect_lang(None, None, Some("en_US.UTF-8")).unwrap(),
+            Lang::En
+        );
+        assert_eq!(detect_lang(None, None, None).unwrap(), Lang::En);
+        assert!(detect_lang(Some("jp"), None, None).is_err()); // fail fast
     }
 
     /// --help가 예시와 키 요약까지 보여준다 — 초행 사용자의 발견 가능성.

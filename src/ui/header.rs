@@ -1,4 +1,4 @@
-use super::theme::{team_badge_style, team_color};
+use super::theme::{self, team_badge_style};
 use crate::app::{App, Tab};
 use crate::model::GameStatus;
 use ratatui::{
@@ -12,6 +12,7 @@ use ratatui::{
 /// htop의 CPU/Mem 게이지 자리에 해당하는 2줄 요약 헤더.
 /// 1행: 상태별 경기 수. 2행: 탭 표시(+ stale 마커).
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
+    let l = app.labels();
     let mut live = 0u16;
     let mut sched = 0u16;
     let mut fin = 0u16;
@@ -27,22 +28,29 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
 
     let mut counts_spans: Vec<Span> = vec![
         Span::styled(
-            format!("LIVE {live}"),
+            format!("{} {live}", l.count_live),
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ),
         Span::raw("  "),
-        Span::styled(format!("SCHED {sched}"), Style::default().fg(Color::Yellow)),
-        Span::raw("  "),
-        Span::styled(format!("FINAL {fin}"), Style::default().fg(Color::Green)),
+        Span::styled(
+            format!("{} {sched}", l.count_sched),
+            Style::default().fg(Color::Yellow),
+        ),
         Span::raw("  "),
         Span::styled(
-            format!("OTHER {other}"),
+            format!("{} {fin}", l.count_final),
+            Style::default().fg(Color::Green),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            format!("{} {other}", l.count_other),
             Style::default().fg(Color::Magenta),
         ),
     ];
 
-    // 응원 팀 액센트: 테두리·타이틀을 팀 컬러로, 1행 우측에 배지 + GO!.
-    let accent = app.fav_code.as_deref().map(team_color);
+    // 응원 팀 액센트: 테두리·타이틀을 파생 액센트로(v0.2 GIF의 "안 보이는 자주색
+    // 테두리" 해소), 1행 우측에 배지 + GO!.
+    let accent = theme::accent(app.fav_code.as_deref());
     if let Some(code) = app.fav_code.as_deref() {
         counts_spans.push(Span::raw("   "));
         counts_spans.push(Span::styled(format!(" {code} "), team_badge_style(code)));
@@ -54,14 +62,27 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
 
     let counts = Line::from(counts_spans);
 
-    let active = Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD);
+    let mut active = Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD);
+    if let Some(a) = accent {
+        active = active.fg(a);
+    }
     let inactive = Style::default().add_modifier(Modifier::DIM);
     // 활성 탭은 브래킷으로도 표시한다: 반전이 미묘한 터미널·색각 사용자도
     // 텍스트만으로 현재 탭을 읽을 수 있다(v0.2 Tab UX fix). 라벨 폭을
     // 활성/비활성 동일하게 맞춰 토글 시 우측 요소가 흔들리지 않게 한다.
     let (games_label, games_style, standings_label, standings_style) = match app.tab {
-        Tab::Games => ("[ GAMES ]", active, "  STANDINGS  ", inactive),
-        Tab::Standings => ("  GAMES  ", inactive, "[ STANDINGS ]", active),
+        Tab::Games => (
+            format!("[ {} ]", l.tab_games),
+            active,
+            format!("  {}  ", l.tab_standings),
+            inactive,
+        ),
+        Tab::Standings => (
+            format!("  {}  ", l.tab_games),
+            inactive,
+            format!("[ {} ]", l.tab_standings),
+            active,
+        ),
     };
     let mut tab_spans = vec![
         Span::styled(games_label, games_style),
@@ -75,13 +96,13 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         tab_spans.push(Span::raw("   "));
         tab_spans.push(Span::styled(
             SPINNER[(app.spinner_frame % 4) as usize].to_string(),
-            Style::default().fg(Color::Cyan),
+            Style::default().fg(accent.unwrap_or(Color::Cyan)),
         ));
     }
     if app.stale {
         tab_spans.push(Span::raw("   "));
         tab_spans.push(Span::styled(
-            "stale",
+            l.stale,
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ));
     }
@@ -196,7 +217,7 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(80, 4)).unwrap();
         term.draw(|f| render(f, f.area(), &app)).unwrap();
         let buf = term.backend().buffer().clone();
-        let accent = crate::ui::theme::team_color("LG");
+        let accent = crate::ui::theme::accent(Some("LG")).unwrap();
         assert_eq!(
             buf[(0, 0)].fg,
             accent,
@@ -208,11 +229,41 @@ mod tests {
         );
     }
 
+    /// fav 설정 시 활성 탭 브래킷과 스피너가 액센트 색을 쓴다.
+    #[test]
+    fn active_tab_and_spinner_take_accent_when_fav_set() {
+        let mut app = App::new(Default::default());
+        app.fav_code = Some("HH".into());
+        app.fetching = true;
+        app.spinner_frame = 1; // '/'
+        let mut term = Terminal::new(TestBackend::new(80, 4)).unwrap();
+        term.draw(|f| render(f, f.area(), &app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let acc = crate::ui::theme::accent(Some("HH")).unwrap();
+        assert!(
+            buf.content().iter().any(|c| c.fg == acc),
+            "accent fg cells must exist"
+        );
+    }
+
     #[test]
     fn no_favorite_team_no_cheer_badge() {
         let app = App::new(Default::default());
         assert_eq!(app.fav_code, None);
         let text = render_to_string(&app);
         assert!(!text.contains("GO!"));
+    }
+
+    #[test]
+    fn korean_labels_render_when_lang_ko() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        let text = render_to_string(&app);
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            compact.contains("[경기]"),
+            "active tab must be Korean:\n{text}"
+        );
+        assert!(compact.contains("중계0")); // count_live
     }
 }

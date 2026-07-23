@@ -11,34 +11,35 @@ use ratatui::{
 /// 순위는 --date와 무관한 시즌 "현재" 스냅샷이다(source.standings(year)) —
 /// 과거 날짜를 조회 중이어도 순위만은 오늘 기준임을 타이틀로 밝힌다.
 fn block_title(app: &App) -> String {
+    let l = app.labels();
     match app.date.get(0..4) {
-        Some(y) => format!(" Standings {y} (current) "),
-        None => " Standings (current) ".into(),
+        Some(y) => format!(" {} {y} {} ", l.title_standings, l.standings_current),
+        None => format!(" {} {} ", l.title_standings, l.standings_current),
     }
 }
 
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
+    let l = app.labels();
     // games.rs와 동일한 원칙: 첫 Standings 업데이트가 아직 안 왔으면(앱 기동
     // 직후 Standings 탭으로 전환한 경우) "loading"을, 왔는데 배열이 비어
     // 있으면 "no standings"를 보여준다. 구분 없이 빈 테이블만 그리면 두 상태가
     // 헤더 행만 있는 동일한 화면으로 보인다.
     if !app.standings_loaded {
         f.render_widget(
-            Paragraph::new("loading...").block(Block::bordered().title(block_title(app))),
+            Paragraph::new(l.loading).block(Block::bordered().title(block_title(app))),
             area,
         );
         return;
     }
     if app.standings.is_empty() {
         f.render_widget(
-            Paragraph::new("No standings available")
-                .block(Block::bordered().title(block_title(app))),
+            Paragraph::new(l.no_standings).block(Block::bordered().title(block_title(app))),
             area,
         );
         return;
     }
 
-    let header = Row::new(["#", "Team", "G", "W", "L", "D", "PCT", "GB"]);
+    let header = Row::new(["#", l.col_team, "G", "W", "L", "D", "PCT", "GB"]);
 
     let rows: Vec<Row> = app
         .standings
@@ -71,6 +72,11 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         Constraint::Length(5),
     ];
 
+    let highlight = match super::theme::accent(app.fav_code.as_deref()) {
+        Some(a) => Style::default().bg(a).fg(super::theme::contrast_fg(a)),
+        None => Style::default().add_modifier(Modifier::REVERSED),
+    };
+
     let table = Table::new(rows, widths)
         .header(header)
         .block(
@@ -78,7 +84,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
                 .borders(Borders::ALL)
                 .title(block_title(app)),
         )
-        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .row_highlight_style(highlight)
         .highlight_symbol("> ");
 
     let mut state = TableState::default();
@@ -131,5 +137,18 @@ mod tests {
         let text = render_to_string(&app);
         assert!(text.contains("Standings 2026 (current)"));
         assert!(!text.contains("05-29"));
+    }
+
+    #[test]
+    fn korean_title_renders_when_lang_ko() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        app.date = "2026-05-29".into();
+        app.apply(Update::Standings(vec![]));
+        let text = render_to_string(&app);
+        // 전각 문자는 TestBackend에서 다음 셀에 플레이스홀더 공백을 남긴다
+        // (games.rs의 renders_full_width_korean_team_names_without_panic과 동일 사유).
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(compact.contains("순위2026(현재)"), "unexpected: {text}");
     }
 }

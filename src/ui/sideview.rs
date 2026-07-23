@@ -1,5 +1,6 @@
 use super::strikezone::{result_color, zone_bounds};
 use crate::model::Pitch;
+use crate::ui::i18n::Labels;
 use ratatui::{
     layout::Rect,
     style::{Color, Style},
@@ -33,13 +34,19 @@ pub fn trajectory_points(p: &Pitch, n: usize) -> Vec<(f64, f64)> {
 /// 측면 뷰: x축 = 홈플레이트로부터의 거리(ft, 좌=플레이트/우=릴리스),
 /// y축 = 높이(ft). 투구 궤적(낙차)을 결과색 선으로 그리고 플레이트 통과점에
 /// 순번을 찍는다. 플레이트 위치(x≈0.7)에 존 상·하한 눈금을 세로선으로 표시.
-pub fn render(f: &mut Frame, area: Rect, pitches: &[Pitch], selected: Option<usize>) {
+pub fn render(
+    f: &mut Frame,
+    area: Rect,
+    pitches: &[Pitch],
+    selected: Option<usize>,
+    l: &'static Labels,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
     let (sz_top, sz_bottom) = zone_bounds(pitches);
     let canvas = Canvas::default()
-        .block(Block::bordered().title(" Side "))
+        .block(Block::bordered().title(l.title_side))
         .x_bounds([0.0, 55.0])
         .y_bounds([0.0, 8.0])
         .paint(move |ctx| {
@@ -138,7 +145,16 @@ mod tests {
     fn side_view_renders_every_pitch_order_marker() {
         let pitches: Vec<Pitch> = (1u8..=3).map(traj_pitch).collect();
         let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
-        term.draw(|f| render(f, f.area(), &pitches, None)).unwrap();
+        term.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &pitches,
+                None,
+                crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+            )
+        })
+        .unwrap();
         let text: String = term
             .backend()
             .buffer()
@@ -154,8 +170,16 @@ mod tests {
     #[test]
     fn tiny_area_does_not_panic() {
         let mut term = Terminal::new(TestBackend::new(1, 1)).unwrap();
-        term.draw(|f| render(f, f.area(), &[traj_pitch(1)], None))
-            .unwrap();
+        term.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &[traj_pitch(1)],
+                None,
+                crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+            )
+        })
+        .unwrap();
     }
 
     /// 선택 시 Side 밴드에도 그 구 궤적만 남는다.
@@ -163,8 +187,16 @@ mod tests {
     fn selection_filters_side_band_to_the_selected_trajectory_only() {
         let pitches: Vec<Pitch> = (1u8..=3).map(traj_pitch).collect();
         let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
-        term.draw(|f| render(f, f.area(), &pitches, Some(2)))
-            .unwrap(); // order 3 선택
+        term.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &pitches,
+                Some(2),
+                crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+            )
+        })
+        .unwrap(); // order 3 선택
         let text: String = term
             .backend()
             .buffer()

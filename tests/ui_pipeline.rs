@@ -68,3 +68,44 @@ fn every_fixture_pitch_reaches_the_legend_through_the_full_app_render() {
         }
     }
 }
+
+/// 한국어 전체 앱 렌더 통합: 80x24에서 패닉 없이 그려지고 핵심 한국어 chrome이
+/// 전부 존재한다(완전성) — i18n 이관 누락(영어 잔존)도 함께 잡는다.
+#[test]
+fn korean_full_app_renders_all_chrome_at_80x24() {
+    use kbotop::ui::i18n::Lang;
+    let mut app = App::new(Default::default());
+    app.lang = Lang::Ko;
+    app.date = "2026-05-29".into();
+    app.apply(kbotop::poller::Update::Games(vec![]));
+    let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    term.draw(|f| kbotop::ui::draw(f, &app)).unwrap();
+    let text: String = term
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol())
+        .collect();
+    let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    for needle in [
+        "[경기]",
+        "순위",
+        "중계0",
+        "예정0",
+        "종료0",
+        "기타0",
+        "경기2026-05-29",
+        "도움말",
+        "팁:",
+    ] {
+        assert!(
+            compact.contains(needle),
+            "{needle} missing in Korean render:\n{text}"
+        );
+    }
+    // 영어 chrome 잔존 없음(데이터·보존 표기 제외) — 대표 잔존 후보 검사.
+    for stale in ["GAMES", "STANDINGS", "Help", "Tip:", "loading"] {
+        assert!(!text.contains(stale), "English chrome leaked: {stale}");
+    }
+}

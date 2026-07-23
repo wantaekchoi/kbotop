@@ -42,6 +42,7 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/rele
 kbotop                    # today's games
 kbotop --team lg          # straight into your team's live game
 kbotop --date yesterday   # also: YYYY-MM-DD, YYYYMMDD, today, tomorrow, +N, -N
+kbotop --lang en          # UI language (default: auto by locale, ko/en)
 ```
 
 Vim-style navigation; the in-app `?` help is the source of truth.
@@ -55,6 +56,8 @@ Vim-style navigation; the in-app `?` help is the source of truth.
 - Inspect pitches: `Left` / `Right` (live view)
 - Help: `?`
 - Quit: `q`
+
+The UI speaks Korean on ko locales; force English with `--lang en`.
 
 ## Configuration
 

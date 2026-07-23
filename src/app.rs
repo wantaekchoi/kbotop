@@ -90,6 +90,9 @@ pub struct App {
     pub tips_override: Option<Vec<String>>,
     /// `o` 링크 픽커가 열려 있는지 + 항목/커서(None = 닫힘).
     pub link_picker: Option<LinkPickerState>,
+    /// TUI chrome 표시 언어(main이 --lang/config/env로 감지해 주입). 기본값은
+    /// 테스트 결정성을 위해 En — 실사용 경로에서는 main이 항상 덮어쓴다.
+    pub lang: crate::ui::i18n::Lang,
 }
 
 impl App {
@@ -118,7 +121,12 @@ impl App {
             poll_choice: 5,
             tips_override: None,
             link_picker: None,
+            lang: crate::ui::i18n::Lang::En,
         }
+    }
+
+    pub fn labels(&self) -> &'static crate::ui::i18n::Labels {
+        crate::ui::i18n::labels(self.lang)
     }
 
     /// 키 입력 처리. true 반환 시 종료.
@@ -150,7 +158,11 @@ impl App {
                     opt.cursor = 0;
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    let len = crate::ui::options::pane_len(opt.pane, self.now_secs);
+                    let len = crate::ui::options::pane_len(
+                        opt.pane,
+                        self.now_secs,
+                        crate::ui::i18n::labels(self.lang),
+                    );
                     if len > 0 && opt.cursor + 1 < len {
                         opt.cursor += 1;
                     }
@@ -334,9 +346,10 @@ impl App {
         let Some(opt) = self.options.take() else {
             return;
         };
+        let l = self.labels();
         match opt.pane {
             Pane::Date => {
-                if let Some((_, date)) = crate::ui::options::date_items(self.now_secs)
+                if let Some((_, date)) = crate::ui::options::date_items(l, self.now_secs)
                     .into_iter()
                     .nth(opt.cursor)
                 {
@@ -352,15 +365,17 @@ impl App {
                 }
             }
             Pane::Team => {
-                if let Some((_, code)) =
-                    crate::ui::options::team_items().into_iter().nth(opt.cursor)
+                if let Some((_, code)) = crate::ui::options::team_items(l)
+                    .into_iter()
+                    .nth(opt.cursor)
                 {
                     self.fav_code = code;
                 }
             }
             Pane::Poll => {
-                if let Some((_, secs)) =
-                    crate::ui::options::poll_items().into_iter().nth(opt.cursor)
+                if let Some((_, secs)) = crate::ui::options::poll_items(l)
+                    .into_iter()
+                    .nth(opt.cursor)
                 {
                     self.poll_choice = secs;
                 }

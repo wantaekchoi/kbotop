@@ -17,11 +17,12 @@ use ratatui::{
 /// `tab == Tab::Games`일 때만 라이브 화면을 여므로(Standings 탭에서는
 /// no-op), Standings 탭에서는 "Enter Live"를 보여주지 않는다.
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
+    let l = app.labels();
     let (text, style) = match &app.last_error {
         Some(err) => (
             // 긴 에러(HTTP 본문 조각 등)는 한 줄 footer에서 조용히 잘린다 —
             // 정직한 말줄임(§15 오버플로 정책).
-            super::text::ellipsize(&format!(" ERROR: {err}"), area.width as usize),
+            super::text::ellipsize(&format!("{}{err}", l.error_prefix), area.width as usize),
             Style::default()
                 .fg(Color::White)
                 .bg(Color::Red)
@@ -32,17 +33,13 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
                 (Screen::Live { .. }, _) => {
                     if app.live_pitch_sel.is_some() {
                         // 선택 중: Esc 1회 = 전체보기 복귀임을 명시(직관성).
-                        " F1 Help   Esc All pitches   Left/Right Pitch   q Quit"
+                        l.hint_live_selected
                     } else {
-                        " F1 Help   Esc Back   Left/Right Pitch   q Quit"
+                        l.hint_live
                     }
                 }
-                (Screen::List, Tab::Games) => {
-                    " F1 Help   F2 Options   Tab Switch   o Links   n News   Enter Live   q Quit"
-                }
-                (Screen::List, Tab::Standings) => {
-                    " F1 Help   F2 Options   Tab Switch   o Links   n News   q Quit"
-                }
+                (Screen::List, Tab::Games) => l.hint_list_games,
+                (Screen::List, Tab::Standings) => l.hint_list_standings,
             };
             (
                 hint.to_string(),
@@ -157,5 +154,19 @@ mod tests {
         let selected = render_to_string(&app);
         assert!(selected.contains("Esc All pitches"));
         assert!(!selected.contains("Esc Back"));
+    }
+
+    #[test]
+    fn korean_hint_renders_when_lang_ko() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        let text = render_to_string(&app);
+        // 전각 문자는 TestBackend에서 다음 셀에 플레이스홀더 공백을 남긴다
+        // (games.rs의 renders_full_width_korean_team_names_without_panic과 동일 사유).
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            compact.contains("도움말") && compact.contains("종료"),
+            "unexpected: {text}"
+        );
     }
 }

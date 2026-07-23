@@ -1,4 +1,5 @@
 //! F2 옵션 픽커 오버레이 + 공용 chooser(링크 픽커도 재사용).
+use super::i18n::Labels;
 use super::theme::team_badge_style;
 use crate::app::{App, Pane};
 use crate::dateutil::{format_civil, kst_days};
@@ -11,16 +12,24 @@ use ratatui::{
 };
 
 /// Date pane 항목: (표시 라벨, YYYY-MM-DD). 오늘은 now_secs 기준 KST.
-pub fn date_items(now_secs: u64) -> Vec<(String, String)> {
+/// "-2"/"-3"/"+2"/"+3"의 접미(days/일)는 언어별 완성형이 아니라
+/// `l.date_days_fmt_minus`(공백 유무 포함 sep)로 데이터 주도 조립한다 —
+/// 언어 분기(match lang) 없이 라벨 데이터만 바뀌면 문구가 따라온다.
+pub fn date_items(l: &'static Labels, now_secs: u64) -> Vec<(String, String)> {
     let today = kst_days(now_secs);
+    let sep = if l.date_days_fmt_minus == "days" {
+        " "
+    } else {
+        ""
+    };
     [
-        ("Today", 0i64),
-        ("Yesterday", -1),
-        ("Tomorrow", 1),
-        ("-2 days", -2),
-        ("-3 days", -3),
-        ("+2 days", 2),
-        ("+3 days", 3),
+        (l.date_today.to_string(), 0i64),
+        (l.date_yesterday.to_string(), -1),
+        (l.date_tomorrow.to_string(), 1),
+        (format!("{:+}{sep}{}", -2, l.date_days_fmt_minus), -2),
+        (format!("{:+}{sep}{}", -3, l.date_days_fmt_minus), -3),
+        (format!("{:+}{sep}{}", 2, l.date_days_fmt_minus), 2),
+        (format!("{:+}{sep}{}", 3, l.date_days_fmt_minus), 3),
     ]
     .into_iter()
     .map(|(label, off)| {
@@ -31,8 +40,8 @@ pub fn date_items(now_secs: u64) -> Vec<(String, String)> {
 }
 
 /// Team pane 항목: (라벨, 코드). 첫 항목은 해제(None).
-pub fn team_items() -> Vec<(String, Option<String>)> {
-    let mut v = vec![("None (clear)".to_string(), None)];
+pub fn team_items(l: &'static Labels) -> Vec<(String, Option<String>)> {
+    let mut v = vec![(l.team_none.to_string(), None)];
     for (code, name) in [
         ("LG", "LG 트윈스"),
         ("OB", "두산 베어스"),
@@ -50,19 +59,19 @@ pub fn team_items() -> Vec<(String, Option<String>)> {
     v
 }
 
-pub fn poll_items() -> Vec<(String, u64)> {
+pub fn poll_items(l: &'static Labels) -> Vec<(String, u64)> {
     [3u64, 5, 10, 30]
         .into_iter()
-        .map(|s| (format!("{s}s live poll"), s))
+        .map(|s| (format!("{s}{}", l.poll_suffix), s))
         .collect()
 }
 
 /// app.rs 커서 경계용 항목 수.
-pub fn pane_len(pane: Pane, now_secs: u64) -> usize {
+pub fn pane_len(pane: Pane, now_secs: u64, l: &'static Labels) -> usize {
     match pane {
-        Pane::Date => date_items(now_secs).len(),
-        Pane::Team => team_items().len(),
-        Pane::Poll => poll_items().len(),
+        Pane::Date => date_items(l, now_secs).len(),
+        Pane::Team => team_items(l).len(),
+        Pane::Poll => poll_items(l).len(),
     }
 }
 
@@ -92,6 +101,7 @@ pub fn chooser(f: &mut Frame, area: Rect, title: &str, items: &[Line], cursor: u
 /// F2 옵션 오버레이: 상단 pane 탭(활성 브래킷 — 헤더 탭과 같은 문법) + 항목.
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let Some(opt) = &app.options else { return };
+    let l = app.labels();
     let tab = |p: Pane, label: &str| {
         if opt.pane == p {
             format!("[ {label} ]")
@@ -100,30 +110,31 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         }
     };
     let title = format!(
-        "Options  {}|{}|{}",
-        tab(Pane::Date, "Date"),
-        tab(Pane::Team, "Team"),
-        tab(Pane::Poll, "Poll")
+        "{}  {}|{}|{}",
+        l.title_options,
+        tab(Pane::Date, l.pane_date),
+        tab(Pane::Team, l.pane_team),
+        tab(Pane::Poll, l.pane_poll)
     );
     let items: Vec<Line> = match opt.pane {
-        Pane::Date => date_items(app.now_secs)
+        Pane::Date => date_items(l, app.now_secs)
             .into_iter()
-            .map(|(l, _)| Line::from(l))
+            .map(|(label, _)| Line::from(label))
             .collect(),
-        Pane::Team => team_items()
+        Pane::Team => team_items(l)
             .into_iter()
-            .map(|(l, code)| match code {
+            .map(|(label, code)| match code {
                 Some(c) => Line::from(vec![
                     Span::styled(format!(" {c} "), team_badge_style(&c)),
                     Span::raw(" "),
-                    Span::raw(l),
+                    Span::raw(label),
                 ]),
-                None => Line::from(l),
+                None => Line::from(label),
             })
             .collect(),
-        Pane::Poll => poll_items()
+        Pane::Poll => poll_items(l)
             .into_iter()
-            .map(|(l, _)| Line::from(l))
+            .map(|(label, _)| Line::from(label))
             .collect(),
     };
     chooser(f, area, &title, &items, opt.cursor);
@@ -154,14 +165,40 @@ mod tests {
         for label in ["Date", "Team", "Poll"] {
             assert!(text.contains(label), "pane label {label} missing");
         }
-        for (label, _) in date_items(app.now_secs) {
+        for (label, _) in date_items(app.labels(), app.now_secs) {
             assert!(text.contains(&label), "date item {label} missing");
         }
     }
 
     #[test]
+    fn korean_options_panes_render_when_lang_ko() {
+        let mut app = crate::app::App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        app.options = Some(crate::app::OptionsState {
+            pane: crate::app::Pane::Date,
+            cursor: 0,
+        });
+        app.now_secs = 1_800_000_000;
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        term.draw(|f| render(f, f.area(), &app)).unwrap();
+        let text: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        // ratatui는 전각(2-width) 문자 뒤에 placeholder 공백 셀을 채워 넣으므로
+        // (live.rs 테스트와 동일한 이유) 공백을 제거하고 부분 문자열을 검사한다.
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        for needle in ["날짜", "팀", "주기", "오늘"] {
+            assert!(compact.contains(needle), "{needle} missing:\n{text}");
+        }
+    }
+
+    #[test]
     fn team_items_cover_all_ten_teams_plus_none() {
-        let items = team_items();
+        let items = team_items(crate::ui::i18n::labels(crate::ui::i18n::Lang::En));
         assert_eq!(items.len(), 11);
         assert_eq!(items[0].1, None); // 해제 항목
         for code in ["LG", "OB", "SK", "KT", "NC", "HT", "LT", "SS", "HH", "WO"] {

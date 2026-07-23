@@ -1,4 +1,5 @@
 use crate::model::{Pitch, PitchResult};
+use crate::ui::i18n::Labels;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -73,7 +74,13 @@ fn fit_zone(area: Rect) -> Rect {
 /// 스트라이크존: ratatui Canvas 위에 존 박스(Rectangle 외곽선)와 각 투구
 /// 위치(작은 Rectangle + 구 순번 텍스트)를 겹쳐 그린다. 공간이 있으면
 /// 하단에 최근 투구 구속 목록을 한 줄 덧붙인다.
-pub fn render(f: &mut Frame, area: Rect, pitches: &[Pitch], selected: Option<usize>) {
+pub fn render(
+    f: &mut Frame,
+    area: Rect,
+    pitches: &[Pitch],
+    selected: Option<usize>,
+    l: &'static Labels,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -105,7 +112,7 @@ pub fn render(f: &mut Frame, area: Rect, pitches: &[Pitch], selected: Option<usi
     // Option<usize>는 Copy라서 paint 클로저(move)가 값을 복사해 캡처해도
     // 아래 render_speed_list 호출에 쓸 원본 selected는 그대로 남는다.
     let canvas = Canvas::default()
-        .block(Block::bordered().title(" Zone "))
+        .block(Block::bordered().title(l.title_zone))
         .x_bounds([-2.5, 2.5])
         .y_bounds([-0.5, 5.5])
         .paint(move |ctx| {
@@ -143,7 +150,7 @@ pub fn render(f: &mut Frame, area: Rect, pitches: &[Pitch], selected: Option<usi
     f.render_widget(canvas, fit_zone(zone_area));
 
     if let Some(side_area) = side_area {
-        sideview::render(f, side_area, pitches, selected);
+        sideview::render(f, side_area, pitches, selected, l);
     }
 
     if let Some(list_area) = list_area {
@@ -224,7 +231,13 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(area_w, area_h)).unwrap();
         term.draw(|f| {
             let area = f.area();
-            render(f, area, pitches, None);
+            render(
+                f,
+                area,
+                pitches,
+                None,
+                crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+            );
         })
         .unwrap();
         term.backend()
@@ -351,7 +364,16 @@ mod tests {
             ..Default::default()
         });
         let mut term = Terminal::new(TestBackend::new(40, 20)).unwrap();
-        term.draw(|f| render(f, f.area(), &pitches, None)).unwrap();
+        term.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &pitches,
+                None,
+                crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+            )
+        })
+        .unwrap();
         let buf = term.backend().buffer().clone();
         // 하단 범례 LEGEND_HEIGHT줄을 제외한 canvas(존) 영역에서만 마커 '9' 를 찾는다 →
         // 범례 순번에서 주워오는 tautology 를 배제한다.
@@ -384,7 +406,16 @@ mod tests {
         high.speed_kmh = None;
         let pitches = vec![low, high];
         let mut term = Terminal::new(TestBackend::new(40, 20)).unwrap();
-        term.draw(|f| render(f, f.area(), &pitches, None)).unwrap();
+        term.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &pitches,
+                None,
+                crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+            )
+        })
+        .unwrap();
         let buf = term.backend().buffer().clone();
         let h = buf.area().height;
         let zone_bottom = h.saturating_sub(LEGEND_HEIGHT + super::super::sideview::SIDE_HEIGHT);
@@ -432,8 +463,16 @@ mod tests {
         use ratatui::style::Modifier;
         let pitches = sample_pitches();
         let mut term = Terminal::new(TestBackend::new(40, 20)).unwrap();
-        term.draw(|f| render(f, f.area(), &pitches, Some(1)))
-            .unwrap();
+        term.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &pitches,
+                Some(1),
+                crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+            )
+        })
+        .unwrap();
         let buf = term.backend().buffer().clone();
         let reversed_exists = buf
             .content()
@@ -450,8 +489,16 @@ mod tests {
     fn selection_filters_zone_canvas_to_the_selected_pitch_only() {
         let pitches = sample_pitches(); // order 1,2,3
         let mut term = Terminal::new(TestBackend::new(40, 20)).unwrap();
-        term.draw(|f| render(f, f.area(), &pitches, Some(1)))
-            .unwrap(); // order 2 선택
+        term.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &pitches,
+                Some(1),
+                crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+            )
+        })
+        .unwrap(); // order 2 선택
         let buf = term.backend().buffer().clone();
         let h = buf.area().height;
         let zone_bottom = h.saturating_sub(LEGEND_HEIGHT + super::super::sideview::SIDE_HEIGHT);

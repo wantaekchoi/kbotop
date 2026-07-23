@@ -2,6 +2,7 @@ pub mod footer;
 pub mod games;
 pub mod header;
 pub mod help;
+pub mod i18n;
 pub mod live;
 pub mod options;
 pub mod sideview;
@@ -28,6 +29,7 @@ use ratatui::{
 /// 높이가 충분하면 본문과 footer 사이에 초보용 팁 한 줄이 끼어드는 4단이 된다
 /// (아래 show_tip 분기).
 pub fn draw(f: &mut Frame, app: &App) {
+    let l = app.labels();
     // 높이 20 이상이면 본문-푸터 사이에 초보용 팁 한 줄을 끼운다(부족하면 본문 우선).
     let show_tip = f.area().height >= 20;
     let constraints: Vec<Constraint> = if show_tip {
@@ -72,19 +74,22 @@ pub fn draw(f: &mut Frame, app: &App) {
                 format!("{} — {}", n.title, n.source)
             };
             Line::from(vec![
-                Span::styled("News: ", Style::default().add_modifier(Modifier::DIM)),
+                Span::styled(l.news_label, Style::default().add_modifier(Modifier::DIM)),
                 Span::styled(
-                    text::ellipsize(&full, width.saturating_sub(6)),
+                    text::ellipsize(
+                        &full,
+                        width.saturating_sub(text::display_width(l.news_label)),
+                    ),
                     Style::default().add_modifier(Modifier::DIM),
                 ),
             ])
         } else {
             Line::from(vec![
-                Span::styled("Tip: ", Style::default().add_modifier(Modifier::DIM)),
+                Span::styled(l.tip_label, Style::default().add_modifier(Modifier::DIM)),
                 Span::styled(
                     text::ellipsize(
                         tips::pick(&app.tips_override, app.now_secs),
-                        width.saturating_sub(5),
+                        width.saturating_sub(text::display_width(l.tip_label)),
                     ),
                     Style::default().add_modifier(Modifier::DIM),
                 ),
@@ -106,11 +111,11 @@ pub fn draw(f: &mut Frame, app: &App) {
             .iter()
             .map(|(l, _)| ratatui::text::Line::from(l.as_str()))
             .collect();
-        options::chooser(f, f.area(), "Open in browser", &items, picker.cursor);
+        options::chooser(f, f.area(), l.title_open, &items, picker.cursor);
     }
 
     if app.show_help {
-        help::render(f, f.area());
+        help::render(f, f.area(), app);
     }
 }
 
@@ -397,5 +402,21 @@ mod tests {
         assert_eq!(current_news_index(0, 3), 0); // minute 0 → (0/2)%3
         assert_eq!(current_news_index(120, 3), 1); // minute 2 → 1
         assert_eq!(current_news_index(600, 3), 2); // minute 10 → 5%3
+    }
+
+    /// 한국어 lang일 때 하단 티커가 "팁: " 라벨을 쓴다(폭 예산도 라벨 폭에 맞춰 동적).
+    #[test]
+    fn korean_tip_label_renders_when_lang_ko() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        app.now_secs = 60; // 홀수 분 → Tip
+        let text = render_to_string(&app);
+        // 전각 문자는 TestBackend에서 다음 셀에 플레이스홀더 공백을 남긴다
+        // (renders_full_width_korean_team_names_without_panic과 동일 사유).
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            compact.contains("팁:"),
+            "expected Korean tip label:\n{text}"
+        );
     }
 }

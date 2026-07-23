@@ -1,3 +1,4 @@
+use crate::app::App;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     text::Line,
@@ -6,23 +7,11 @@ use ratatui::{
 };
 
 /// 화면 중앙에 고정 크기(50x14) 도움말 오버레이를 그린다.
-pub fn render(f: &mut Frame, area: Rect) {
+pub fn render(f: &mut Frame, area: Rect, app: &App) {
+    let l = app.labels();
     let rect = help_rect(50, 14, area);
-    let lines = vec![
-        Line::from("Move       j / k or Up / Down"),
-        Line::from("Top/Bottom gg / G"),
-        Line::from("Open live  Enter"),
-        Line::from("Back       Esc"),
-        Line::from("Switch tab Tab / F5"),
-        Line::from("Pitch      Left / Right (live view)"),
-        Line::from("Options    F2 (date / team / poll)"),
-        Line::from("Team links o (official / goods)"),
-        Line::from("Open news  n (current headline)"),
-        Line::from("Find       / (coming soon)"),
-        Line::from("Help       ? / F1"),
-        Line::from("Quit       q / F10"),
-    ];
-    let block = Block::bordered().title(" Help ");
+    let lines: Vec<Line> = l.help_lines.iter().map(|s| Line::from(*s)).collect();
+    let block = Block::bordered().title(l.title_help);
     let paragraph = Paragraph::new(lines).block(block);
 
     f.render_widget(Clear, rect);
@@ -54,4 +43,40 @@ pub(crate) fn help_rect(width: u16, height: u16, area: Rect) -> Rect {
         .split(vertical[1]);
 
     horizontal[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    fn render_to_string(app: &App) -> String {
+        let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        term.draw(|f| render(f, f.area(), app)).unwrap();
+        term.backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn korean_help_lines_render_when_lang_ko() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        let text = render_to_string(&app);
+        // 전각 문자는 TestBackend에서 다음 셀에 플레이스홀더 공백을 남긴다
+        // (games.rs의 renders_full_width_korean_team_names_without_panic과 동일 사유).
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            compact.contains("도움말"),
+            "expected Korean title in:\n{text}"
+        );
+        assert!(
+            compact.contains("이동"), // help_lines[0]의 선두 단어
+            "expected first Korean help line in:\n{text}"
+        );
+    }
 }

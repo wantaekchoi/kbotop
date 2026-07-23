@@ -2,6 +2,7 @@ use super::strikezone;
 use super::theme::team_badge_style;
 use crate::app::{App, Screen};
 use crate::model::{Game, GameStatus, LiveState};
+use crate::ui::i18n::Labels;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -13,16 +14,16 @@ use ratatui::{
 /// Live/Suspended/Final 외 상태(can_enter_live가 걸러내는 Canceled/Scheduled)는
 /// 이 화면에 들어오지 않으므로 배지가 필요 없다 — None을 반환해 그대로 숨긴다.
 /// 색은 games.rs의 status_tag와 맞춘다(같은 상태는 같은 색으로 보이도록).
-fn status_badge(status: GameStatus) -> Option<(&'static str, Style)> {
+fn status_badge(status: GameStatus, l: &'static Labels) -> Option<(&'static str, Style)> {
     match status {
         GameStatus::Suspended => Some((
-            "SUSPENDED",
+            l.badge_suspended,
             Style::default()
                 .fg(Color::Magenta)
                 .add_modifier(Modifier::BOLD),
         )),
         GameStatus::Final => Some((
-            "FINAL",
+            l.badge_final,
             Style::default()
                 .fg(Color::Gray)
                 .add_modifier(Modifier::BOLD),
@@ -33,12 +34,13 @@ fn status_badge(status: GameStatus) -> Option<(&'static str, Style)> {
 
 /// 라이브 뷰: 스코어라인(점수/카운트/주자/승률) + 문자중계(+ 폭 충분 시 스트라이크존).
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
+    let l = app.labels();
     let Screen::Live { game, state } = &app.screen else {
         return;
     };
     let Some(s) = state else {
         f.render_widget(
-            Paragraph::new("loading...").block(Block::bordered().title(" Live ")),
+            Paragraph::new(l.loading).block(Block::bordered().title(l.title_live)),
             area,
         );
         return;
@@ -49,7 +51,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Length(5), Constraint::Min(0)])
         .split(area);
 
-    render_scoreline(f, rows[0], s, game, app.live_pitch_sel);
+    render_scoreline(f, rows[0], s, game, app.live_pitch_sel, l);
 
     // 폭이 좁거나 아직 투구 데이터가 없으면 존을 숨기고 중계에 본문 전체를 준다(우아한 저하).
     let wide = rows[1].width >= 70 && !s.current_pitches.is_empty();
@@ -58,10 +60,10 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(rows[1]);
-        render_relay(f, cols[0], s);
-        strikezone::render(f, cols[1], &s.current_pitches, app.live_pitch_sel);
+        render_relay(f, cols[0], s, l);
+        strikezone::render(f, cols[1], &s.current_pitches, app.live_pitch_sel, l);
     } else {
-        render_relay(f, rows[1], s);
+        render_relay(f, rows[1], s, l);
     }
 }
 
@@ -70,7 +72,14 @@ fn win_pct(rate: Option<f32>) -> String {
         .unwrap_or_else(|| "-".into())
 }
 
-fn render_scoreline(f: &mut Frame, area: Rect, s: &LiveState, game: &Game, sel: Option<usize>) {
+fn render_scoreline(
+    f: &mut Frame,
+    area: Rect,
+    s: &LiveState,
+    game: &Game,
+    sel: Option<usize>,
+    l: &'static Labels,
+) {
     let status = game.status;
     // 3슬롯 ASCII 주자 표시: [3루 2루 1루], 빈 베이스는 '-' — 폭 고정.
     let bases = format!(
@@ -94,7 +103,7 @@ fn render_scoreline(f: &mut Frame, area: Rect, s: &LiveState, game: &Game, sel: 
     ];
     // 서스펜디드/종료 경기는 스코어라인만 봐서는 진행 중인 경기와 구분이
     // 안 된다 — inning_label 옆에 배지를 붙여 우아하게 저하시킨다.
-    if let Some((label, style)) = status_badge(status) {
+    if let Some((label, style)) = status_badge(status, l) {
         spans.push(Span::raw(" "));
         spans.push(Span::styled(label, style));
     }
@@ -122,12 +131,15 @@ fn render_scoreline(f: &mut Frame, area: Rect, s: &LiveState, game: &Game, sel: 
         .nth(1)
         .and_then(|t| t.get(0..5))
         .unwrap_or("");
-    let mut detail = format!("P: {}   B: {}", s.pitcher_name, s.batter_name);
+    let mut detail = format!(
+        "{}: {}   {}: {}",
+        l.lbl_pitcher, s.pitcher_name, l.lbl_batter, s.batter_name
+    );
     if !s.next_batter_name.is_empty() {
-        detail.push_str(&format!("   Next: {}", s.next_batter_name));
+        detail.push_str(&format!("   {}: {}", l.lbl_next, s.next_batter_name));
     }
     if !start_hhmm.is_empty() {
-        detail.push_str(&format!("   Start {start_hhmm}"));
+        detail.push_str(&format!("   {} {start_hhmm}", l.lbl_start));
     }
     let detail_line = Line::from(detail);
 
@@ -148,7 +160,8 @@ fn render_scoreline(f: &mut Frame, area: Rect, s: &LiveState, game: &Game, sel: 
             // (테두리 2칸 제외한 내부 폭 기준, §15 오버플로 정책).
             Line::from(super::text::ellipsize(
                 &format!(
-                    "Pitch {}/{}  {}  {} {}  {}",
+                    "{} {}/{}  {}  {} {}  {}",
+                    l.pitch_word,
                     i + 1,
                     s.current_pitches.len(),
                     speed,
@@ -160,15 +173,17 @@ fn render_scoreline(f: &mut Frame, area: Rect, s: &LiveState, game: &Game, sel: 
             ))
         }
         None if !s.current_pitches.is_empty() => Line::from(format!(
-            "Pitches {}  (Left/Right to inspect)",
-            s.current_pitches.len()
+            "{} {}  {}",
+            l.pitches_word,
+            s.current_pitches.len(),
+            l.inspect_hint
         )),
         None => Line::from(""),
     };
 
     f.render_widget(
         Paragraph::new(vec![score_line, detail_line, pitch_line])
-            .block(Block::bordered().title(" Live ")),
+            .block(Block::bordered().title(l.title_live)),
         area,
     );
 }
@@ -193,17 +208,17 @@ fn elapsed_label(game_start: &str, pitch_hms: &str) -> Option<String> {
     Some(format!("(+{}:{:02})", d / 3600, (d % 3600) / 60))
 }
 
-fn render_relay(f: &mut Frame, area: Rect, s: &LiveState) {
+fn render_relay(f: &mut Frame, area: Rect, s: &LiveState, l: &'static Labels) {
     // 오래된→최신 순으로 저장돼 있으므로 꼬리(N줄)만 그대로 잘라 쓰면
     // 최신이 리스트 맨 아래에 온다.
     let n = area.height.saturating_sub(2) as usize;
     let start = s.relay_log.len().saturating_sub(n);
     let items: Vec<ListItem> = s.relay_log[start..]
         .iter()
-        .map(|l| ListItem::new(format!("· {l}")))
+        .map(|entry| ListItem::new(format!("· {entry}")))
         .collect();
     f.render_widget(
-        List::new(items).block(Block::bordered().title(" Play-by-play ")),
+        List::new(items).block(Block::bordered().title(l.title_relay)),
         area,
     );
 }
@@ -426,6 +441,21 @@ mod tests {
             text.contains('…'),
             "expected honest ellipsis in detail line"
         );
+    }
+
+    #[test]
+    fn korean_live_labels_render_when_lang_ko() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        app.screen = live_screen();
+        let text = render_live_view_only(&app, 100, 30);
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            compact.contains("문자중계"),
+            "relay title must be Korean:\n{text}"
+        );
+        assert!(compact.contains("투수:") && compact.contains("타자:"));
+        assert!(text.contains("좌우 키로 하나씩") || compact.contains("투구"));
     }
 
     #[test]
