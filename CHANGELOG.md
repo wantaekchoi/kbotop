@@ -5,8 +5,10 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-23
+
 ### Changed
-- 팀 컬러를 배경과 무관하게 읽히도록 통일 — 전경 전용(fg) RGB 팀 컬러를 없애고 배지(배경·글자색을 함께 칠함) 방식으로만 사용. 순위표 팀명도 배지로 렌더.
+- 팀 컬러를 배경과 무관하게 읽히도록 통일 — 전경 전용(fg) RGB 팀 컬러를 없애고 배지(배경·글자색을 함께 칠함) 방식으로만 사용. 순위표 팀명도 배지로 렌더. 터미널 기본 배경색과 관계없이 팀 컬러가 항상 읽힙니다.
 - `accent_on_dark`(어두운 배경 가정) 제거 — 헤더 테두리·스피너·활성 탭·선택 하이라이트를 배경 무관 방식(명명색·반전·팀색 배지)으로 전환.
 
 ### Added
@@ -71,7 +73,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/wantaekchoi/kbotop/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/wantaekchoi/kbotop/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/wantaekchoi/kbotop/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/wantaekchoi/kbotop/compare/v0.1.2...v0.2.0

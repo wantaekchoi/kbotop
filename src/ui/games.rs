@@ -1,5 +1,5 @@
 use super::i18n::Labels;
-use super::theme::team_badge_style;
+use super::theme::{contrast_fg, team_badge_style, team_color};
 use crate::app::App;
 use crate::model::GameStatus;
 use ratatui::{
@@ -89,8 +89,11 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         Constraint::Length(14),
     ];
 
-    let highlight = match super::theme::accent(app.fav_code.as_deref()) {
-        Some(a) => Style::default().bg(a).fg(super::theme::contrast_fg(a)),
+    let highlight = match app.fav_code.as_deref() {
+        Some(code) => {
+            let bg = team_color(code);
+            Style::default().bg(bg).fg(contrast_fg(bg))
+        }
         None => Style::default().add_modifier(Modifier::REVERSED),
     };
 
@@ -126,9 +129,9 @@ mod tests {
             .collect()
     }
 
-    // home/away는 의도적으로 "LG"를 피한다 — LG는 이미 검정 대비 3:1을 넘어
-    // accent_on_dark("LG") == team_color("LG")라, LG를 fixture에 쓰면 fav
-    // 미설정 상태에서도 팀 배지 배경이 우연히 accent(LG)와 같아져 오탐이 난다.
+    // home/away는 의도적으로 "LG"·"OB"를 피한다 — 아래 selection_highlight_* 테스트들이
+    // team_color("LG")/team_color("OB")를 "이 픽스처에는 없는 색" 기준으로 비교에 쓰기
+    // 때문에, 두 팀을 fixture에 넣으면 그 팀 배지 배경이 우연히 겹쳐 오탐이 난다.
     fn game(id: &str) -> crate::model::Game {
         use crate::model::{GameStatus, Team};
         crate::model::Game {
@@ -149,23 +152,29 @@ mod tests {
         }
     }
 
-    /// fav 설정 시 목록 선택 하이라이트가 액센트 배경으로 바뀐다(REVERSED 단독 대체).
+    /// fav 설정 시 목록 선택 하이라이트가 team_color 배경으로 바뀐다(REVERSED 단독 대체).
     #[test]
-    fn selection_highlight_uses_accent_when_fav_set() {
+    fn selection_highlight_uses_team_color_when_fav_set() {
         let mut app = App::new(Default::default());
-        app.fav_code = Some("LG".into());
-        app.apply(Update::Games(vec![game("g")]));
+        // OB는 KT@SK 픽스처에 없는 팀 — 배지에서는 절대 안 나오므로, 버퍼에 이 bg가
+        // 있다면 오직 선택 하이라이트에서만 나온 것이다(KT를 쓰면 KT 자체 배지 bg와
+        // 겹쳐 하이라이트 로직이 깨져도 통과하는 tautology가 된다).
+        app.fav_code = Some("OB".into());
+        app.apply(Update::Games(vec![game("g")])); // KT@SK 픽스처(OB 아님)
         let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
         term.draw(|f| render(f, f.area(), &app)).unwrap();
         let buf = term.backend().buffer().clone();
-        let acc = super::super::theme::accent(Some("LG")).unwrap();
         assert!(
-            buf.content().iter().any(|c| c.bg == acc),
-            "selected row must carry the accent background"
+            buf.content()
+                .iter()
+                .any(|c| c.bg == super::super::theme::team_color("OB")),
+            "선택 행이 team_color(fav) 배경을 써야 한다"
         );
     }
 
-    /// fav 미설정이면 현행(REVERSED) 그대로 — 액센트 셀이 없어야 한다.
+    /// fav 미설정이면 현행(REVERSED) 그대로 — LG(픽스처에 없는 팀) 컬러 셀이 없어야 한다.
+    /// game()의 KT/SK는 자체 배지로 team_color("KT")를 항상 그리므로 그 색은 비교 기준으로
+    /// 쓸 수 없다(픽스처에 없는 LG로 "fav 기반 배경이 전혀 추가되지 않았다"를 검증한다).
     #[test]
     fn selection_highlight_unchanged_without_fav() {
         let mut app = App::new(Default::default());
@@ -173,8 +182,10 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
         term.draw(|f| render(f, f.area(), &app)).unwrap();
         let buf = term.backend().buffer().clone();
-        let acc = super::super::theme::accent(Some("LG")).unwrap();
-        assert!(!buf.content().iter().any(|c| c.bg == acc));
+        assert!(!buf
+            .content()
+            .iter()
+            .any(|c| c.bg == super::super::theme::team_color("LG")));
     }
 
     #[test]

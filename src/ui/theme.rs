@@ -4,10 +4,10 @@ use ratatui::style::{Color, Modifier, Style};
 pub fn team_color(code: &str) -> Color {
     match code {
         "LG" => Color::Rgb(196, 0, 53),
-        // KT wiz 공식 색은 순수 검정. games.rs/live.rs는 team_badge_style로 이 색을
-        // 배경에 얹고 contrast_fg로 대비 글자색을 골라 순수 검정도 배지로는 괜찮지만,
-        // standings.rs는 아직 team_color를 foreground로만 쓴다 — 순수 검정이면 어두운
-        // 배경 터미널에서 안 보이므로, 최소 명도를 확보한 진회색으로 낮춰 식별성을 유지한다.
+        // KT wiz 공식 색은 순수 검정. team_badge_style/row 하이라이트 bg로 얹고
+        // contrast_fg로 대비 글자색을 고르면 글자 자체는 읽히지만, 순수 검정 배경은
+        // 어두운 터미널의 기본 배경과 시각적으로 구분이 안 돼 배지 경계가 사라진다 —
+        // 최소 명도를 확보한 진회색으로 낮춰 배경과의 식별성을 유지한다.
         "KT" => Color::Rgb(140, 140, 140),
         "SK" => Color::Rgb(206, 15, 105), // SSG
         "NC" => Color::Rgb(49, 91, 138),
@@ -51,25 +51,6 @@ pub fn contrast_ratio(a: Color, b: Color) -> f32 {
     (hi + 0.05) / (lo + 0.05)
 }
 
-/// 팀컬러를 액센트(어두운 터미널의 테두리·포인트)로 쓸 수 있게 밝힌 파생색.
-/// 검정 대비 3:1(WCAG 비텍스트 최소)에 도달할 때까지 흰색 쪽으로 선형 보간 —
-/// 채널 비율(색감)을 유지한 채 명도만 올린다. 이미 충분히 밝으면 원색 그대로.
-pub fn accent_on_dark(code: &str) -> Color {
-    let base = team_color(code);
-    let Color::Rgb(r, g, b) = base else {
-        return base;
-    };
-    let mut t = 0.0f32;
-    loop {
-        let mix = |c: u8| -> u8 { (c as f32 + (255.0 - c as f32) * t).round() as u8 };
-        let cand = Color::Rgb(mix(r), mix(g), mix(b));
-        if contrast_ratio(cand, Color::Rgb(0, 0, 0)) >= 3.0 || t >= 1.0 {
-            return cand;
-        }
-        t += 0.05;
-    }
-}
-
 /// 배경색 위에서 읽히는 글자색(흰/검)을 WCAG 대비율로 고른다.
 /// RGB가 아닌 색(이름 색 등)은 흰색을 기본으로 한다.
 pub fn contrast_fg(bg: Color) -> Color {
@@ -86,11 +67,6 @@ pub fn contrast_fg(bg: Color) -> Color {
         Color::Gray => Color::Black,
         _ => Color::White,
     }
-}
-
-/// 응원 팀 액센트(어두운 배경 가시성 보정 포함). None = 테마 미적용(현행 색).
-pub fn accent(fav: Option<&str>) -> Option<Color> {
-    fav.map(accent_on_dark)
 }
 
 /// 팀명 배지 스타일: 팀 컬러 배경 + 대비 글자색 + 굵게.
@@ -173,38 +149,6 @@ mod tests {
             let fg = contrast_fg(bg);
             let r = contrast_ratio(bg, fg);
             assert!(r >= 4.5, "{code}: badge contrast {r:.2} < 4.5");
-        }
-    }
-
-    #[test]
-    fn accent_derives_from_fav_and_none_without() {
-        assert!(accent(None).is_none());
-        let a = accent(Some("WO")).unwrap();
-        assert!(
-            contrast_ratio(a, Color::Rgb(0, 0, 0)) >= 3.0,
-            "accent must be visible on dark"
-        );
-    }
-
-    /// 완전성: 10팀 전부 액센트 파생색이 검정 배경 대비 3:1 이상(어두운 터미널 가정).
-    /// 어두운 팀컬러(두산 남색·키움 자주 등)가 테두리/포인트로 안 보이던 문제 해소.
-    #[test]
-    fn every_team_accent_on_dark_is_visible() {
-        for code in ["LG", "OB", "SK", "KT", "NC", "HT", "LT", "SS", "HH", "WO"] {
-            let a = accent_on_dark(code);
-            let r = contrast_ratio(a, Color::Rgb(0, 0, 0));
-            assert!(r >= 3.0, "{code}: accent contrast {r:.2} < 3.0");
-            // 색상(hue) 보존 러프 검증: 원색의 최대 채널이 파생색에서도 최대(또는 공동 최대).
-            if let (Color::Rgb(r0, g0, b0), Color::Rgb(r1, g1, b1)) = (team_color(code), a) {
-                let max0 = r0.max(g0).max(b0);
-                let max1 = r1.max(g1).max(b1);
-                assert!(
-                    (r0 == max0) == (r1 == max1)
-                        || (g0 == max0) == (g1 == max1)
-                        || (b0 == max0) == (b1 == max1),
-                    "{code}: dominant channel changed"
-                );
-            }
         }
     }
 }

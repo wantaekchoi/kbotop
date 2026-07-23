@@ -1,4 +1,4 @@
-use super::theme::{self, team_badge_style};
+use super::theme::team_badge_style;
 use crate::app::{App, Tab};
 use crate::model::GameStatus;
 use ratatui::{
@@ -48,9 +48,8 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         ),
     ];
 
-    // 응원 팀 액센트: 테두리·타이틀을 파생 액센트로(v0.2 GIF의 "안 보이는 자주색
-    // 테두리" 해소), 1행 우측에 배지 + GO!.
-    let accent = theme::accent(app.fav_code.as_deref());
+    // 응원 팀 배지: 1행 우측에 팀컬러 배지(bg+대비 글자색) + GO!. 테두리·탭·스피너는
+    // 배경 무관 가독을 위해 named color/reverse만 쓰고 팀컬러 fg는 쓰지 않는다(v0.5).
     if let Some(code) = app.fav_code.as_deref() {
         counts_spans.push(Span::raw("   "));
         counts_spans.push(Span::styled(format!(" {code} "), team_badge_style(code)));
@@ -62,10 +61,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
 
     let counts = Line::from(counts_spans);
 
-    let mut active = Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD);
-    if let Some(a) = accent {
-        active = active.fg(a);
-    }
+    let active = Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD);
     let inactive = Style::default().add_modifier(Modifier::DIM);
     // 활성 탭은 브래킷으로도 표시한다: 반전이 미묘한 터미널·색각 사용자도
     // 텍스트만으로 현재 탭을 읽을 수 있다(v0.2 Tab UX fix). 라벨 폭을
@@ -96,7 +92,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         tab_spans.push(Span::raw("   "));
         tab_spans.push(Span::styled(
             SPINNER[(app.spinner_frame % 4) as usize].to_string(),
-            Style::default().fg(accent.unwrap_or(Color::Cyan)),
+            Style::default().fg(Color::Cyan),
         ));
     }
     if app.stale {
@@ -108,10 +104,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     }
     let tabs = Line::from(tab_spans);
 
-    let mut block = Block::default().borders(Borders::ALL).title(" kbotop ");
-    if let Some(c) = accent {
-        block = block.border_style(Style::default().fg(c));
-    }
+    let block = Block::default().borders(Borders::ALL).title(" kbotop ");
 
     let paragraph = Paragraph::new(vec![counts, tabs]).block(block);
     f.render_widget(paragraph, area);
@@ -207,9 +200,10 @@ mod tests {
         assert!(!idle.contains('/'));
     }
 
-    /// 응원 팀이 설정되면 헤더가 팀 컬러 액센트(테두리)와 응원 배지("GO!")를 단다.
+    /// 응원 팀이 설정되면 헤더에 팀컬러 배지("GO!" 옆)가 뜬다. 테두리는 배경 무관
+    /// 가독을 위해 기본 스타일 그대로다(v0.5, 팀컬러 fg 사용 안 함).
     #[test]
-    fn favorite_team_gets_accent_border_and_cheer_badge() {
+    fn favorite_team_gets_cheer_badge() {
         let mut app = App::new(Default::default());
         app.fav_code = Some("LG".into());
         let text = render_to_string(&app);
@@ -217,21 +211,17 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(80, 4)).unwrap();
         term.draw(|f| render(f, f.area(), &app)).unwrap();
         let buf = term.backend().buffer().clone();
-        let accent = crate::ui::theme::accent(Some("LG")).unwrap();
-        assert_eq!(
-            buf[(0, 0)].fg,
-            accent,
-            "border must carry team accent color"
-        );
+        let team_bg = crate::ui::theme::team_color("LG");
         assert!(
-            buf.content().iter().any(|c| c.bg == accent),
+            buf.content().iter().any(|c| c.bg == team_bg),
             "cheer badge must render on team color background"
         );
     }
 
-    /// fav 설정 시 활성 탭 브래킷과 스피너가 액센트 색을 쓴다.
+    /// fav 설정 여부와 무관하게 활성 탭·스피너는 named color(Cyan)/reverse만 쓴다
+    /// (v0.5: 어두운 팀컬러 fg가 밝은 배경에서 안 보이던 문제 해소).
     #[test]
-    fn active_tab_and_spinner_take_accent_when_fav_set() {
+    fn active_tab_and_spinner_use_named_colors_when_fav_set() {
         let mut app = App::new(Default::default());
         app.fav_code = Some("HH".into());
         app.fetching = true;
@@ -239,10 +229,17 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(80, 4)).unwrap();
         term.draw(|f| render(f, f.area(), &app)).unwrap();
         let buf = term.backend().buffer().clone();
-        let acc = crate::ui::theme::accent(Some("HH")).unwrap();
         assert!(
-            buf.content().iter().any(|c| c.fg == acc),
-            "accent fg cells must exist"
+            buf.content().iter().any(|c| c.fg == Color::Cyan),
+            "spinner must use Cyan regardless of fav"
+        );
+        // 팀컬러(HH=주황)가 fg로 새어나가지 않아야 한다 — 배지 fg(contrast_fg)만 예외.
+        let team_fg_leak = buf.content().iter().any(|c| {
+            c.fg == crate::ui::theme::team_color("HH") && c.bg != crate::ui::theme::team_color("HH")
+        });
+        assert!(
+            !team_fg_leak,
+            "team color must not be used as bare fg outside the badge"
         );
     }
 

@@ -1,4 +1,4 @@
-use super::theme::team_color;
+use super::theme::{contrast_fg, team_badge_style, team_color};
 use crate::app::App;
 use ratatui::{
     layout::{Constraint, Rect},
@@ -49,7 +49,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
                 Cell::from(s.rank.to_string()),
                 Cell::from(Span::styled(
                     s.team.name.as_str(),
-                    Style::default().fg(team_color(&s.team.code)),
+                    team_badge_style(&s.team.code),
                 )),
                 Cell::from(s.games.to_string()),
                 Cell::from(s.wins.to_string()),
@@ -72,8 +72,11 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         Constraint::Length(5),
     ];
 
-    let highlight = match super::theme::accent(app.fav_code.as_deref()) {
-        Some(a) => Style::default().bg(a).fg(super::theme::contrast_fg(a)),
+    let highlight = match app.fav_code.as_deref() {
+        Some(code) => {
+            let bg = team_color(code);
+            Style::default().bg(bg).fg(contrast_fg(bg))
+        }
         None => Style::default().add_modifier(Modifier::REVERSED),
     };
 
@@ -137,6 +140,44 @@ mod tests {
         let text = render_to_string(&app);
         assert!(text.contains("Standings 2026 (current)"));
         assert!(!text.contains("05-29"));
+    }
+
+    fn standing_of(code: &str, name: &str) -> crate::model::Standing {
+        crate::model::Standing {
+            rank: 1,
+            team: crate::model::Team {
+                code: code.into(),
+                name: name.into(),
+            },
+            games: 10,
+            wins: 5,
+            losses: 5,
+            draws: 0,
+            win_rate: 0.5,
+            game_behind: 0.0,
+        }
+    }
+
+    /// 순위표 팀명은 배지(팀컬러 bg + 대비 글자색)로 렌더 — 배경 무관 가독.
+    #[test]
+    fn standings_team_names_render_as_badges() {
+        let mut app = App::new(Default::default());
+        app.tab = crate::app::Tab::Standings;
+        app.apply(Update::Standings(vec![
+            standing_of("OB", "두산"),
+            standing_of("HH", "한화"),
+        ]));
+        let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        term.draw(|f| render(f, f.area(), &app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        for code in ["OB", "HH"] {
+            assert!(
+                buf.content()
+                    .iter()
+                    .any(|c| c.bg == super::team_color(code)),
+                "{code} 팀명이 팀컬러 배경 배지로 렌더돼야 한다"
+            );
+        }
     }
 
     #[test]

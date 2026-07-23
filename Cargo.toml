@@ -1,6 +1,6 @@
 [package]
 name = "kbotop"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.75"
 description = "Watch KBO baseball from your terminal — live scoreboard & strike-zone pitch tracking, in the spirit of htop."

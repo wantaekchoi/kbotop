@@ -9,7 +9,10 @@ use clap::Parser;
 use crossterm::{
     event::{self, Event, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, BeginSynchronizedUpdate, EndSynchronizedUpdate,
+        EnterAlternateScreen, LeaveAlternateScreen,
+    },
 };
 use ratatui::{backend::CrosstermBackend, Frame, Terminal};
 
@@ -452,7 +455,10 @@ fn run(
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
+        // 동기화 출력(BSU/ESU): 미지원 터미널은 이스케이프를 무시하므로 안전.
+        let _ = execute!(std::io::stdout(), BeginSynchronizedUpdate);
         term.draw(|f: &mut Frame| ui::draw(f, app))?;
+        let _ = execute!(std::io::stdout(), EndSynchronizedUpdate);
 
         // 입력(100ms 폴링으로 렌더 갱신 보장).
         if event::poll(Duration::from_millis(100))? {
