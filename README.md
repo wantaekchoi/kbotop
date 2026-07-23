@@ -2,7 +2,7 @@
 
 # kbotop
 
-**A terminal viewer for live KBO baseball** — scores, text play-by-play, and strike-zone pitch tracking, updating in place.
+**A terminal viewer for live KBO baseball**: scores, text play-by-play, and strike-zone pitch tracking, updating in place.
 
 [![crates.io](https://img.shields.io/crates/v/kbotop?style=flat-square)](https://crates.io/crates/kbotop)
 [![Release](https://img.shields.io/github/v/release/wantaekchoi/kbotop?style=flat-square)](https://github.com/wantaekchoi/kbotop/releases)
@@ -17,7 +17,7 @@
 
 ## Introduction
 
-`kbotop` is an interactive viewer for KBO (Korea Baseball Organization) games. It shows today's games as a live, self-refreshing dashboard — the score, the count, the runners, and the text play-by-play, all updating in place while you watch.
+`kbotop` is an interactive viewer for KBO (Korea Baseball Organization) games. It shows today's games as a live, self-refreshing dashboard: the score, the count, the runners, and the text play-by-play, all updating in place while you watch.
 
 For a game in progress it draws each pitch in the strike zone from Naver's pitch-tracking data, so you see location and speed, not just the line score.
 
