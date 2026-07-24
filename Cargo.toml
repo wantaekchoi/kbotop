@@ -33,7 +33,7 @@ toml = "0.8"
 directories = "5"
 anyhow = "1"
 thiserror = "2"
-signal-hook = "0.3"
+signal-hook = "0.4"
 roxmltree = "0.21"
 
 [profile.release]
