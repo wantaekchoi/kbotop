@@ -65,6 +65,16 @@ pub fn contrast_fg(bg: Color) -> Color {
         }
         // 미등록 팀 폴백(Gray) 배지: 흰 글자는 저대비 → 검정(리뷰 Minor).
         Color::Gray => Color::Black,
+        // named_color가 accent_for로 내는 6개 명명색(T9 하이라이트 배경) — 표준
+        // 팔레트 관례: 밝은 배경(Yellow/Cyan/Green)은 검정 글자, 어두운 배경
+        // (Red/Blue/Magenta)은 흰 글자. 이전엔 전부 White 폴백이라 밝은 배경에서
+        // 거의 안 읽혔다(리뷰 Important).
+        Color::Yellow | Color::Cyan | Color::Green => Color::Black,
+        Color::Red | Color::Blue | Color::Magenta => Color::White,
+        // 방어적 폴백: White 배경엔 Black, Black 배경엔 White. accent 소스는 이
+        // 두 색을 내지 않지만(named_color 참고) 대비 원칙을 지킨다.
+        Color::White => Color::Black,
+        Color::Black => Color::White,
         _ => Color::White,
     }
 }
@@ -77,6 +87,77 @@ pub fn team_badge_style(code: &str) -> Style {
         .bg(bg)
         .fg(contrast_fg(bg))
         .add_modifier(Modifier::BOLD)
+}
+
+/// 액센트 색을 preset·accent 소스·응원팀으로 결정한다. mono 프리셋은 항상 None
+/// (색 없음). accent=team이면 팀 컬러(배지 아닌 chrome 강조는 명명색 계열로만
+/// 쓰이나, team은 유일하게 RGB — 테두리 등 전경에 쓰면 배경무관 위반이므로
+/// 호출부는 team 액센트를 배지/반전 맥락에서만 쓴다), named면 매핑, none이면 None.
+///
+/// T9가 games/standings의 선택 하이라이트(fav_code 기반 team_color 배경)를
+/// 이 함수로 대체해 배선했다 — None이면 호출부가 REVERSED로 대체한다.
+pub fn accent_for(preset: &str, accent: &str, fav: Option<&str>) -> Option<Color> {
+    if preset == "mono" {
+        return None;
+    }
+    match accent {
+        "team" => fav.map(team_color),
+        "none" => None,
+        name => named_color(name),
+    }
+}
+
+/// 배경 양쪽에서 읽히는 명명색만 허용한다(black/white는 한쪽에서 사라짐).
+fn named_color(name: &str) -> Option<Color> {
+    match name {
+        "cyan" => Some(Color::Cyan),
+        "green" => Some(Color::Green),
+        "yellow" => Some(Color::Yellow),
+        "magenta" => Some(Color::Magenta),
+        "blue" => Some(Color::Blue),
+        "red" => Some(Color::Red),
+        _ => None,
+    }
+}
+
+/// header의 LIVE/SCHED/FINAL/OTHER 카운트·스피너·stale 마커처럼 fav/accent
+/// 소스가 아니라 항상 고정색을 쓰던 chrome 지점의 게이트. accent_for와 달리
+/// 이 지점들은 액센트 소스와 무관하게 원래 정해진 named color를 그대로
+/// 유지하되(v0.5의 "배경 무관 가독" 결정), mono 프리셋에서만 그 색을
+/// 걷어낸다 — "mono는 색 span 0"을 accent 지점 밖의 chrome까지 확장한다.
+/// 팀 배지(team_badge_style)는 데이터라 이 함수를 거치지 않는다(예외 유지).
+pub fn status_fg(preset: &str, color: Color) -> Style {
+    if preset == "mono" {
+        Style::default()
+    } else {
+        Style::default().fg(color)
+    }
+}
+
+/// status_fg와 같은 정책을 Style이 아니라 원시 Color로 내야 하는 지점의 게이트.
+/// ratatui Canvas Shape(Rectangle/Line 등)의 `color` 필드는 Style을 받지 않고
+/// Color를 직접 요구해 status_fg를 못 쓴다 — strikezone의 투구 마커, sideview의
+/// 궤적선이 여기 해당한다(리뷰 Important: 이전엔 게이트가 없어 mono에서도
+/// Green/Red/Yellow/Cyan 투구색이 그대로 남았다).
+/// mono면 Color::Reset(색 지정 없음 → 터미널 기본 전경색 상속)을 낸다.
+/// v0.8 재리뷰 Important: 이전엔 White를 냈는데, White는 배경 무관이 아니다
+/// (named_color 주석대로 밝은 배경에서 흰 마커는 안 보인다) — 이 프로젝트가
+/// accent 명명색에서 black/white를 배제한 것과 같은 이유로 재발.
+/// "Reset은 Canvas가 '그리지 않음'으로 특별 취급해 마커가 사라진다"는 초기
+/// 구현 주장은 ratatui 0.29 실측으로 반증됐다: 이 파일이 쓰는 기본 마커는
+/// Marker::Braille이고, BrailleGrid::paint는 점 비트를 색과 무관하게 세우며,
+/// Canvas::render_ref(widgets/canvas.rs)는 문자가 blank braille(U+2800)가
+/// 아니면 색과 무관하게 무조건 set_char 한다 — fg만 Reset이면 미설정으로
+/// 남을 뿐 글리프는 그대로 그려진다. Reset이 "안 그림"으로 합쳐지는 건
+/// HalfBlockGrid 마커(Marker::HalfBlock) 한정이며 이 크레이트는 쓰지 않는다.
+/// 아래 status_color_reset_still_draws_a_braille_marker_on_canvas가 이를
+/// 코드로 못박는다.
+pub fn status_color(preset: &str, color: Color) -> Color {
+    if preset == "mono" {
+        Color::Reset
+    } else {
+        color
+    }
 }
 
 #[cfg(test)]
@@ -128,6 +209,34 @@ mod tests {
         assert_eq!(contrast_fg(Color::Gray), Color::Black);
     }
 
+    /// 명명색 액센트 배경(accent_for가 낼 수 있는 6색)의 대비 글자색 — 리뷰 Important:
+    /// 이전엔 전부 White 폴백이라 밝은 배경(Yellow/Cyan/Green)에서 거의 안 읽혔다.
+    /// 밝은 배경 → 검정 글자, 어두운 배경 → 흰 글자(표준 팔레트 관례).
+    #[test]
+    fn contrast_fg_reads_on_named_accent_backgrounds() {
+        for bright in [Color::Yellow, Color::Cyan, Color::Green] {
+            assert_eq!(
+                contrast_fg(bright),
+                Color::Black,
+                "{bright:?} bg should get black fg"
+            );
+        }
+        for dark in [Color::Red, Color::Blue, Color::Magenta] {
+            assert_eq!(
+                contrast_fg(dark),
+                Color::White,
+                "{dark:?} bg should get white fg"
+            );
+        }
+    }
+
+    /// 방어적 폴백: White/Black 자체가 배경으로 오는 경우도 대비 원칙을 지킨다.
+    #[test]
+    fn contrast_fg_handles_white_and_black_backgrounds_defensively() {
+        assert_eq!(contrast_fg(Color::White), Color::Black);
+        assert_eq!(contrast_fg(Color::Black), Color::White);
+    }
+
     /// WCAG 정식 대비율: 흰/검 = 21:1, 동일색 = 1:1.
     #[test]
     fn contrast_ratio_matches_wcag_reference_points() {
@@ -150,5 +259,111 @@ mod tests {
             let r = contrast_ratio(bg, fg);
             assert!(r >= 4.5, "{code}: badge contrast {r:.2} < 4.5");
         }
+    }
+
+    /// mono 프리셋은 어떤 chrome도 색을 쓰지 않는다(색맹·흑백 터미널 대응).
+    #[test]
+    fn mono_preset_uses_no_color() {
+        assert_eq!(accent_for("mono", "team", Some("LG")), None);
+        assert_eq!(accent_for("mono", "cyan", None), None);
+    }
+
+    /// accent=team이면 팀 컬러, named면 그 명명색, none이면 없음.
+    #[test]
+    fn accent_source_resolves() {
+        assert_eq!(
+            accent_for("default", "team", Some("LG")),
+            Some(team_color("LG"))
+        );
+        assert_eq!(
+            accent_for("default", "cyan", None),
+            Some(ratatui::style::Color::Cyan)
+        );
+        assert_eq!(accent_for("default", "none", Some("LG")), None);
+        // 알 수 없는 명명색은 관용적으로 default 취급(액센트 없음이 아니라 team 폴백은 X — 안전하게 None)
+        assert_eq!(accent_for("default", "unknownxyz", None), None);
+    }
+
+    /// mono가 아니면 지정색을 그대로 fg로 낸다(기존 header 고정색 외양 불변).
+    #[test]
+    fn status_fg_keeps_color_outside_mono() {
+        let style = status_fg("default", Color::Red);
+        assert_eq!(style.fg, Some(Color::Red));
+        let style = status_fg("high-contrast", Color::Cyan);
+        assert_eq!(style.fg, Some(Color::Cyan));
+    }
+
+    /// mono면 색을 걷어내(fg=None → 렌더 시 Reset) chrome 고정색도 사라진다.
+    #[test]
+    fn status_fg_strips_color_in_mono() {
+        let style = status_fg("mono", Color::Red);
+        assert_eq!(style.fg, None);
+    }
+
+    /// status_color는 Style 대신 원시 Color가 필요한 Canvas Shape 지점의 게이트다.
+    /// mono가 아니면 지정색을 그대로 낸다(기존 마커 외양 불변).
+    #[test]
+    fn status_color_keeps_color_outside_mono() {
+        assert_eq!(status_color("default", Color::Red), Color::Red);
+        assert_eq!(status_color("high-contrast", Color::Cyan), Color::Cyan);
+    }
+
+    /// mono면 Color::Reset(배경 무관: 터미널 기본 전경색 상속)으로 걷어낸다.
+    /// v0.8 재리뷰: White는 밝은 배경에서 안 보여 배경 무관 위반이었다.
+    #[test]
+    fn status_color_goes_reset_in_mono() {
+        assert_eq!(status_color("mono", Color::Red), Color::Reset);
+        assert_eq!(status_color("mono", Color::Green), Color::Reset);
+        assert_eq!(status_color("mono", Color::Cyan), Color::Reset);
+    }
+
+    /// 결정적 검증(v0.8 재리뷰): status_color가 mono에서 내는 Color::Reset이
+    /// ratatui Canvas 위에서 마커 글리프 자체를 지우는지 실측으로 못박는다.
+    /// 구현자는 "Canvas가 Reset을 그리지 않음으로 취급해 마커가 사라진다"고
+    /// 주장했으나, 재리뷰어는 ratatui 0.29로 직접 렌더해 이게 사실이 아니라고
+    /// 판정했다 — 이 테스트가 그 판정을 코드로 고정한다. 이 크레이트의
+    /// strikezone/sideview는 Canvas::default()(Marker::Braille)만 쓰므로
+    /// 여기서도 동일 마커로 재현한다(HalfBlock 마커였다면 결과가 달랐을 것).
+    #[test]
+    fn status_color_reset_still_draws_a_braille_marker_on_canvas() {
+        use ratatui::{
+            backend::TestBackend,
+            widgets::canvas::{Canvas, Rectangle},
+            Terminal,
+        };
+
+        let color = status_color("mono", Color::Red); // fix 후: Color::Reset
+        assert_eq!(color, Color::Reset, "precondition: mono yields Reset");
+
+        let mut term = Terminal::new(TestBackend::new(10, 10)).unwrap();
+        term.draw(|f| {
+            let canvas = Canvas::default()
+                .x_bounds([-1.0, 1.0])
+                .y_bounds([-1.0, 1.0])
+                .paint(move |ctx| {
+                    ctx.draw(&Rectangle {
+                        x: -0.3,
+                        y: -0.3,
+                        width: 0.6,
+                        height: 0.6,
+                        color,
+                    });
+                });
+            f.render_widget(canvas, f.area());
+        })
+        .unwrap();
+
+        let buf = term.backend().buffer().clone();
+        // blank braille(U+2800)도 공백과 동일한 "빈 셀" 취급이므로 함께 배제한다.
+        let has_marker_glyph = buf
+            .content()
+            .iter()
+            .any(|c| c.symbol() != " " && c.symbol() != "\u{2800}");
+        assert!(
+            has_marker_glyph,
+            "Color::Reset marker must still render a glyph on the canvas \
+             (fg falls back to the terminal default, the shape isn't skipped): {:?}",
+            buf.content().iter().map(|c| c.symbol()).collect::<String>()
+        );
     }
 }

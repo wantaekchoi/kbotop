@@ -1,4 +1,4 @@
-use super::theme::team_badge_style;
+use super::theme::{self, team_badge_style};
 use crate::app::{App, Tab};
 use crate::model::GameStatus;
 use ratatui::{
@@ -29,22 +29,22 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let mut counts_spans: Vec<Span> = vec![
         Span::styled(
             format!("{} {live}", l.count_live),
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            theme::status_fg(&app.theme_preset, Color::Red).add_modifier(Modifier::BOLD),
         ),
         Span::raw("  "),
         Span::styled(
             format!("{} {sched}", l.count_sched),
-            Style::default().fg(Color::Yellow),
+            theme::status_fg(&app.theme_preset, Color::Yellow),
         ),
         Span::raw("  "),
         Span::styled(
             format!("{} {fin}", l.count_final),
-            Style::default().fg(Color::Green),
+            theme::status_fg(&app.theme_preset, Color::Green),
         ),
         Span::raw("  "),
         Span::styled(
             format!("{} {other}", l.count_other),
-            Style::default().fg(Color::Magenta),
+            theme::status_fg(&app.theme_preset, Color::Magenta),
         ),
     ];
 
@@ -92,14 +92,14 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         tab_spans.push(Span::raw("   "));
         tab_spans.push(Span::styled(
             SPINNER[(app.spinner_frame % 4) as usize].to_string(),
-            Style::default().fg(Color::Cyan),
+            theme::status_fg(&app.theme_preset, Color::Cyan),
         ));
     }
     if app.stale {
         tab_spans.push(Span::raw("   "));
         tab_spans.push(Span::styled(
             l.stale,
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            theme::status_fg(&app.theme_preset, Color::Red).add_modifier(Modifier::BOLD),
         ));
     }
     let tabs = Line::from(tab_spans);

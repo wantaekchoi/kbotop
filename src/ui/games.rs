@@ -1,5 +1,5 @@
 use super::i18n::Labels;
-use super::theme::{contrast_fg, team_badge_style, team_color};
+use super::theme::{self, contrast_fg, team_badge_style};
 use crate::app::App;
 use crate::model::GameStatus;
 use ratatui::{
@@ -10,16 +10,16 @@ use ratatui::{
     Frame,
 };
 
-fn status_tag(status: GameStatus, l: &Labels) -> (&'static str, Style) {
+fn status_tag(status: GameStatus, l: &Labels, preset: &str) -> (&'static str, Style) {
     match status {
         GameStatus::Live => (
             l.tag_live,
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            theme::status_fg(preset, Color::Red).add_modifier(Modifier::BOLD),
         ),
-        GameStatus::Scheduled => (l.tag_sched, Style::default().fg(Color::Yellow)),
-        GameStatus::Final => (l.tag_fin, Style::default().fg(Color::Gray)),
-        GameStatus::Canceled => (l.tag_cancel, Style::default().fg(Color::DarkGray)),
-        GameStatus::Suspended => (l.tag_susp, Style::default().fg(Color::Magenta)),
+        GameStatus::Scheduled => (l.tag_sched, theme::status_fg(preset, Color::Yellow)),
+        GameStatus::Final => (l.tag_fin, theme::status_fg(preset, Color::Gray)),
+        GameStatus::Canceled => (l.tag_cancel, theme::status_fg(preset, Color::DarkGray)),
+        GameStatus::Suspended => (l.tag_susp, theme::status_fg(preset, Color::Magenta)),
     }
 }
 
@@ -60,7 +60,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         .games
         .iter()
         .map(|g| {
-            let (tag, tag_style) = status_tag(g.status, l);
+            let (tag, tag_style) = status_tag(g.status, l, &app.theme_preset);
             let score = match (g.away_score, g.home_score) {
                 (Some(a), Some(h)) => format!("{a} : {h}"),
                 _ => "— : —".to_string(),
@@ -89,11 +89,12 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         Constraint::Length(14),
     ];
 
-    let highlight = match app.fav_code.as_deref() {
-        Some(code) => {
-            let bg = team_color(code);
-            Style::default().bg(bg).fg(contrast_fg(bg))
-        }
+    let highlight = match theme::accent_for(
+        &app.theme_preset,
+        &app.theme_accent,
+        app.fav_code.as_deref(),
+    ) {
+        Some(c) => Style::default().bg(c).fg(contrast_fg(c)),
         None => Style::default().add_modifier(Modifier::REVERSED),
     };
 

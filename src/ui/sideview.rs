@@ -1,9 +1,10 @@
 use super::strikezone::{result_color, zone_bounds};
+use super::theme;
 use crate::model::Pitch;
 use crate::ui::i18n::Labels;
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
+    style::Color,
     text::Span,
     widgets::{
         canvas::{Canvas, Line as CanvasLine},
@@ -34,12 +35,15 @@ pub fn trajectory_points(p: &Pitch, n: usize) -> Vec<(f64, f64)> {
 /// 측면 뷰: x축 = 홈플레이트로부터의 거리(ft, 좌=플레이트/우=릴리스),
 /// y축 = 높이(ft). 투구 궤적(낙차)을 결과색 선으로 그리고 플레이트 통과점에
 /// 순번을 찍는다. 플레이트 위치(x≈0.7)에 존 상·하한 눈금을 세로선으로 표시.
+/// preset은 궤적선·순번 색(theme::status_color/status_fg)을 게이트한다
+/// (mono면 무채, 그 외엔 기존과 동일) — 리뷰 Important: 이전엔 게이트가 없었다.
 pub fn render(
     f: &mut Frame,
     area: Rect,
     pitches: &[Pitch],
     selected: Option<usize>,
     l: &'static Labels,
+    preset: &str,
 ) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -63,7 +67,8 @@ pub fn render(
                         continue; // 선택 모드: 그 구만(겹침 해소)
                     }
                 }
-                let color = result_color(p.result);
+                let raw_color = result_color(p.result);
+                let color = theme::status_color(preset, raw_color);
                 let pts = trajectory_points(p, 16);
                 for w in pts.windows(2) {
                     ctx.draw(&CanvasLine {
@@ -78,7 +83,7 @@ pub fn render(
                     ctx.print(
                         *y,
                         *z,
-                        Span::styled(p.order.to_string(), Style::default().fg(color)),
+                        Span::styled(p.order.to_string(), theme::status_fg(preset, raw_color)),
                     );
                 }
             }
@@ -152,6 +157,7 @@ mod tests {
                 &pitches,
                 None,
                 crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                "default",
             )
         })
         .unwrap();
@@ -177,6 +183,7 @@ mod tests {
                 &[traj_pitch(1)],
                 None,
                 crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                "default",
             )
         })
         .unwrap();
@@ -194,6 +201,7 @@ mod tests {
                 &pitches,
                 Some(2),
                 crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                "default",
             )
         })
         .unwrap(); // order 3 선택
@@ -208,6 +216,108 @@ mod tests {
         assert!(
             !text.contains('1') && !text.contains('2'),
             "unselected trajectories filtered:\n{text}"
+        );
+    }
+
+    /// 리뷰 Important: mono 프리셋은 궤적선·순번 마커의 투구 결과색을 걷어내야
+    /// 한다. 순번 문자는 색과 무관하게 남는다(정보 손실 없음).
+    #[test]
+    fn mono_preset_strips_trajectory_colors_but_keeps_order_marker() {
+        use crate::model::PitchResult;
+        use ratatui::style::Color;
+        let mut pitches: Vec<Pitch> = (1u8..=3).map(traj_pitch).collect();
+        pitches[0].result = PitchResult::Ball;
+        pitches[1].result = PitchResult::StrikeLooking;
+        pitches[2].result = PitchResult::InPlay;
+        let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
+        term.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &pitches,
+                None,
+                crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                "mono",
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+        for cell in buf.content() {
+            assert!(
+                !matches!(
+                    cell.fg,
+                    Color::Green | Color::Red | Color::Yellow | Color::Cyan
+                ),
+                "mono side view leaked a chromatic trajectory color: {:?}",
+                cell.fg
+            );
+        }
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect();
+        for o in ["1", "2", "3"] {
+            assert!(
+                text.contains(o),
+                "mono must keep order marker {o} in side view:\n{text}"
+            );
+        }
+    }
+
+    /// 결정적 검증(v0.8 재리뷰): mono 궤적선(status_color가 Color::Reset을 내는
+    /// 지점)이 실제 render() 경로에서도 braille 마커 글리프를 남기는지 확인한다.
+    /// 순번 라벨(status_fg, U+2800 밖의 ASCII 숫자)과 겹치지 않는 신호로 판정하려고
+    /// braille 코드포인트(U+2801..=U+28FF, blank U+2800 제외)만 센다 — 이 범위는
+    /// Canvas Marker::Braille의 점 렌더링에서만 나온다.
+    #[test]
+    fn mono_reset_trajectory_still_draws_braille_glyphs() {
+        let pitches: Vec<Pitch> = vec![traj_pitch(1)]; // result: Ball
+        let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
+        term.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &pitches,
+                None,
+                crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                "mono",
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+        let has_braille_dot = buf.content().iter().any(|c| {
+            c.symbol()
+                .chars()
+                .next()
+                .is_some_and(|ch| (0x2801..=0x28FF).contains(&(ch as u32)))
+        });
+        assert!(
+            has_braille_dot,
+            "mono trajectory (Color::Reset) must still draw braille marker dots, \
+             not just the order label:\n{}",
+            buf.content().iter().map(|c| c.symbol()).collect::<String>()
+        );
+    }
+
+    /// 대조(무회귀): mono가 아니면 궤적 색이 그대로 남는다.
+    #[test]
+    fn non_mono_preset_keeps_trajectory_color() {
+        use ratatui::style::Color;
+        let pitches: Vec<Pitch> = vec![traj_pitch(1)]; // result: Ball → Green
+        let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
+        term.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &pitches,
+                None,
+                crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                "default",
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+        let has_green = buf.content().iter().any(|c| c.fg == Color::Green);
+        assert!(
+            has_green,
+            "non-mono preset must keep the trajectory color (Green)"
         );
     }
 }

@@ -5,6 +5,20 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-24
+
+### Added
+- 인앱 설정 화면(`F9`, 별칭 `S`) — 응원 팀·언어·폴링 주기·테마를 화면에서 고르면 그 즉시 `config.toml`에 저장돼 재시작해도 유지됩니다. 이전에는 `F2`로 골라도 재시작하면 사라졌습니다.
+- 테마 프리셋 3종(`default`/`high-contrast`/`mono`) × 액센트 소스(응원 팀 색/명명색 6종/색 없음)를 F9에서 조합해 고릅니다. `mono`는 색을 전혀 쓰지 않아 색맹·흑백 터미널에서도 온전히 읽힙니다.
+- 언어 3개 추가 — 日本語·繁體中文·Español 지원(기존 한국어·English 포함 5개국어). `--lang`이 `ko`/`en`/`ja`/`zh-TW`/`es`를 받으며, F9 설정 화면에서 즉시 전환됩니다.
+- 반응형 하단 힌트 바 — 좁은 터미널이나 긴 언어(스페인어 등)에서도 힌트가 폭에 맞춰 잘리거나 겹치지 않게 조립됩니다.
+
+### Changed
+- `F2` 옵션 픽커를 날짜 전용으로 축소 — 응원 팀·폴링 주기는 F9 설정으로 옮겨 재시작 후에도 남습니다.
+
+### Performance
+- 뉴스 RSS 4피드를 병렬로 가져와 최악의 경우 목록이 뜨기까지 걸리던 시간이 약 20초에서 약 5초로 줄었습니다.
+
 ## [0.7.0] - 2026-07-24
 
 ### Changed
@@ -87,7 +101,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/wantaekchoi/kbotop/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/wantaekchoi/kbotop/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/wantaekchoi/kbotop/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/wantaekchoi/kbotop/compare/v0.4.0...v0.5.0

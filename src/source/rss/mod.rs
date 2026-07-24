@@ -40,9 +40,10 @@ const FEEDS: &[Feed] = &[
     },
 ];
 
-/// 피드 하나당 ureq 타임아웃(초). `news()`가 FEEDS를 순차 호출하므로 폴러가
-/// 한 번의 뉴스 폴에서 블로킹될 수 있는 최악 시간은 대략
-/// `FEEDS.len() * FEED_TIMEOUT_SECS`다(현재 4피드 × 5초 = ~20초). 폴러는
+/// 피드 하나당 ureq 타임아웃(초). `news()`가 FEEDS를 스레드로 동시 호출하므로
+/// 폴러가 한 번의 뉴스 폴에서 블로킹될 수 있는 최악 시간은 대략
+/// `FEED_TIMEOUT_SECS`다(가장 느린 피드 하나의 타임아웃, 현재 ~5초 —
+/// 순차였던 이전에는 `FEEDS.len() * FEED_TIMEOUT_SECS` ≈ 20초였다). 폴러는
 /// 단일 스레드로 games/tips/news/live를 순차 처리하고 명령 드레인
 /// (`rx.try_recv()`)도 루프 최상단에서만 하므로, 이 시간 동안 라이브 갱신이
 /// 지연된다. `q` 종료는 이 영향을 받지 않는다 — main.rs가 `Shutdown` 전송 후
@@ -66,17 +67,6 @@ impl RssSource {
                 env!("CARGO_PKG_VERSION")
             ),
         }
-    }
-
-    fn get(&self, url: &str) -> Result<String> {
-        let body = self
-            .agent
-            .get(url)
-            .set("User-Agent", &self.user_agent)
-            .call()
-            .map_err(Box::new)?
-            .into_string()?;
-        Ok(body)
     }
 }
 
@@ -151,17 +141,34 @@ fn finish(per_feed: Vec<Vec<NewsItem>>) -> Result<Vec<NewsItem>> {
 
 impl NewsSource for RssSource {
     fn news(&self) -> Result<Vec<NewsItem>> {
-        let mut per_feed = Vec::new();
-        for f in FEEDS {
-            // 피드 단위 실패 격리 — 한 곳이 죽어도(예: 매경 Cloudflare 챌린지)
-            // 나머지로 계속한다.
-            if let Ok(items) = self
-                .get(f.url)
-                .and_then(|xml| parse::feed_from_xml(&xml, f.label, f.categories))
-            {
-                per_feed.push(items);
-            }
-        }
+        // 피드를 동시에 받는다 — 순차면 최악 4×타임아웃(~20초)이 폴러를 막는다.
+        // 각 스레드는 fetch+parse를 독립 수행하고, 실패한 피드는 결과에서 빠진다
+        // (피드별 실패 격리). ureq::Agent는 Clone이 값싸다(Arc 내부).
+        let handles: Vec<_> = FEEDS
+            .iter()
+            .map(|f| {
+                let agent = self.agent.clone();
+                let ua = self.user_agent.clone();
+                let url = f.url;
+                let label = f.label;
+                let cats = f.categories;
+                std::thread::spawn(move || {
+                    let body = agent
+                        .get(url)
+                        .set("User-Agent", &ua)
+                        .call()
+                        .map_err(Box::new)
+                        .ok()?
+                        .into_string()
+                        .ok()?;
+                    parse::feed_from_xml(&body, label, cats).ok()
+                })
+            })
+            .collect();
+        let per_feed: Vec<Vec<NewsItem>> = handles
+            .into_iter()
+            .filter_map(|h| h.join().ok().flatten())
+            .collect();
         finish(per_feed)
     }
 }

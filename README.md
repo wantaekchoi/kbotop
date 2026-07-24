@@ -45,7 +45,7 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/rele
 kbotop                    # 오늘 경기
 kbotop --team lg          # 내 팀 라이브 경기로 바로 진입
 kbotop --date yesterday   # 다른 날짜: YYYY-MM-DD, YYYYMMDD, today, tomorrow, +N, -N
-kbotop --lang en          # UI 언어 (기본: 로케일 자동, ko/en)
+kbotop --lang en          # UI 언어 (기본: 로케일 자동, ko/en/ja/zh-TW/es)
 ```
 
 Vim 스타일로 움직입니다. 최신 키 목록은 앱 안 `?` 도움말이 기준입니다.
@@ -53,18 +53,21 @@ Vim 스타일로 움직입니다. 최신 키 목록은 앱 안 `?` 도움말이 
 - 이동: `j` / `k` 또는 방향키
 - 라이브 뷰 열기: `Enter`
 - 경기 / 순위 전환: `Tab`
-- 옵션 픽커(날짜·팀·폴링 주기): `F2`
+- 날짜 픽커: `F2`
+- 설정 화면(응원 팀·언어·폴링 주기·테마): `F9` (별칭 `S`)
 - 구단 공홈·굿즈몰 열기: `o`
 - 뉴스 목록 열기: `n` (목록에서 `Enter`로 기사 읽기)
 - 투구 하나씩 보기: `Left` / `Right` (라이브 뷰)
 - 도움말: `?`
 - 종료: `q`
 
-앱 화면은 ko 로케일에서 한국어로 나옵니다. 영어는 `--lang en`.
+한국어·English·日本語·繁體中文·Español 5개국어를 지원합니다. 기본은 로케일 자동 감지이며, `--lang`이나 F9 설정 화면에서 즉시 바꿀 수 있습니다.
 
 ## 설정
 
-`$XDG_CONFIG_HOME/kbotop/config.toml` (없으면 `~/.config/kbotop/config.toml`). 응원 팀과 폴링 주기를 설정합니다.
+`$XDG_CONFIG_HOME/kbotop/config.toml` (없으면 `~/.config/kbotop/config.toml`). `F9` 설정 화면에서 응원 팀·언어·폴링 주기·테마를 고르면 그 즉시 이 파일에 저장되어 재시작해도 유지됩니다.
+
+테마는 프리셋(`default`/`high-contrast`/`mono`)과 액센트 소스(응원 팀 색/명명색/색 없음)를 조합해 고릅니다. `mono`는 색을 전혀 쓰지 않아 색맹이거나 흑백 터미널에서도 온전히 읽힙니다.
 
 ## 고지
 

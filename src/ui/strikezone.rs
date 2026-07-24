@@ -1,8 +1,9 @@
 use crate::model::{Pitch, PitchResult};
 use crate::ui::i18n::Labels;
+use crate::ui::theme;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Color, Modifier},
     text::{Line, Span},
     widgets::{
         canvas::{Canvas, Rectangle},
@@ -74,12 +75,15 @@ fn fit_zone(area: Rect) -> Rect {
 /// 스트라이크존: ratatui Canvas 위에 존 박스(Rectangle 외곽선)와 각 투구
 /// 위치(작은 Rectangle + 구 순번 텍스트)를 겹쳐 그린다. 공간이 있으면
 /// 하단에 최근 투구 구속 목록을 한 줄 덧붙인다.
+/// preset은 마커·범례의 투구 결과색(theme::status_color/status_fg)을 게이트한다
+/// (mono면 무채, 그 외엔 기존과 동일) — 리뷰 Important: 이전엔 게이트가 없었다.
 pub fn render(
     f: &mut Frame,
     area: Rect,
     pitches: &[Pitch],
     selected: Option<usize>,
     l: &'static Labels,
+    preset: &str,
 ) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -129,7 +133,7 @@ pub fn render(
                         continue; // 선택 모드: 그 구만(겹침 해소)
                     }
                 }
-                let color = result_color(p.result);
+                let raw_color = result_color(p.result);
                 let x = p.plate_x as f64;
                 let y = p.plate_y as f64;
                 ctx.draw(&Rectangle {
@@ -137,9 +141,9 @@ pub fn render(
                     y: y - 0.05,
                     width: 0.1,
                     height: 0.1,
-                    color,
+                    color: theme::status_color(preset, raw_color),
                 });
-                let mut style = Style::default().fg(color);
+                let mut style = theme::status_fg(preset, raw_color);
                 if selected == Some(idx) {
                     style = style.add_modifier(Modifier::REVERSED | Modifier::BOLD);
                 }
@@ -150,17 +154,23 @@ pub fn render(
     f.render_widget(canvas, fit_zone(zone_area));
 
     if let Some(side_area) = side_area {
-        sideview::render(f, side_area, pitches, selected, l);
+        sideview::render(f, side_area, pitches, selected, l, preset);
     }
 
     if let Some(list_area) = list_area {
-        render_speed_list(f, list_area, pitches, selected);
+        render_speed_list(f, list_area, pitches, selected, preset);
     }
 }
 
 /// 하단 구속 목록: "{순번}{결과문자} {구속}km" (구속 없으면 순번+결과문자만), 결과별 색상.
-/// Line/Span만 쓰고 수동 패딩은 하지 않는다(폭 안전).
-fn render_speed_list(f: &mut Frame, area: Rect, pitches: &[Pitch], selected: Option<usize>) {
+/// Line/Span만 쓰고 수동 패딩은 하지 않는다(폭 안전). preset=mono면 색을 걷어낸다.
+fn render_speed_list(
+    f: &mut Frame,
+    area: Rect,
+    pitches: &[Pitch],
+    selected: Option<usize>,
+    preset: &str,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -174,7 +184,7 @@ fn render_speed_list(f: &mut Frame, area: Rect, pitches: &[Pitch], selected: Opt
         if !spans.is_empty() {
             spans.push(Span::raw("  "));
         }
-        let mut style = Style::default().fg(color);
+        let mut style = theme::status_fg(preset, color);
         if selected == Some(idx) {
             style = style.add_modifier(Modifier::REVERSED);
         }
@@ -237,6 +247,7 @@ mod tests {
                 pitches,
                 None,
                 crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                "default",
             );
         })
         .unwrap();
@@ -371,6 +382,7 @@ mod tests {
                 &pitches,
                 None,
                 crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                "default",
             )
         })
         .unwrap();
@@ -413,6 +425,7 @@ mod tests {
                 &pitches,
                 None,
                 crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                "default",
             )
         })
         .unwrap();
@@ -470,6 +483,7 @@ mod tests {
                 &pitches,
                 Some(1),
                 crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                "default",
             )
         })
         .unwrap();
@@ -496,6 +510,7 @@ mod tests {
                 &pitches,
                 Some(1),
                 crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                "default",
             )
         })
         .unwrap(); // order 2 선택
@@ -531,5 +546,102 @@ mod tests {
                 "legend must keep all entries: {tag}"
             );
         }
+    }
+
+    /// 리뷰 Important: mono 프리셋은 존 마커·구속 범례의 투구 결과색
+    /// (Green/Red/Yellow/Cyan)을 걷어내야 한다. 결과 문자(B/S/F/H)는 색과
+    /// 무관하게 남아야 한다(WCAG 1.4.1 유지, 정보 손실 없음).
+    #[test]
+    fn mono_preset_strips_pitch_colors_but_keeps_result_letters() {
+        use ratatui::style::Color;
+        let pitches = vec![
+            Pitch {
+                order: 1,
+                speed_kmh: Some(145),
+                result: PitchResult::Ball,
+                ..Default::default()
+            },
+            Pitch {
+                order: 2,
+                speed_kmh: Some(150),
+                result: PitchResult::StrikeLooking,
+                ..Default::default()
+            },
+            Pitch {
+                order: 3,
+                speed_kmh: Some(132),
+                result: PitchResult::Foul,
+                ..Default::default()
+            },
+            Pitch {
+                order: 4,
+                speed_kmh: Some(141),
+                result: PitchResult::InPlay,
+                ..Default::default()
+            },
+        ];
+        let mut term = Terminal::new(TestBackend::new(40, 20)).unwrap();
+        term.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &pitches,
+                None,
+                crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                "mono",
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+
+        for cell in buf.content() {
+            assert!(
+                !matches!(
+                    cell.fg,
+                    Color::Green | Color::Red | Color::Yellow | Color::Cyan
+                ),
+                "mono strikezone leaked a chromatic pitch color: {:?}",
+                cell.fg
+            );
+        }
+
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect();
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        for tag in ["1B", "2S", "3F", "4H"] {
+            assert!(
+                compact.contains(tag),
+                "mono must keep the result letter {tag}:\n{text}"
+            );
+        }
+    }
+
+    /// 대조(무회귀): mono가 아니면 기존처럼 투구 결과색이 그대로 남는다.
+    #[test]
+    fn non_mono_preset_keeps_pitch_colors() {
+        use ratatui::style::Color;
+        let pitches = vec![Pitch {
+            order: 1,
+            speed_kmh: Some(145),
+            result: PitchResult::Ball,
+            ..Default::default()
+        }];
+        let mut term = Terminal::new(TestBackend::new(40, 20)).unwrap();
+        term.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &pitches,
+                None,
+                crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                "default",
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+        let has_ball_color = buf.content().iter().any(|c| c.fg == Color::Green);
+        assert!(
+            has_ball_color,
+            "non-mono preset must keep the Ball pitch color (Green)"
+        );
     }
 }

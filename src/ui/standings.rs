@@ -1,4 +1,4 @@
-use super::theme::{contrast_fg, team_badge_style, team_color};
+use super::theme::{self, contrast_fg, team_badge_style};
 use crate::app::App;
 use ratatui::{
     layout::{Constraint, Rect},
@@ -72,11 +72,12 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         Constraint::Length(5),
     ];
 
-    let highlight = match app.fav_code.as_deref() {
-        Some(code) => {
-            let bg = team_color(code);
-            Style::default().bg(bg).fg(contrast_fg(bg))
-        }
+    let highlight = match theme::accent_for(
+        &app.theme_preset,
+        &app.theme_accent,
+        app.fav_code.as_deref(),
+    ) {
+        Some(c) => Style::default().bg(c).fg(contrast_fg(c)),
         None => Style::default().add_modifier(Modifier::REVERSED),
     };
 
@@ -174,7 +175,7 @@ mod tests {
             assert!(
                 buf.content()
                     .iter()
-                    .any(|c| c.bg == super::team_color(code)),
+                    .any(|c| c.bg == super::theme::team_color(code)),
                 "{code} 팀명이 팀컬러 배경 배지로 렌더돼야 한다"
             );
         }

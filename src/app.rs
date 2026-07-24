@@ -9,12 +9,10 @@ pub enum Tab {
     Standings,
 }
 
-/// F2 옵션 픽커의 세 pane.
+/// F2 옵션 픽커의 pane. v0.8부터 Date 전용(Team·Poll은 F9 설정으로 이동).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
     Date,
-    Team,
-    Poll,
 }
 
 /// F2 옵션 오버레이가 열려 있는 동안의 상태(어느 pane, 커서 위치).
@@ -40,6 +38,69 @@ pub struct ArticleView {
 /// Esc는 기사 → 목록 → 닫힘 순으로 한 단계씩 올라온다.
 pub struct NewsListState {
     pub cursor: usize,
+}
+
+/// 설정 화면 상태(v0.8). F9로 열고, 변경은 즉시 config에 저장한다. save_failed는
+/// 마지막 저장이 실패했는지(읽기전용 FS 등) — 화면 하단에 고지한다.
+pub struct SettingsState {
+    pub cursor: usize,
+    pub save_failed: bool,
+}
+
+/// 설정 행의 종류. 값 변경은 커서 인덱스가 아니라 이 종류로 분기해, 뒤 태스크가
+/// 행을 추가해도 분기가 안 밀린다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingKind {
+    Team,
+    Poll,
+    ThemePreset,
+    ThemeAccent,
+    Lang,
+}
+
+/// 언어 순환 순서(F9 설정 화면의 Lang 행). change_setting이 이 순서로 순환한다.
+const LANGS: [crate::ui::i18n::Lang; 5] = [
+    crate::ui::i18n::Lang::Ko,
+    crate::ui::i18n::Lang::En,
+    crate::ui::i18n::Lang::Ja,
+    crate::ui::i18n::Lang::ZhTw,
+    crate::ui::i18n::Lang::Es,
+];
+
+/// 테마 프리셋 순환 순서(F9 설정 화면의 ThemePreset 행). 단일 진실 — change_setting과
+/// theme_preset_label이 함께 참조한다.
+const THEME_PRESETS: [&str; 3] = ["default", "high-contrast", "mono"];
+
+/// 액센트 소스 순환 순서(F9 설정 화면의 ThemeAccent 행). ui::theme::accent_for가
+/// 해석하는 문자열과 반드시 일치해야 한다.
+const THEME_ACCENTS: [&str; 8] = [
+    "team", "cyan", "green", "yellow", "magenta", "blue", "red", "none",
+];
+
+/// 테마 프리셋 값을 설정 화면에 보여줄 라벨로 바꾼다. 알 수 없는 값(구버전
+/// config 잔재 등)은 관용적으로 "default" 라벨로 표시한다.
+fn theme_preset_label(l: &crate::ui::i18n::Labels, preset: &str) -> &'static str {
+    match preset {
+        "high-contrast" => l.theme_high_contrast,
+        "mono" => l.theme_mono,
+        _ => l.theme_default,
+    }
+}
+
+/// 액센트 값을 설정 화면에 보여줄 라벨로 바꾼다. 알 수 없는 값은 관용적으로
+/// "team" 라벨로 표시한다(accent_for의 기본 폴백과 다르지만, 설정 화면
+/// 표시는 "무엇이 선택돼 있나"를 최대한 그럴듯하게 보여주는 게 목적이다).
+fn theme_accent_label(l: &crate::ui::i18n::Labels, accent: &str) -> &'static str {
+    match accent {
+        "cyan" => l.accent_cyan,
+        "green" => l.accent_green,
+        "yellow" => l.accent_yellow,
+        "magenta" => l.accent_magenta,
+        "blue" => l.accent_blue,
+        "red" => l.accent_red,
+        "none" => l.accent_none,
+        _ => l.accent_team,
+    }
 }
 
 /// `Live`가 `List`보다 훨씬 커서 clippy가 boxing을 권하지만, `App`이 화면당
@@ -109,9 +170,19 @@ pub struct App {
     /// 뉴스 목록 오버레이(부가 기능, v0.7). None = 닫힘. `n`이 열고, Enter로
     /// 커서 항목의 발췌(article_view)를 그 위에 연다.
     pub news_list: Option<NewsListState>,
+    /// 인앱 설정 화면(v0.8). None = 닫힘. F9(또는 S)가 연다.
+    pub settings: Option<SettingsState>,
     /// TUI chrome 표시 언어(main이 --lang/config/env로 감지해 주입). 기본값은
     /// 테스트 결정성을 위해 En — 실사용 경로에서는 main이 항상 덮어쓴다.
     pub lang: crate::ui::i18n::Lang,
+    /// 테마 프리셋("default"/"high-contrast"/"mono", v0.8 T9). main이
+    /// config.theme.preset을 주입한다. `ui::theme::accent_for`/`status_fg`가
+    /// 이 값으로 chrome 색 사용 여부를 결정한다 — mono면 색 span 0.
+    pub theme_preset: String,
+    /// 액센트 색 소스("team"/명명색/"none", v0.8 T9). main이 config.theme.accent를
+    /// 주입한다. games/standings 선택 하이라이트가 `theme::accent_for`를 통해
+    /// 이 값을 쓴다.
+    pub theme_accent: String,
 }
 
 impl App {
@@ -142,7 +213,10 @@ impl App {
             link_picker: None,
             article_view: None,
             news_list: None,
+            settings: None,
             lang: crate::ui::i18n::Lang::En,
+            theme_preset: "default".into(),
+            theme_accent: "team".into(),
         }
     }
 
@@ -162,22 +236,6 @@ impl App {
         if let Some(opt) = &mut self.options {
             match key {
                 KeyCode::Esc | KeyCode::F(2) => self.options = None,
-                KeyCode::Left => {
-                    opt.pane = match opt.pane {
-                        Pane::Date => Pane::Poll,
-                        Pane::Team => Pane::Date,
-                        Pane::Poll => Pane::Team,
-                    };
-                    opt.cursor = 0;
-                }
-                KeyCode::Right => {
-                    opt.pane = match opt.pane {
-                        Pane::Date => Pane::Team,
-                        Pane::Team => Pane::Poll,
-                        Pane::Poll => Pane::Date,
-                    };
-                    opt.cursor = 0;
-                }
                 KeyCode::Down | KeyCode::Char('j') => {
                     let len = crate::ui::options::pane_len(
                         opt.pane,
@@ -256,8 +314,43 @@ impl App {
             self.pending_g = false;
             return false;
         }
+        if self.settings.is_some() {
+            // 설정 오버레이가 열려 있으면 모든 키를 소비한다(options/link_picker
+            // 패턴). rows 길이는 settings_rows()가 &self를 빌리므로 &mut
+            // self.settings 빌림 전에 먼저 계산해 둔다(borrow 충돌 회피).
+            let rows = self.settings_rows().len();
+            let st = self.settings.as_mut().unwrap();
+            match key {
+                KeyCode::Esc | KeyCode::F(9) | KeyCode::Char('q') => self.settings = None,
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if st.cursor + 1 < rows {
+                        st.cursor += 1;
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') => st.cursor = st.cursor.saturating_sub(1),
+                KeyCode::Left | KeyCode::Right | KeyCode::Enter => {
+                    // st(=&mut self.settings)의 빌림을 여기서 끝낸다 — 아래
+                    // self.change_setting/self.persist가 &mut self를 다시 빌린다.
+                    let cursor = st.cursor;
+                    let forward = !matches!(key, KeyCode::Left);
+                    self.change_setting(cursor, forward);
+                    self.persist();
+                }
+                _ => {}
+            }
+            self.pending_g = false;
+            return false;
+        }
         // opener들은 모든 오버레이 consumer 뒤에 둔다 — 링크픽커가 열린 채 F2를
         // 누르면 오버레이가 이중으로 열리던 결함(최종 리뷰 I-1) 방지.
+        if key == KeyCode::F(9) || key == KeyCode::Char('S') {
+            self.settings = Some(SettingsState {
+                cursor: 0,
+                save_failed: false,
+            });
+            self.pending_g = false;
+            return false;
+        }
         if key == KeyCode::F(2) {
             self.options = Some(OptionsState {
                 pane: Pane::Date,
@@ -402,38 +495,19 @@ impl App {
             return;
         };
         let l = self.labels();
-        match opt.pane {
-            Pane::Date => {
-                if let Some((_, date)) = crate::ui::options::date_items(l, self.now_secs)
-                    .into_iter()
-                    .nth(opt.cursor)
-                {
-                    if date != self.date {
-                        self.date = date;
-                        self.games_loaded = false;
-                        self.games.clear();
-                        self.selected = 0;
-                        self.live_pitch_sel = None;
-                        // 다른 날짜의 라이브 화면은 무의미 — 목록으로 복귀.
-                        self.screen = Screen::List;
-                    }
-                }
-            }
-            Pane::Team => {
-                if let Some((_, code)) = crate::ui::options::team_items(l)
-                    .into_iter()
-                    .nth(opt.cursor)
-                {
-                    self.fav_code = code;
-                }
-            }
-            Pane::Poll => {
-                if let Some((_, secs)) = crate::ui::options::poll_items(l)
-                    .into_iter()
-                    .nth(opt.cursor)
-                {
-                    self.poll_choice = secs;
-                }
+        // Pane은 v0.8부터 Date 단일 variant다(Team·Poll은 F9 설정으로 이동).
+        if let Some((_, date)) = crate::ui::options::date_items(l, self.now_secs)
+            .into_iter()
+            .nth(opt.cursor)
+        {
+            if date != self.date {
+                self.date = date;
+                self.games_loaded = false;
+                self.games.clear();
+                self.selected = 0;
+                self.live_pitch_sel = None;
+                // 다른 날짜의 라이브 화면은 무의미 — 목록으로 복귀.
+                self.screen = Screen::List;
             }
         }
     }
@@ -442,6 +516,137 @@ impl App {
         match self.tab {
             Tab::Games => self.games.len(),
             Tab::Standings => self.standings.len(),
+        }
+    }
+
+    /// 설정 항목(종류, 라벨, 현재값 표시). E(언어)가 항목을 더 확장할 수 있다.
+    pub fn settings_rows(&self) -> Vec<(SettingKind, &'static str, String)> {
+        let l = self.labels();
+        let team = self
+            .fav_code
+            .clone()
+            .unwrap_or_else(|| l.team_none.to_string());
+        vec![
+            (SettingKind::Team, l.set_team, team),
+            (
+                SettingKind::Poll,
+                l.set_poll,
+                format!("{}{}", self.poll_choice, l.poll_suffix),
+            ),
+            (
+                SettingKind::ThemePreset,
+                l.set_theme_preset,
+                theme_preset_label(l, &self.theme_preset).to_string(),
+            ),
+            (
+                SettingKind::ThemeAccent,
+                l.set_theme_accent,
+                theme_accent_label(l, &self.theme_accent).to_string(),
+            ),
+            (
+                SettingKind::Lang,
+                l.set_lang,
+                crate::ui::i18n::lang_display_name(self.lang).to_string(),
+            ),
+        ]
+    }
+
+    /// 현재 영속 대상(팀·폴링·언어·테마)을 Config로 만들어 저장한다. 실패는 삼켜
+    /// settings.save_failed에 반영한다(무패닉·조용한 저하).
+    fn persist(&mut self) {
+        let cfg = crate::config::Config {
+            favorite_team: self.fav_code.clone(),
+            poll_secs: self.poll_choice,
+            lang: Some(crate::ui::i18n::lang_code(self.lang).to_string()),
+            theme: crate::config::ThemeConfig {
+                preset: self.theme_preset.clone(),
+                accent: self.theme_accent.clone(),
+            },
+        };
+        let ok = cfg.save().is_ok();
+        if let Some(st) = &mut self.settings {
+            st.save_failed = !ok;
+        }
+    }
+
+    /// 커서 행의 설정을 한 단계 순환한다(forward=→/Enter, back=←). 변경만; 저장은
+    /// 호출부(persist)가 한다. **종류로 분기**한다(인덱스 아님) — 뒤 태스크가
+    /// settings_rows에 행을 추가해도 이 분기는 안 밀린다.
+    fn change_setting(&mut self, cursor: usize, forward: bool) {
+        let Some((kind, _, _)) = self.settings_rows().into_iter().nth(cursor) else {
+            return;
+        };
+        match kind {
+            SettingKind::Team => {
+                // team_items(None 포함)에서 현재 fav_code의 다음/이전으로 순환.
+                let items = crate::ui::options::team_items(self.labels());
+                let cur = items
+                    .iter()
+                    .position(|(_, c)| *c == self.fav_code)
+                    .unwrap_or(0);
+                let n = items.len();
+                let next = if forward {
+                    (cur + 1) % n
+                } else {
+                    (cur + n - 1) % n
+                };
+                self.fav_code = items[next].1.clone();
+            }
+            SettingKind::Poll => {
+                // poll_items가 폴링 간격의 단일 진실(3/5/10/30초) — team_items와
+                // 같은 패턴으로 재사용해 리터럴 중복을 없앤다.
+                let items = crate::ui::options::poll_items(self.labels());
+                let cur = items
+                    .iter()
+                    .position(|(_, s)| *s == self.poll_choice)
+                    .unwrap_or(1);
+                let n = items.len();
+                let next = if forward {
+                    (cur + 1) % n
+                } else {
+                    (cur + n - 1) % n
+                };
+                self.poll_choice = items[next].1;
+            }
+            SettingKind::ThemePreset => {
+                let items = THEME_PRESETS;
+                let cur = items
+                    .iter()
+                    .position(|p| *p == self.theme_preset)
+                    .unwrap_or(0);
+                let n = items.len();
+                let next = if forward {
+                    (cur + 1) % n
+                } else {
+                    (cur + n - 1) % n
+                };
+                self.theme_preset = items[next].to_string();
+            }
+            SettingKind::ThemeAccent => {
+                let items = THEME_ACCENTS;
+                let cur = items
+                    .iter()
+                    .position(|a| *a == self.theme_accent)
+                    .unwrap_or(0);
+                let n = items.len();
+                let next = if forward {
+                    (cur + 1) % n
+                } else {
+                    (cur + n - 1) % n
+                };
+                self.theme_accent = items[next].to_string();
+            }
+            SettingKind::Lang => {
+                let items = LANGS;
+                let cur = items.iter().position(|l| *l == self.lang).unwrap_or(0);
+                let n = items.len();
+                let next = if forward {
+                    (cur + 1) % n
+                } else {
+                    (cur + n - 1) % n
+                };
+                self.lang = items[next];
+            }
         }
     }
 
@@ -454,11 +659,13 @@ impl App {
         if let Update::News(n) = up {
             // 부가 기능: 본 기능의 stale/last_error, 스피너 생명주기에 관여하지 않는다.
             self.news = n;
-            // 목록이 열려 있는 채 뉴스가 짧아지면 커서가 범위 밖에 남아, 화면상
-            // 마지막 항목이 선택된 것처럼 보이는데 Enter가 조용히 안 먹는 문제가
-            // 있었다(리뷰 지적) — 교체 시점에 상태 필드 자체를 새 길이로 clamp한다.
-            // 0건이 되면 saturating_sub로 0에 멈춘다(패닉 없음).
-            if let Some(list) = &mut self.news_list {
+            // 목록이 열린 채 뉴스가 0건으로 갱신되면 빈 오버레이가 남는 문제가 있었다
+            // — 이 경우 목록을 닫는다. 0건이 아니면 기존대로 커서만 새 길이로
+            // clamp한다(마지막 항목이 선택된 것처럼 보이는데 Enter가 안 먹던 문제,
+            // saturating_sub로 패닉 없이 0에 멈춘다).
+            if self.news.is_empty() {
+                self.news_list = None;
+            } else if let Some(list) = &mut self.news_list {
                 list.cursor = list.cursor.min(self.news.len().saturating_sub(1));
             }
             return;
@@ -909,18 +1116,6 @@ mod tests {
         assert_eq!(app.tab, tab_before, "Tab must be consumed by the overlay");
     }
 
-    #[test]
-    fn options_left_right_switch_pane_and_enter_applies_team() {
-        let mut app = App::new(Default::default());
-        app.on_key(KeyCode::F(2));
-        app.on_key(KeyCode::Right); // Date → Team
-        assert!(matches!(app.options.as_ref().unwrap().pane, Pane::Team));
-        app.on_key(KeyCode::Down); // cursor 1 = 첫 실제 팀(0 = None 해제 항목)
-        app.on_key(KeyCode::Enter);
-        assert!(app.options.is_none(), "apply closes the overlay");
-        assert!(app.fav_code.is_some(), "team selection applies to fav_code");
-    }
-
     /// Date 적용: date 갱신 + games_loaded 리셋 + Live였다면 List 복귀.
     #[test]
     fn options_date_apply_resets_list_and_leaves_live() {
@@ -937,18 +1132,6 @@ mod tests {
             app.date,
             crate::dateutil::format_civil(crate::dateutil::kst_days(1_800_000_000) - 1)
         );
-    }
-
-    #[test]
-    fn options_poll_apply_updates_poll_choice() {
-        let mut app = App::new(Default::default());
-        app.poll_choice = 5;
-        app.on_key(KeyCode::F(2));
-        app.on_key(KeyCode::Left); // Date → Poll (좌측 순환: Date↔Poll↔Team)
-        app.on_key(KeyCode::Down); // 3s → 5s? 항목 순서는 [3,5,10,30] — cursor 1 = 5
-        app.on_key(KeyCode::Down); // cursor 2 = 10
-        app.on_key(KeyCode::Enter);
-        assert_eq!(app.poll_choice, 10);
     }
 
     /// Tips는 News처럼 보조 — stale/last_error/fetching에 관여하지 않는다.
@@ -1196,9 +1379,9 @@ mod tests {
         assert_eq!(v.item.title, "새로 온 기사");
     }
 
-    /// 뉴스가 0건으로 갱신되면(전부 사라짐) 커서가 0에 멈추고 패닉하지 않는다.
+    /// 뉴스가 0건으로 갱신되면(전부 사라짐) 목록이 닫히고 패닉하지 않는다.
     #[test]
-    fn news_refresh_to_empty_does_not_panic_and_clamps_cursor_to_zero() {
+    fn news_refresh_to_empty_does_not_panic_and_closes_list() {
         let mut app = App::new(Default::default());
         app.apply(crate::poller::Update::News(vec![
             news_item("첫 기사", "https://x.kr/1"),
@@ -1209,10 +1392,128 @@ mod tests {
         assert_eq!(app.news_list.as_ref().unwrap().cursor, 1);
 
         app.apply(crate::poller::Update::News(vec![]));
-        assert_eq!(app.news_list.as_ref().unwrap().cursor, 0);
+        assert!(app.news_list.is_none(), "빈 오버레이를 남기지 않는다");
 
         // Enter는 조용히 무동작해야 한다(패닉 없음, 기사도 안 열림).
         app.on_key(KeyCode::Enter);
         assert!(app.article_view.is_none());
+    }
+
+    /// 목록이 열린 채 뉴스가 0건으로 갱신되면 오버레이를 닫는다(빈 목록 방치 금지).
+    #[test]
+    fn news_refresh_to_empty_closes_open_list() {
+        let mut app = App::new(Default::default());
+        app.apply(crate::poller::Update::News(vec![news_item("하나", "u")]));
+        app.on_key(KeyCode::Char('n'));
+        assert!(app.news_list.is_some());
+        app.apply(crate::poller::Update::News(vec![]));
+        assert!(app.news_list.is_none(), "empty refresh must close the list");
+    }
+
+    /// F9는 설정 화면을 연다. Esc로 닫힌다. j/k는 커서를 경계 내에서 움직인다.
+    #[test]
+    fn f9_opens_settings_and_esc_closes() {
+        let mut app = App::new(Default::default());
+        app.on_key(KeyCode::F(9));
+        assert!(app.settings.is_some(), "F9 opens settings");
+        app.on_key(KeyCode::Char('j'));
+        let rows = app.settings_rows().len();
+        assert!(app.settings.as_ref().unwrap().cursor < rows);
+        app.on_key(KeyCode::Esc);
+        assert!(app.settings.is_none(), "Esc closes settings");
+    }
+
+    /// 설정 화면이 열려 있으면 하위 화면 키(Tab)를 소비한다.
+    #[test]
+    fn settings_overlay_consumes_keys() {
+        let mut app = App::new(Default::default());
+        app.on_key(KeyCode::F(9));
+        let tab_before = app.tab;
+        app.on_key(KeyCode::Tab);
+        assert_eq!(app.tab, tab_before, "settings consumes Tab");
+    }
+
+    /// 설정 화면에서 폴링 항목을 →로 바꾸면 poll_choice가 다음 단계로 간다.
+    #[test]
+    fn settings_right_changes_poll_choice() {
+        let mut app = App::new(Default::default());
+        app.poll_choice = 5;
+        app.on_key(KeyCode::F(9));
+        // 커서를 폴링 항목(row 1)으로.
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Right);
+        assert_ne!(app.poll_choice, 5, "→ changes poll interval");
+    }
+
+    /// 설정 화면에서 팀 항목을 바꾸면 fav_code가 갱신된다.
+    #[test]
+    fn settings_changes_team() {
+        let mut app = App::new(Default::default());
+        app.on_key(KeyCode::F(9)); // 커서 0 = 팀
+        app.on_key(KeyCode::Right);
+        assert!(app.fav_code.is_some(), "→ selects a team");
+    }
+
+    /// 설정 항목에 테마 프리셋·액센트·언어 행이 추가돼 있다(팀·폴링 뒤 순서).
+    #[test]
+    fn settings_rows_include_theme_preset_and_accent() {
+        let app = App::new(Default::default());
+        let rows = app.settings_rows();
+        assert_eq!(rows.len(), 5);
+        assert!(matches!(rows[2].0, SettingKind::ThemePreset));
+        assert!(matches!(rows[3].0, SettingKind::ThemeAccent));
+        assert!(matches!(rows[4].0, SettingKind::Lang));
+    }
+
+    /// 설정 화면에서 테마 프리셋 항목을 →로 바꾸면 default→high-contrast→mono
+    /// 순으로 순환한다.
+    #[test]
+    fn settings_right_cycles_theme_preset() {
+        let mut app = App::new(Default::default());
+        assert_eq!(app.theme_preset, "default");
+        app.on_key(KeyCode::F(9));
+        app.on_key(KeyCode::Down); // Poll
+        app.on_key(KeyCode::Down); // ThemePreset
+        app.on_key(KeyCode::Right);
+        assert_eq!(app.theme_preset, "high-contrast");
+        app.on_key(KeyCode::Right);
+        assert_eq!(app.theme_preset, "mono");
+        app.on_key(KeyCode::Right); // 순환: mono 다음은 다시 default
+        assert_eq!(app.theme_preset, "default");
+    }
+
+    /// 테마 액센트 항목도 순환하고, ←는 역방향으로 순환한다.
+    #[test]
+    fn settings_changes_theme_accent_both_directions() {
+        let mut app = App::new(Default::default());
+        assert_eq!(app.theme_accent, "team");
+        app.on_key(KeyCode::F(9));
+        app.on_key(KeyCode::Down); // Poll
+        app.on_key(KeyCode::Down); // ThemePreset
+        app.on_key(KeyCode::Down); // ThemeAccent
+        app.on_key(KeyCode::Right);
+        assert_eq!(app.theme_accent, "cyan");
+        app.on_key(KeyCode::Left);
+        assert_eq!(app.theme_accent, "team");
+    }
+
+    /// 설정 화면에서 언어를 바꾸면 App.lang과 라벨이 갈린다.
+    #[test]
+    fn settings_changes_language() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        app.on_key(KeyCode::F(9));
+        // 언어 항목으로 커서 이동(마지막 행 근처) 후 → 로 순환.
+        let lang_row = app
+            .settings_rows()
+            .iter()
+            .position(|(_, label, _)| *label == app.labels().set_lang)
+            .unwrap();
+        for _ in 0..lang_row {
+            app.on_key(KeyCode::Char('j'));
+        }
+        let before = app.lang;
+        app.on_key(KeyCode::Right);
+        assert_ne!(app.lang, before, "language cycles");
     }
 }

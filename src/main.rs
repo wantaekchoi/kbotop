@@ -41,12 +41,12 @@ struct Cli {
     /// Date: YYYY-MM-DD, YYYYMMDD, today, yesterday, tomorrow, +N, -N (default: today, KST)
     #[arg(long)]
     date: Option<String>,
-    /// UI language: ko | en (default: auto by locale)
+    /// UI language: ko | en | ja | zh-TW | es (default: auto by locale)
     #[arg(long)]
     lang: Option<String>,
 }
 
-/// 언어 결정: CLI > config > env(LC_ALL→LANG, "ko" 접두) > En.
+/// 언어 결정: CLI > config > env(LC_ALL→LANG, "ko"/"ja"/"zh_TW"/"es" 접두) > En.
 fn detect_lang(
     cli: Option<&str>,
     config: Option<&str>,
@@ -56,7 +56,12 @@ fn detect_lang(
     let parse = |s: &str| match s.to_ascii_lowercase().as_str() {
         "ko" | "kr" | "korean" => Ok(Lang::Ko),
         "en" | "english" => Ok(Lang::En),
-        other => Err(format!("unsupported --lang: {other} (use ko or en)")),
+        "ja" | "japanese" => Ok(Lang::Ja),
+        "zh-tw" | "zh_tw" | "zh-hant" | "zh_hant" | "zhtw" => Ok(Lang::ZhTw),
+        "es" | "spanish" | "espanol" | "español" => Ok(Lang::Es),
+        other => Err(format!(
+            "unsupported --lang: {other} (use ko, en, ja, zh-TW, or es)"
+        )),
     };
     if let Some(s) = cli {
         return parse(s);
@@ -64,8 +69,18 @@ fn detect_lang(
     if let Some(s) = config {
         return parse(s);
     }
-    Ok(match env_lang {
-        Some(e) if e.to_ascii_lowercase().starts_with("ko") => Lang::Ko,
+    Ok(match env_lang.map(|e| e.to_ascii_lowercase()) {
+        Some(ref e) if e.starts_with("ko") => Lang::Ko,
+        Some(ref e) if e.starts_with("ja") => Lang::Ja,
+        Some(ref e)
+            if e.starts_with("zh_tw")
+                || e.starts_with("zh-tw")
+                || e.starts_with("zh_hant")
+                || e.starts_with("zh-hant") =>
+        {
+            Lang::ZhTw
+        }
+        Some(ref e) if e.starts_with("es") => Lang::Es,
         _ => Lang::En,
     })
 }
@@ -300,6 +315,8 @@ fn main() -> Result<()> {
     app.date = date_for_app.clone();
     app.poll_choice = live_poll_secs;
     app.lang = lang;
+    app.theme_preset = app.config.theme.preset.clone();
+    app.theme_accent = app.config.theme.accent.clone();
     app.fav_code = cli
         .team
         .as_deref()
@@ -595,6 +612,35 @@ mod tests {
         );
         assert_eq!(detect_lang(None, None, None).unwrap(), Lang::En);
         assert!(detect_lang(Some("jp"), None, None).is_err()); // fail fast
+    }
+
+    /// 일본어·중국어(번체) 지역화(T10): CLI/config/env 전 경로에서 인식된다.
+    #[test]
+    fn detect_lang_recognizes_japanese_and_traditional_chinese() {
+        use kbotop::ui::i18n::Lang;
+        assert_eq!(detect_lang(Some("ja"), None, None).unwrap(), Lang::Ja);
+        assert_eq!(detect_lang(Some("zh-TW"), None, None).unwrap(), Lang::ZhTw);
+        assert_eq!(detect_lang(None, Some("ja"), None).unwrap(), Lang::Ja);
+        assert_eq!(detect_lang(None, Some("zh-TW"), None).unwrap(), Lang::ZhTw);
+        assert_eq!(
+            detect_lang(None, None, Some("ja_JP.UTF-8")).unwrap(),
+            Lang::Ja
+        );
+        for env in ["zh_TW.UTF-8", "zh-TW", "zh_Hant_TW.UTF-8"] {
+            assert_eq!(detect_lang(None, None, Some(env)).unwrap(), Lang::ZhTw);
+        }
+        assert!(detect_lang(Some("zh"), None, None).is_err()); // 모호(간체/번체 미구분) — fail fast
+    }
+
+    /// 스페인어(T11): CLI/config/env 전 경로에서 인식된다.
+    #[test]
+    fn detect_lang_recognizes_spanish() {
+        use kbotop::ui::i18n::Lang;
+        assert_eq!(detect_lang(Some("es"), None, None).unwrap(), Lang::Es);
+        assert_eq!(detect_lang(None, Some("es"), None).unwrap(), Lang::Es);
+        for env in ["es_ES.UTF-8", "es_MX.UTF-8", "es-419"] {
+            assert_eq!(detect_lang(None, None, Some(env)).unwrap(), Lang::Es);
+        }
     }
 
     /// --help가 예시와 키 요약까지 보여준다 — 초행 사용자의 발견 가능성.

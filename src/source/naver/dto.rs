@@ -186,30 +186,6 @@ pub struct TeamStat {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NewsResult {
-    #[serde(default, deserialize_with = "null_as_default")]
-    pub news_list: Vec<NewsArticle>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NewsArticle {
-    #[serde(default, deserialize_with = "lenient_string")]
-    pub title: String,
-    #[serde(default, deserialize_with = "lenient_string")]
-    pub source_name: String,
-    #[serde(default, deserialize_with = "lenient_string")]
-    pub oid: String,
-    #[serde(default, deserialize_with = "lenient_string")]
-    pub aid: String,
-    /// 약 100자 요약(HTML 조각 포함 가능) — map.rs가 이걸 발췌(NewsItem.summary)로
-    /// 변환한다(HTML 제거 + EXCERPT_CHARS 상한). 결측 시 빈 문자열(관용).
-    #[serde(default, deserialize_with = "lenient_string")]
-    pub sub_content: String,
-}
-
-#[derive(Deserialize)]
 pub struct RelayResult {
     #[serde(rename = "textRelayData")]
     pub text_relay_data: Option<TextRelayData>,

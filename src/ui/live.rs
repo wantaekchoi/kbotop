@@ -1,5 +1,5 @@
 use super::strikezone;
-use super::theme::team_badge_style;
+use super::theme::{self, team_badge_style};
 use crate::app::{App, Screen};
 use crate::model::{Game, GameStatus, LiveState};
 use crate::ui::i18n::Labels;
@@ -14,19 +14,22 @@ use ratatui::{
 /// Live/Suspended/Final 외 상태(can_enter_live가 걸러내는 Canceled/Scheduled)는
 /// 이 화면에 들어오지 않으므로 배지가 필요 없다 — None을 반환해 그대로 숨긴다.
 /// 색은 games.rs의 status_tag와 맞춘다(같은 상태는 같은 색으로 보이도록).
-fn status_badge(status: GameStatus, l: &'static Labels) -> Option<(&'static str, Style)> {
+/// mono 프리셋은 theme::status_fg 게이트를 거쳐 색을 걷어낸다(header/games와
+/// 동일 패턴) — 리뷰 지적: 이전엔 Suspended가 게이트 없이 Magenta를 직접 써
+/// mono에서도 자홍색이 남았다.
+fn status_badge(
+    status: GameStatus,
+    l: &'static Labels,
+    preset: &str,
+) -> Option<(&'static str, Style)> {
     match status {
         GameStatus::Suspended => Some((
             l.badge_suspended,
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
+            theme::status_fg(preset, Color::Magenta).add_modifier(Modifier::BOLD),
         )),
         GameStatus::Final => Some((
             l.badge_final,
-            Style::default()
-                .fg(Color::Gray)
-                .add_modifier(Modifier::BOLD),
+            theme::status_fg(preset, Color::Gray).add_modifier(Modifier::BOLD),
         )),
         GameStatus::Live | GameStatus::Scheduled | GameStatus::Canceled => None,
     }
@@ -51,7 +54,15 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Length(5), Constraint::Min(0)])
         .split(area);
 
-    render_scoreline(f, rows[0], s, game, app.live_pitch_sel, l);
+    render_scoreline(
+        f,
+        rows[0],
+        s,
+        game,
+        app.live_pitch_sel,
+        l,
+        &app.theme_preset,
+    );
 
     // 폭이 좁거나 아직 투구 데이터가 없으면 존을 숨기고 중계에 본문 전체를 준다(우아한 저하).
     let wide = rows[1].width >= 70 && !s.current_pitches.is_empty();
@@ -61,7 +72,14 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(rows[1]);
         render_relay(f, cols[0], s, l);
-        strikezone::render(f, cols[1], &s.current_pitches, app.live_pitch_sel, l);
+        strikezone::render(
+            f,
+            cols[1],
+            &s.current_pitches,
+            app.live_pitch_sel,
+            l,
+            &app.theme_preset,
+        );
     } else {
         render_relay(f, rows[1], s, l);
     }
@@ -79,6 +97,7 @@ fn render_scoreline(
     game: &Game,
     sel: Option<usize>,
     l: &'static Labels,
+    preset: &str,
 ) {
     let status = game.status;
     // 3슬롯 ASCII 주자 표시: [3루 2루 1루], 빈 베이스는 '-' — 폭 고정.
@@ -103,7 +122,7 @@ fn render_scoreline(
     ];
     // 서스펜디드/종료 경기는 스코어라인만 봐서는 진행 중인 경기와 구분이
     // 안 된다 — inning_label 옆에 배지를 붙여 우아하게 저하시킨다.
-    if let Some((label, style)) = status_badge(status, l) {
+    if let Some((label, style)) = status_badge(status, l, preset) {
         spans.push(Span::raw(" "));
         spans.push(Span::styled(label, style));
     }

@@ -1,6 +1,5 @@
 //! F2 옵션 픽커 오버레이 + 공용 chooser(링크 픽커도 재사용).
 use super::i18n::Labels;
-use super::theme::team_badge_style;
 use crate::app::{App, Pane};
 use crate::dateutil::{format_civil, kst_days};
 use ratatui::{
@@ -12,12 +11,20 @@ use ratatui::{
 };
 
 /// Date pane 항목: (표시 라벨, YYYY-MM-DD). 오늘은 now_secs 기준 KST.
-/// "-2"/"-3"/"+2"/"+3"의 접미(days/일)는 언어별 완성형이 아니라
+/// "-2"/"-3"/"+2"/"+3"의 접미(days/일/días)는 언어별 완성형이 아니라
 /// `l.date_days_fmt_minus`(공백 유무 포함 sep)로 데이터 주도 조립한다 —
-/// 언어 분기(match lang) 없이 라벨 데이터만 바뀌면 문구가 따라온다.
+/// 언어 분기(match lang) 없이 라벨 데이터만 바뀌면 문구가 따라온다. sep는
+/// 접미의 첫 글자가 ASCII(라틴 문자 계열: en/es)인지로 결정한다 — 리터럴
+/// "days" 일치만 보면 "días"(ES)가 안 걸려 숫자에 그대로 붙어버린다
+/// ("-2días"). 한글/일본어/중국어 접미는 첫 글자가 비ASCII라 여전히 sep 없음.
 pub fn date_items(l: &'static Labels, now_secs: u64) -> Vec<(String, String)> {
     let today = kst_days(now_secs);
-    let sep = if l.date_days_fmt_minus == "days" {
+    let sep = if l
+        .date_days_fmt_minus
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii())
+    {
         " "
     } else {
         ""
@@ -66,13 +73,12 @@ pub fn poll_items(l: &'static Labels) -> Vec<(String, u64)> {
         .collect()
 }
 
-/// app.rs 커서 경계용 항목 수.
+/// app.rs 커서 경계용 항목 수. Pane은 v0.8부터 Date 단일 variant다(Team·Poll은
+/// F9 설정으로 이동 — team_items/poll_items 자체는 change_setting/settings_rows가
+/// 계속 쓰므로 남아 있다).
 pub fn pane_len(pane: Pane, now_secs: u64, l: &'static Labels) -> usize {
-    match pane {
-        Pane::Date => date_items(l, now_secs).len(),
-        Pane::Team => team_items(l).len(),
-        Pane::Poll => poll_items(l).len(),
-    }
+    let Pane::Date = pane;
+    date_items(l, now_secs).len()
 }
 
 /// 공용 chooser: 중앙 오버레이 박스에 제목+항목 목록(커서 "> ", REVERSED).
@@ -98,45 +104,15 @@ pub fn chooser(f: &mut Frame, area: Rect, title: &str, items: &[Line], cursor: u
     );
 }
 
-/// F2 옵션 오버레이: 상단 pane 탭(활성 브래킷 — 헤더 탭과 같은 문법) + 항목.
+/// F2 옵션 오버레이: 날짜 전용(v0.8 — Team·Poll은 F9 설정으로 이동).
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let Some(opt) = &app.options else { return };
     let l = app.labels();
-    let tab = |p: Pane, label: &str| {
-        if opt.pane == p {
-            format!("[ {label} ]")
-        } else {
-            format!("  {label}  ")
-        }
-    };
-    let title = format!(
-        "{}  {}|{}|{}",
-        l.title_options,
-        tab(Pane::Date, l.pane_date),
-        tab(Pane::Team, l.pane_team),
-        tab(Pane::Poll, l.pane_poll)
-    );
-    let items: Vec<Line> = match opt.pane {
-        Pane::Date => date_items(l, app.now_secs)
-            .into_iter()
-            .map(|(label, _)| Line::from(label))
-            .collect(),
-        Pane::Team => team_items(l)
-            .into_iter()
-            .map(|(label, code)| match code {
-                Some(c) => Line::from(vec![
-                    Span::styled(format!(" {c} "), team_badge_style(&c)),
-                    Span::raw(" "),
-                    Span::raw(label),
-                ]),
-                None => Line::from(label),
-            })
-            .collect(),
-        Pane::Poll => poll_items(l)
-            .into_iter()
-            .map(|(label, _)| Line::from(label))
-            .collect(),
-    };
+    let title = format!("{}  [ {} ]", l.title_options, l.pane_date);
+    let items: Vec<Line> = date_items(l, app.now_secs)
+        .into_iter()
+        .map(|(label, _)| Line::from(label))
+        .collect();
     chooser(f, area, &title, &items, opt.cursor);
 }
 
@@ -144,9 +120,9 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
 mod tests {
     use super::*;
 
-    /// 완전성: 오버레이가 세 pane 라벨과 현재 pane의 전 항목을 렌더한다.
+    /// 완전성: F2 오버레이는 v0.8부터 Date 단일 pane — 라벨과 전 항목을 렌더한다.
     #[test]
-    fn overlay_renders_all_pane_labels_and_every_current_item() {
+    fn overlay_renders_date_pane_label_and_every_item() {
         let mut app = crate::app::App::new(Default::default());
         app.now_secs = 1_800_000_000;
         app.options = Some(crate::app::OptionsState {
@@ -162,16 +138,14 @@ mod tests {
             .iter()
             .map(|c| c.symbol())
             .collect();
-        for label in ["Date", "Team", "Poll"] {
-            assert!(text.contains(label), "pane label {label} missing");
-        }
+        assert!(text.contains("Date"), "pane label Date missing");
         for (label, _) in date_items(app.labels(), app.now_secs) {
             assert!(text.contains(&label), "date item {label} missing");
         }
     }
 
     #[test]
-    fn korean_options_panes_render_when_lang_ko() {
+    fn korean_options_date_pane_renders_when_lang_ko() {
         let mut app = crate::app::App::new(Default::default());
         app.lang = crate::ui::i18n::Lang::Ko;
         app.options = Some(crate::app::OptionsState {
@@ -191,9 +165,50 @@ mod tests {
         // ratatui는 전각(2-width) 문자 뒤에 placeholder 공백 셀을 채워 넣으므로
         // (live.rs 테스트와 동일한 이유) 공백을 제거하고 부분 문자열을 검사한다.
         let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
-        for needle in ["날짜", "팀", "주기", "오늘"] {
+        for needle in ["날짜", "오늘"] {
             assert!(compact.contains(needle), "{needle} missing:\n{text}");
         }
+    }
+
+    /// 리뷰 지적(Minor): 일수 접미사 앞 공백은 "접미사 첫 글자가 ASCII인가"로
+    /// 정해진다(en/es는 라틴 문자 접미라 공백 있음, ko는 비ASCII 접미라 공백
+    /// 없음). 이 로직에 회귀 방지 테스트가 없었다 — 리터럴 "days" 일치만 보는
+    /// 식으로 되돌아가면 "-2días"(es, 공백 소실)를 조용히 만들어낼 수 있다.
+    /// date_items()가 조립한 라벨의 접미사 부분(오프셋 뒤·날짜 앞)을 언어별로
+    /// 못박는다.
+    #[test]
+    fn date_items_suffix_separator_is_locale_correct() {
+        let now = 1_800_000_000u64;
+
+        // en: 라틴 문자 접미("days") → 숫자와 접미 사이 공백 있음.
+        let en = date_items(crate::ui::i18n::labels(crate::ui::i18n::Lang::En), now);
+        assert!(
+            en[3].0.starts_with("-2 days"),
+            "en suffix missing space before 'days': {}",
+            en[3].0
+        );
+
+        // ko: 비ASCII 접미("일") → 숫자에 바로 붙음(공백 없음).
+        let ko = date_items(crate::ui::i18n::labels(crate::ui::i18n::Lang::Ko), now);
+        assert!(
+            ko[3].0.starts_with("-2일"),
+            "ko suffix should attach directly (no space) before '일': {}",
+            ko[3].0
+        );
+        assert!(
+            !ko[3].0.starts_with("-2 "),
+            "ko suffix must not have a stray space: {}",
+            ko[3].0
+        );
+
+        // es: 라틴 문자 접미("días") → 숫자와 접미 사이 공백 있음(리터럴 "days"
+        // 일치만 보면 놓치는 케이스 — sep는 접미의 "첫 글자 ASCII 여부"로 판단).
+        let es = date_items(crate::ui::i18n::labels(crate::ui::i18n::Lang::Es), now);
+        assert!(
+            es[3].0.starts_with("-2 días"),
+            "es suffix missing space before 'días': {}",
+            es[3].0
+        );
     }
 
     #[test]

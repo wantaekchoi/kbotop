@@ -45,7 +45,7 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/rele
 kbotop                    # today's games
 kbotop --team lg          # straight into your team's live game
 kbotop --date yesterday   # also: YYYY-MM-DD, YYYYMMDD, today, tomorrow, +N, -N
-kbotop --lang en          # UI language (default: auto by locale, ko/en)
+kbotop --lang en          # UI language (default: auto by locale, ko/en/ja/zh-TW/es)
 ```
 
 Vim-style navigation; the in-app `?` help is the source of truth.
@@ -53,18 +53,21 @@ Vim-style navigation; the in-app `?` help is the source of truth.
 - Move: `j` / `k` or arrow keys
 - Open live view: `Enter`
 - Games / Standings: `Tab`
-- Options picker (date / team / poll): `F2`
+- Date picker: `F2`
+- Settings screen (team / language / poll interval / theme): `F9` (alias `S`)
 - Team links (official site / goods shop): `o`
 - Open the news list: `n` (then `Enter` on an item to read it)
 - Inspect pitches: `Left` / `Right` (live view)
 - Help: `?`
 - Quit: `q`
 
-The UI speaks Korean on ko locales; force English with `--lang en`.
+Five languages are supported: Korean, English, 日本語, 繁體中文, and Español. The UI auto-detects your locale by default; switch it with `--lang` or from the F9 settings screen at any time.
 
 ## Configuration
 
-`$XDG_CONFIG_HOME/kbotop/config.toml`, falling back to `~/.config/kbotop/config.toml`. Sets your favorite team and the poll interval.
+`$XDG_CONFIG_HOME/kbotop/config.toml`, falling back to `~/.config/kbotop/config.toml`. Change your favorite team, language, poll interval, and theme from the `F9` settings screen — each change is saved to this file immediately and survives a restart.
+
+Themes combine a preset (`default` / `high-contrast` / `mono`) with an accent source (your team's color, a named color, or none). `mono` uses no color at all, so it stays fully readable for colorblind users and on monochrome terminals.
 
 ## Disclaimer
 

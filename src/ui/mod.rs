@@ -7,6 +7,7 @@ pub mod i18n;
 pub mod live;
 pub mod newslist;
 pub mod options;
+pub mod settings;
 pub mod sideview;
 pub mod standings;
 pub mod strikezone;
@@ -120,6 +121,10 @@ pub fn draw(f: &mut Frame, app: &App) {
         help::render(f, f.area(), app);
     }
 
+    if app.settings.is_some() {
+        settings::render(f, f.area(), app);
+    }
+
     // 뉴스 목록은 기사보다 아래 층 — 기사가 목록 위에 겹쳐 열릴 수 있으므로
     // (on_key의 소비 순서와 대응) 목록을 먼저 그리고 기사를 그 위에 그린다.
     if app.news_list.is_some() {
@@ -144,7 +149,7 @@ pub fn current_news_index(now_secs: u64, len: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Game, GameStatus, Team};
+    use crate::model::{BaseState, Count, Game, GameStatus, LiveState, Team};
     use crate::poller::Update;
     use ratatui::{backend::TestBackend, Terminal};
 
@@ -483,6 +488,317 @@ mod tests {
         assert!(
             compact.contains("목록항목제목"),
             "목록 제목이 보여야 한다:\n{compact}"
+        );
+    }
+
+    /// mono 프리셋에서는 chrome이 색을 전혀 쓰지 않는다(팀 배지 데이터는 예외 —
+    /// 배지가 없는 기본 목록 화면으로 검증). 렌더 버퍼의 모든 셀 fg가 무채색이다.
+    #[test]
+    fn mono_preset_renders_without_color() {
+        use ratatui::style::Color;
+        let mut app = App::new(Default::default());
+        app.theme_preset = "mono".into();
+        app.theme_accent = "cyan".into();
+        // 팀 배지가 없는 상태(경기 없음, fav 미설정)에서 chrome만 렌더.
+        let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        term.draw(|f| draw(f, &app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        for cell in buf.content() {
+            assert!(
+                matches!(cell.fg, Color::Reset)
+                    || matches!(cell.fg, Color::White | Color::Black | Color::Gray),
+                "mono chrome used a color: {:?}",
+                cell.fg
+            );
+        }
+    }
+
+    /// mono 봉인 보강(리뷰 Minor): base 목록 화면만 보던 기존 테스트는 live.rs의
+    /// Suspended 배지(수정 1 이전엔 게이트 없이 Magenta 직접 사용)를 못 봤다.
+    /// Suspended 라이브 화면을 렌더해 "SUSPENDED" 배지 셀의 fg가 무채색인지
+    /// 직접 검사한다 — 팀 배지(LG/KT RGB)는 데이터 예외라 전체 버퍼가 아니라
+    /// 배지 셀만 표적으로 검사한다.
+    #[test]
+    fn mono_preset_seals_suspended_badge_in_live_view() {
+        use ratatui::style::Color;
+        let mut app = App::new(Default::default());
+        app.theme_preset = "mono".into();
+        app.theme_accent = "cyan".into();
+
+        let team = |code: &str, name: &str| Team {
+            code: code.into(),
+            name: name.into(),
+        };
+        let state = LiveState {
+            inning_label: "9회말".into(),
+            home: team("LG", "LG"),
+            away: team("KT", "KT"),
+            home_score: 3,
+            away_score: 2,
+            count: Count {
+                ball: 0,
+                strike: 0,
+                out: 0,
+            },
+            bases: BaseState {
+                first: false,
+                second: false,
+                third: false,
+            },
+            pitcher_name: String::new(),
+            batter_name: String::new(),
+            home_win_rate: None,
+            away_win_rate: None,
+            relay_log: vec![],
+            current_pitches: vec![],
+            next_batter_name: String::new(),
+        };
+        let game = Game {
+            id: "g".into(),
+            start: "".into(),
+            status: GameStatus::Suspended,
+            status_label: "9회말".into(),
+            home: team("LG", "LG"),
+            away: team("KT", "KT"),
+            home_score: Some(3),
+            away_score: Some(2),
+        };
+        app.screen = Screen::Live {
+            game,
+            state: Some(state),
+        };
+
+        let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        term.draw(|f| draw(f, &app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let cells: Vec<_> = buf.content().iter().collect();
+
+        // "SUSPENDED"는 i18n 영문 라벨(badge_suspended)에서만 나오는 유일한 문자열이라
+        // 버퍼에서 이 연속 셀 시퀀스를 찾아 그 fg만 표적 검사한다.
+        let badge_chars: Vec<char> = "SUSPENDED".chars().collect();
+        let mut found = false;
+        for start in 0..cells.len().saturating_sub(badge_chars.len() - 1) {
+            let is_match = badge_chars
+                .iter()
+                .enumerate()
+                .all(|(i, ch)| cells[start + i].symbol() == ch.to_string());
+            if !is_match {
+                continue;
+            }
+            found = true;
+            for cell in &cells[start..start + badge_chars.len()] {
+                assert!(
+                    matches!(cell.fg, Color::Reset)
+                        || matches!(cell.fg, Color::White | Color::Black | Color::Gray),
+                    "mono Suspended badge used a chromatic color: {:?}",
+                    cell.fg
+                );
+            }
+        }
+        assert!(found, "SUSPENDED badge not found in rendered buffer");
+    }
+
+    /// 최종 리뷰 Important 수정 봉인: mono 프리셋에서도 스트라이크존 마커·구속
+    /// 범례·측면뷰 궤적이 투구 결과색(Green/Red/Yellow/Cyan)으로 새던 문제
+    /// (strikezone::render/sideview::render가 preset 게이트 없이 항상
+    /// result_color를 fg로 씀). 투구 데이터가 있는 라이브 화면을 존이 실제로
+    /// 그려지는 넓은 폭(live.rs의 wide 기준 70 이상)·측면뷰까지 나오는 높이로
+    /// 렌더해 버퍼 전체에 유채색 fg가 없는지 검사한다. 수정 전(게이트 없음)이면
+    /// 이 테스트는 실패한다.
+    #[test]
+    fn mono_preset_seals_strikezone_and_sideview_pitch_colors_in_live_view() {
+        use crate::model::{Pitch, PitchResult};
+        use ratatui::style::Color;
+
+        let mut app = App::new(Default::default());
+        app.theme_preset = "mono".into();
+        app.theme_accent = "cyan".into();
+
+        let team = |code: &str, name: &str| Team {
+            code: code.into(),
+            name: name.into(),
+        };
+        let mk_pitch = |order: u8, result: PitchResult| Pitch {
+            order,
+            plate_x: (order as f32 - 2.0) * 0.2,
+            plate_y: 2.5,
+            sz_top: 3.3,
+            sz_bottom: 1.5,
+            speed_kmh: Some(140 + order as u16),
+            result,
+            text: format!("{order}구"),
+            // 측면뷰 궤적이 실제로 그려지도록 릴리스 파라미터를 채운다
+            // (sideview.rs traj_pitch와 동일 값).
+            plate_t: 0.39,
+            y0: 50.0,
+            vy0: -130.0,
+            ay: 21.0,
+            z0: 6.0 + (order as f32 - 1.0) * 0.5,
+            vz0: -0.5,
+            az: -21.0,
+            ..Default::default()
+        };
+        let state = LiveState {
+            inning_label: "5회초".into(),
+            home: team("LG", "LG"),
+            away: team("KT", "KT"),
+            home_score: 1,
+            away_score: 2,
+            count: Count {
+                ball: 1,
+                strike: 2,
+                out: 1,
+            },
+            bases: BaseState {
+                first: true,
+                second: false,
+                third: false,
+            },
+            pitcher_name: "투수".into(),
+            batter_name: "타자".into(),
+            home_win_rate: None,
+            away_win_rate: None,
+            relay_log: vec![],
+            current_pitches: vec![
+                mk_pitch(1, PitchResult::Ball),
+                mk_pitch(2, PitchResult::StrikeLooking),
+                mk_pitch(3, PitchResult::Foul),
+                mk_pitch(4, PitchResult::InPlay),
+            ],
+            next_batter_name: String::new(),
+        };
+        let game = Game {
+            id: "g".into(),
+            start: "".into(),
+            status: GameStatus::Live,
+            status_label: "5회초".into(),
+            home: team("LG", "LG"),
+            away: team("KT", "KT"),
+            home_score: Some(1),
+            away_score: Some(2),
+        };
+        app.screen = Screen::Live {
+            game,
+            state: Some(state),
+        };
+
+        // 80x30: width>=70(live.rs wide 기준) + 측면뷰가 나오는 충분한 높이.
+        let mut term = Terminal::new(TestBackend::new(80, 30)).unwrap();
+        term.draw(|f| draw(f, &app)).unwrap();
+        let buf = term.backend().buffer().clone();
+
+        for cell in buf.content() {
+            assert!(
+                !matches!(
+                    cell.fg,
+                    Color::Green | Color::Red | Color::Yellow | Color::Cyan
+                ),
+                "mono strikezone/sideview leaked a chromatic pitch color: {:?} at {:?}",
+                cell.fg,
+                cell.symbol()
+            );
+        }
+
+        // 정보 손실 없음: 색이 빠져도 구속 범례의 결과 문자는 남아야 한다.
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect();
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        for tag in ["1B", "2S", "3F", "4H"] {
+            assert!(
+                compact.contains(tag),
+                "mono must keep the result letter {tag}:\n{text}"
+            );
+        }
+    }
+
+    /// 대조(무회귀): mono가 아닌 프리셋에서는 라이브 화면의 투구색이 기존처럼 남는다.
+    #[test]
+    fn default_preset_keeps_strikezone_pitch_colors_in_live_view() {
+        use crate::model::{Pitch, PitchResult};
+        use ratatui::style::Color;
+
+        let mut app = App::new(Default::default());
+        // theme_preset은 기본값("default")을 그대로 둔다.
+
+        let team = |code: &str, name: &str| Team {
+            code: code.into(),
+            name: name.into(),
+        };
+        let pitch = Pitch {
+            order: 1,
+            plate_x: 0.0,
+            plate_y: 2.5,
+            sz_top: 3.3,
+            sz_bottom: 1.5,
+            speed_kmh: Some(145),
+            result: PitchResult::Ball, // result_color(Ball) == Green
+            text: "1구".into(),
+            ..Default::default()
+        };
+        let state = LiveState {
+            inning_label: "5회초".into(),
+            home: team("LG", "LG"),
+            away: team("KT", "KT"),
+            home_score: 1,
+            away_score: 2,
+            count: Count {
+                ball: 1,
+                strike: 0,
+                out: 0,
+            },
+            bases: BaseState {
+                first: false,
+                second: false,
+                third: false,
+            },
+            pitcher_name: String::new(),
+            batter_name: String::new(),
+            home_win_rate: None,
+            away_win_rate: None,
+            relay_log: vec![],
+            current_pitches: vec![pitch],
+            next_batter_name: String::new(),
+        };
+        let game = Game {
+            id: "g".into(),
+            start: "".into(),
+            status: GameStatus::Live,
+            status_label: "5회초".into(),
+            home: team("LG", "LG"),
+            away: team("KT", "KT"),
+            home_score: Some(1),
+            away_score: Some(2),
+        };
+        app.screen = Screen::Live {
+            game,
+            state: Some(state),
+        };
+
+        let mut term = Terminal::new(TestBackend::new(80, 30)).unwrap();
+        term.draw(|f| draw(f, &app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let has_green = buf.content().iter().any(|c| c.fg == Color::Green);
+        assert!(
+            has_green,
+            "default preset must keep the Ball pitch color (Green) in the live strikezone"
+        );
+    }
+
+    /// draw 최상위에서 설정 화면이 렌더되고 제목이 보인다.
+    #[test]
+    fn settings_renders_through_draw() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        app.settings = Some(crate::app::SettingsState {
+            cursor: 0,
+            save_failed: false,
+        });
+        let compact: String = render_to_string(&app)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(
+            compact.contains("설정"),
+            "settings title missing:\n{compact}"
         );
     }
 }

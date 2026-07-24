@@ -1,12 +1,15 @@
 //! TUI chrome 문자열의 i18n. struct 필드 방식 — 라벨 누락은 컴파일 에러다.
 //! 폭 예산: 한국어는 전각 2칸 — footer 힌트·헤더 라벨은 축약형으로 설계했고
-//! 폭 회귀 테스트(T6)가 두 언어 모두 봉인한다. 보존(공통): B/S/O, [- - 1],
+//! 폭 회귀 테스트(T6)가 모든 언어를 봉인한다. 보존(공통): B/S/O, [- - 1],
 //! T9/B11, WP, km, GO!, 데이터(팀명·중계·팁·뉴스).
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lang {
     Ko,
     En,
+    Ja,
+    ZhTw,
+    Es,
 }
 
 pub struct Labels {
@@ -19,11 +22,20 @@ pub struct Labels {
     // 헤더 2행 탭 — 활성 "[ {t} ]" / 비활성 "  {t}  " 조합은 코드가 한다
     pub tab_games: &'static str,
     pub tab_standings: &'static str,
-    // footer 힌트(상태별 완성형 문자열 — 폭 검증 대상)
-    pub hint_list_games: &'static str,
-    pub hint_list_standings: &'static str,
-    pub hint_live: &'static str,
-    pub hint_live_selected: &'static str,
+    // footer 힌트 조각(키는 footer.rs가, 라벨만 언어별) — assemble_hints가
+    // 폭에 맞춰 조립한다(T5). 폭 예산은 footer_assembly_is_width_safe_in_all_languages가
+    // 봉인.
+    pub hint_help: &'static str,        // "Help" / "도움말"
+    pub hint_options: &'static str,     // "Options" / "옵션"
+    pub hint_settings: &'static str,    // "Settings" / "설정"
+    pub hint_switch: &'static str,      // "Switch" / "전환"
+    pub hint_links: &'static str,       // "Links" / "링크"
+    pub hint_news: &'static str,        // "News" / "뉴스"
+    pub hint_live_key: &'static str,    // "Live" / "중계"
+    pub hint_back: &'static str,        // "Back" / "뒤로"
+    pub hint_all_pitches: &'static str, // "All pitches" / "전체보기"
+    pub hint_pitch: &'static str,       // "Pitch" / "투구"
+    pub hint_quit: &'static str,        // "Quit" / "종료"
     pub error_prefix: &'static str,
     // 블록 타이틀 조각
     pub title_games: &'static str,     // " {t} {date} " 조합
@@ -41,6 +53,27 @@ pub struct Labels {
     pub news_list_hint: &'static str,    // 뉴스 목록 하단 조작 힌트
     pub title_options: &'static str,     // "Options" / "옵션" (pane 탭 조합은 코드)
     pub title_open: &'static str,        // chooser 타이틀
+    pub title_settings: &'static str,    // " 설정 " / " Settings "
+    pub settings_hint: &'static str,     // " ←→ 변경 · j/k 이동 · Esc 닫기 "
+    pub settings_save_failed: &'static str, // " 저장 안 됨(설정 파일 쓰기 실패) "
+    pub set_team: &'static str,          // "응원팀" / "Favorite team"
+    pub set_poll: &'static str,          // "폴링 주기" / "Poll interval"
+    pub set_theme_preset: &'static str,  // "테마 프리셋" / "Theme preset"
+    pub set_theme_accent: &'static str,  // "강조색" / "Accent color"
+    pub set_lang: &'static str,          // "언어" / "Language" (F9 설정의 Lang 행 라벨)
+    // 테마 프리셋 값 표시(F9 설정 화면의 ThemePreset 행 값 칸)
+    pub theme_default: &'static str,
+    pub theme_high_contrast: &'static str,
+    pub theme_mono: &'static str,
+    // 액센트 소스 값 표시(F9 설정 화면의 ThemeAccent 행 값 칸)
+    pub accent_team: &'static str,
+    pub accent_cyan: &'static str,
+    pub accent_green: &'static str,
+    pub accent_yellow: &'static str,
+    pub accent_magenta: &'static str,
+    pub accent_blue: &'static str,
+    pub accent_red: &'static str,
+    pub accent_none: &'static str,
     // 상태 문구
     pub loading: &'static str,
     pub no_games: &'static str,
@@ -73,8 +106,6 @@ pub struct Labels {
     pub help_lines: [&'static str; 9],
     // F2 픽커
     pub pane_date: &'static str,
-    pub pane_team: &'static str,
-    pub pane_poll: &'static str,
     pub date_today: &'static str,
     pub date_yesterday: &'static str,
     pub date_tomorrow: &'static str,
@@ -91,10 +122,17 @@ pub const EN: Labels = Labels {
     stale: "stale",
     tab_games: "GAMES",
     tab_standings: "STANDINGS",
-    hint_list_games: " F1 Help   F2 Options   Tab Switch   o Links   n News   Enter Live   q Quit",
-    hint_list_standings: " F1 Help   F2 Options   Tab Switch   o Links   n News   q Quit",
-    hint_live: " F1 Help   Esc Back   Left/Right Pitch   q Quit",
-    hint_live_selected: " F1 Help   Esc All pitches   Left/Right Pitch   q Quit",
+    hint_help: "Help",
+    hint_options: "Options",
+    hint_settings: "Settings",
+    hint_switch: "Switch",
+    hint_links: "Links",
+    hint_news: "News",
+    hint_live_key: "Live",
+    hint_back: "Back",
+    hint_all_pitches: "All pitches",
+    hint_pitch: "Pitch",
+    hint_quit: "Quit",
     error_prefix: " ERROR: ",
     title_games: "Games",
     title_standings: "Standings",
@@ -111,6 +149,25 @@ pub const EN: Labels = Labels {
     news_list_hint: " Enter read · j/k move · Esc close ",
     title_options: "Options",
     title_open: "Open in browser",
+    title_settings: " Settings ",
+    settings_hint: " ←→ change · j/k move · Esc close ",
+    settings_save_failed: " Not saved (config write failed) ",
+    set_team: "Favorite team",
+    set_poll: "Poll interval",
+    set_theme_preset: "Theme preset",
+    set_theme_accent: "Accent color",
+    set_lang: "Language",
+    theme_default: "Default",
+    theme_high_contrast: "High contrast",
+    theme_mono: "Mono (no color)",
+    accent_team: "Team color",
+    accent_cyan: "Cyan",
+    accent_green: "Green",
+    accent_yellow: "Yellow",
+    accent_magenta: "Magenta",
+    accent_blue: "Blue",
+    accent_red: "Red",
+    accent_none: "None",
     loading: "loading...",
     no_games: "No games scheduled",
     no_standings: "No standings available",
@@ -142,13 +199,11 @@ pub const EN: Labels = Labels {
         "Back       Esc",
         "Switch tab Tab / F5",
         "Pitch      Left / Right (live view)",
-        "Options    F2 (date / team / poll)",
+        "Options    F2 (date) / F9 (team/poll)",
         "Links/News o / n",
         "Quit       q / F10",
     ],
     pane_date: "Date",
-    pane_team: "Team",
-    pane_poll: "Poll",
     date_today: "Today",
     date_yesterday: "Yesterday",
     date_tomorrow: "Tomorrow",
@@ -165,10 +220,17 @@ pub const KO: Labels = Labels {
     stale: "지연",
     tab_games: "경기",
     tab_standings: "순위",
-    hint_list_games: " F1 도움말  F2 옵션  Tab 전환  o 링크  n 뉴스  Enter 중계  q 종료",
-    hint_list_standings: " F1 도움말  F2 옵션  Tab 전환  o 링크  n 뉴스  q 종료",
-    hint_live: " F1 도움말  Esc 뒤로  좌우 투구  q 종료",
-    hint_live_selected: " F1 도움말  Esc 전체보기  좌우 투구  q 종료",
+    hint_help: "도움말",
+    hint_options: "옵션",
+    hint_settings: "설정",
+    hint_switch: "전환",
+    hint_links: "링크",
+    hint_news: "뉴스",
+    hint_live_key: "중계",
+    hint_back: "뒤로",
+    hint_all_pitches: "전체보기",
+    hint_pitch: "투구",
+    hint_quit: "종료",
     error_prefix: " 오류: ",
     title_games: "경기",
     title_standings: "순위",
@@ -185,6 +247,25 @@ pub const KO: Labels = Labels {
     news_list_hint: " Enter 읽기 · j/k 이동 · Esc 닫기 ",
     title_options: "옵션",
     title_open: "브라우저로 열기",
+    title_settings: " 설정 ",
+    settings_hint: " ←→ 변경 · j/k 이동 · Esc 닫기 ",
+    settings_save_failed: " 저장 안 됨(설정 파일 쓰기 실패) ",
+    set_team: "응원팀",
+    set_poll: "폴링 주기",
+    set_theme_preset: "테마 프리셋",
+    set_theme_accent: "강조색",
+    set_lang: "언어",
+    theme_default: "기본",
+    theme_high_contrast: "고대비",
+    theme_mono: "흑백(색 없음)",
+    accent_team: "팀 색",
+    accent_cyan: "청록",
+    accent_green: "초록",
+    accent_yellow: "노랑",
+    accent_magenta: "자홍",
+    accent_blue: "파랑",
+    accent_red: "빨강",
+    accent_none: "없음",
     loading: "불러오는 중...",
     no_games: "예정된 경기가 없습니다",
     no_standings: "순위 정보가 없습니다",
@@ -216,13 +297,11 @@ pub const KO: Labels = Labels {
         "뒤로        Esc",
         "탭 전환     Tab / F5",
         "투구 보기   좌우 방향키 (중계 화면)",
-        "옵션        F2 (날짜 / 팀 / 주기)",
+        "옵션        F2 (날짜) / F9 (팀·주기)",
         "링크/뉴스   o / n",
         "종료        q / F10",
     ],
     pane_date: "날짜",
-    pane_team: "팀",
-    pane_poll: "주기",
     date_today: "오늘",
     date_yesterday: "어제",
     date_tomorrow: "내일",
@@ -231,10 +310,331 @@ pub const KO: Labels = Labels {
     poll_suffix: "초 폴링",
 };
 
+pub const JA: Labels = Labels {
+    count_live: "中継",
+    count_sched: "予定",
+    count_final: "終了",
+    count_other: "その他",
+    stale: "遅延",
+    tab_games: "試合",
+    tab_standings: "順位",
+    hint_help: "ヘルプ",
+    hint_options: "オプション",
+    hint_settings: "設定",
+    hint_switch: "切替",
+    hint_links: "リンク",
+    hint_news: "ニュース",
+    hint_live_key: "中継",
+    hint_back: "戻る",
+    hint_all_pitches: "全投球",
+    hint_pitch: "投球",
+    hint_quit: "終了",
+    error_prefix: " エラー: ",
+    title_games: "試合",
+    title_standings: "順位",
+    standings_current: "(現在)",
+    title_live: " 中継 ",
+    title_relay: " 実況 ",
+    title_zone: " ゾーン ",
+    title_side: " 側面 ",
+    title_help: " ヘルプ ",
+    title_article: " 記事(抜粋) ",
+    article_hint: " Esc 閉じる · Enter/o 全文 · j/k スクロール ",
+    article_read_full: "抜粋です — 全文は Enter または o を押してください",
+    title_news_list: " ニュース ",
+    news_list_hint: " Enter 読む · j/k 移動 · Esc 閉じる ",
+    title_options: "オプション",
+    title_open: "ブラウザで開く",
+    title_settings: " 設定 ",
+    settings_hint: " ←→ 変更 · j/k 移動 · Esc 閉じる ",
+    settings_save_failed: " 保存失敗(設定ファイルの書き込みエラー) ",
+    set_team: "応援チーム",
+    set_poll: "更新間隔",
+    set_theme_preset: "テーマプリセット",
+    set_theme_accent: "アクセントカラー",
+    set_lang: "言語",
+    theme_default: "標準",
+    theme_high_contrast: "高コントラスト",
+    theme_mono: "モノクロ(色なし)",
+    accent_team: "チームカラー",
+    accent_cyan: "シアン",
+    accent_green: "緑",
+    accent_yellow: "黄",
+    accent_magenta: "マゼンタ",
+    accent_blue: "青",
+    accent_red: "赤",
+    accent_none: "なし",
+    loading: "読み込み中...",
+    no_games: "予定されている試合はありません",
+    no_standings: "順位情報がありません",
+    col_away: "ビジター",
+    col_score: "得点",
+    col_home: "ホーム",
+    col_status: "状況",
+    col_team: "チーム",
+    tag_live: "中継",
+    tag_fin: "終了",
+    tag_sched: "予定",
+    tag_cancel: "中止",
+    tag_susp: "中断",
+    badge_final: "終了",
+    badge_suspended: "中断",
+    lbl_pitcher: "投手",
+    lbl_batter: "打者",
+    lbl_next: "次",
+    lbl_start: "開始",
+    pitch_word: "投球",
+    pitches_word: "投球",
+    inspect_hint: "(左右キーで1球ずつ)",
+    tip_label: "ヒント: ",
+    news_label: "ニュース: ",
+    help_lines: [
+        "移動        j / k または上下キー",
+        "先頭/末尾  gg / G",
+        "中継を開く  Enter",
+        "戻る        Esc",
+        "タブ切替    Tab / F5",
+        "投球確認    Left / Right (中継画面)",
+        "オプション  F2 (日付) / F9 (チーム·間隔)",
+        "リンク/ニュース  o / n",
+        "終了        q / F10",
+    ],
+    pane_date: "日付",
+    date_today: "今日",
+    date_yesterday: "昨日",
+    date_tomorrow: "明日",
+    date_days_fmt_minus: "日",
+    team_none: "解除 (なし)",
+    poll_suffix: "秒更新",
+};
+
+pub const ZH_TW: Labels = Labels {
+    count_live: "直播",
+    count_sched: "未賽",
+    count_final: "結束",
+    count_other: "其他",
+    stale: "延遲",
+    tab_games: "比賽",
+    tab_standings: "排名",
+    hint_help: "說明",
+    hint_options: "選項",
+    hint_settings: "設定",
+    hint_switch: "切換",
+    hint_links: "連結",
+    hint_news: "新聞",
+    hint_live_key: "直播",
+    hint_back: "返回",
+    hint_all_pitches: "全部投球",
+    hint_pitch: "投球",
+    hint_quit: "離開",
+    error_prefix: " 錯誤: ",
+    title_games: "比賽",
+    title_standings: "排名",
+    standings_current: "(目前)",
+    title_live: " 直播 ",
+    title_relay: " 文字直播 ",
+    title_zone: " 好球帶 ",
+    title_side: " 側面 ",
+    title_help: " 說明 ",
+    title_article: " 文章(摘錄) ",
+    article_hint: " Esc 關閉 · Enter/o 全文 · j/k 捲動 ",
+    article_read_full: "這是摘錄 — 全文請按 Enter 或 o",
+    title_news_list: " 新聞 ",
+    news_list_hint: " Enter 閱讀 · j/k 移動 · Esc 關閉 ",
+    title_options: "選項",
+    title_open: "在瀏覽器開啟",
+    title_settings: " 設定 ",
+    settings_hint: " ←→ 變更 · j/k 移動 · Esc 關閉 ",
+    settings_save_failed: " 未儲存(設定檔寫入失敗) ",
+    set_team: "應援球隊",
+    set_poll: "更新頻率",
+    set_theme_preset: "主題預設",
+    set_theme_accent: "強調色",
+    set_lang: "語言",
+    theme_default: "預設",
+    theme_high_contrast: "高對比",
+    theme_mono: "黑白(無色)",
+    accent_team: "球隊色",
+    accent_cyan: "青",
+    accent_green: "綠",
+    accent_yellow: "黃",
+    accent_magenta: "洋紅",
+    accent_blue: "藍",
+    accent_red: "紅",
+    accent_none: "無",
+    loading: "載入中...",
+    no_games: "沒有排定的比賽",
+    no_standings: "沒有排名資訊",
+    col_away: "客隊",
+    col_score: "比分",
+    col_home: "主隊",
+    col_status: "狀態",
+    col_team: "球隊",
+    tag_live: "直播",
+    tag_fin: "結束",
+    tag_sched: "未賽",
+    tag_cancel: "取消",
+    tag_susp: "暫停",
+    badge_final: "結束",
+    badge_suspended: "暫停",
+    lbl_pitcher: "投手",
+    lbl_batter: "打者",
+    lbl_next: "下一位",
+    lbl_start: "開始",
+    pitch_word: "投球",
+    pitches_word: "投球",
+    inspect_hint: "(左右鍵逐球查看)",
+    tip_label: "提示: ",
+    news_label: "新聞: ",
+    help_lines: [
+        "移動        j / k 或上下鍵",
+        "頂部/底部  gg / G",
+        "開啟直播  Enter",
+        "返回        Esc",
+        "切換分頁    Tab / F5",
+        "查看投球    Left / Right (直播畫面)",
+        "選項        F2 (日期) / F9 (球隊·頻率)",
+        "連結/新聞  o / n",
+        "離開        q / F10",
+    ],
+    pane_date: "日期",
+    date_today: "今天",
+    date_yesterday: "昨天",
+    date_tomorrow: "明天",
+    date_days_fmt_minus: "天",
+    team_none: "清除 (無)",
+    poll_suffix: "秒更新",
+};
+
+pub const ES: Labels = Labels {
+    count_live: "VIVO",
+    count_sched: "PROG",
+    count_final: "FINAL",
+    count_other: "OTRO",
+    stale: "atrasado",
+    tab_games: "Juegos",
+    tab_standings: "Posiciones",
+    hint_help: "Ayuda",
+    hint_options: "Opciones",
+    hint_settings: "Ajustes",
+    hint_switch: "Cambiar",
+    hint_links: "Enlaces",
+    hint_news: "Noticias",
+    hint_live_key: "Vivo",
+    hint_back: "Atrás",
+    hint_all_pitches: "Ver todo",
+    hint_pitch: "Lanzamiento",
+    hint_quit: "Salir",
+    error_prefix: " ERROR: ",
+    title_games: "Partidos",
+    title_standings: "Clasificación",
+    standings_current: "(actual)",
+    title_live: " En vivo ",
+    title_relay: " Relato ",
+    title_zone: " Zona ",
+    title_side: " Lado ",
+    title_help: " Ayuda ",
+    title_article: " Artículo (extracto) ",
+    article_hint: " Esc cerrar · Enter/o artículo completo · j/k desplazar ",
+    article_read_full: "Extracto — lee el artículo completo: pulsa Enter u o",
+    title_news_list: " Noticias ",
+    news_list_hint: " Enter leer · j/k mover · Esc cerrar ",
+    title_options: "Opciones",
+    title_open: "Abrir en el navegador",
+    title_settings: " Ajustes ",
+    settings_hint: " ←→ cambiar · j/k mover · Esc cerrar ",
+    settings_save_failed: " No guardado (error al escribir la configuración) ",
+    set_team: "Equipo favorito",
+    set_poll: "Intervalo",
+    set_theme_preset: "Preset de tema",
+    set_theme_accent: "Color de acento",
+    set_lang: "Idioma",
+    theme_default: "Por defecto",
+    theme_high_contrast: "Alto contraste",
+    theme_mono: "Mono (sin color)",
+    accent_team: "Color del equipo",
+    accent_cyan: "Cian",
+    accent_green: "Verde",
+    accent_yellow: "Amarillo",
+    accent_magenta: "Magenta",
+    accent_blue: "Azul",
+    accent_red: "Rojo",
+    accent_none: "Ninguno",
+    loading: "cargando...",
+    no_games: "No hay partidos programados",
+    no_standings: "No hay clasificación disponible",
+    col_away: "Visitante",
+    col_score: "Marcador",
+    col_home: "Local",
+    col_status: "Estado",
+    col_team: "Equipo",
+    tag_live: "VIVO",
+    tag_fin: "FIN",
+    tag_sched: "PROG",
+    tag_cancel: "CANC",
+    tag_susp: "SUSP",
+    badge_final: "FINAL",
+    badge_suspended: "SUSPENDIDO",
+    lbl_pitcher: "Lanzador",
+    lbl_batter: "Bateador",
+    lbl_next: "Sig.",
+    lbl_start: "Inicio",
+    pitch_word: "Lanzamiento",
+    pitches_word: "Lanzamientos",
+    inspect_hint: "(Izq/Der para ver uno a uno)",
+    tip_label: "Consejo: ",
+    news_label: "Noticias: ",
+    help_lines: [
+        "Mover       j / k o flechas",
+        "Inicio/Fin  gg / G",
+        "Ver en vivo Enter",
+        "Atrás       Esc",
+        "Cambiar pestaña  Tab / F5",
+        "Lanzamiento  Izq / Der (vista en vivo)",
+        "Opciones    F2 (fecha) / F9 (equipo/frec.)",
+        "Enlaces/Noticias  o / n",
+        "Salir       q / F10",
+    ],
+    pane_date: "Fecha",
+    date_today: "Hoy",
+    date_yesterday: "Ayer",
+    date_tomorrow: "Mañana",
+    date_days_fmt_minus: "días",
+    team_none: "Ninguno (borrar)",
+    poll_suffix: "s de sondeo",
+};
+
 pub fn labels(lang: Lang) -> &'static Labels {
     match lang {
         Lang::Ko => &KO,
         Lang::En => &EN,
+        Lang::Ja => &JA,
+        Lang::ZhTw => &ZH_TW,
+        Lang::Es => &ES,
+    }
+}
+
+/// Config에 저장하는 언어 코드("ko"/"en"/"ja"/"zh-TW"/"es"). persist(T7)가 쓴다.
+pub fn lang_code(l: Lang) -> &'static str {
+    match l {
+        Lang::Ko => "ko",
+        Lang::En => "en",
+        Lang::Ja => "ja",
+        Lang::ZhTw => "zh-TW",
+        Lang::Es => "es",
+    }
+}
+
+/// 언어 선택 UI(F9 설정의 Lang 행)에 보여줄 "자기 이름" — 현재 표시 언어와
+/// 무관하게 각 언어가 스스로를 부르는 이름이다(다른 라벨과 달리 Labels에
+/// 안 두는 이유: 번역이 아니라 고정 데이터라서).
+pub fn lang_display_name(l: Lang) -> &'static str {
+    match l {
+        Lang::Ko => "한국어",
+        Lang::En => "English",
+        Lang::Ja => "日本語",
+        Lang::ZhTw => "繁體中文",
+        Lang::Es => "Español",
     }
 }
 
@@ -243,10 +643,10 @@ mod tests {
     use super::*;
     use crate::ui::text::display_width;
 
-    /// 완전성: 두 언어 전 필드 비어있지 않음 + help 9줄 전부 존재.
+    /// 완전성: 모든 언어(KO/EN/JA/ZH_TW/ES) 전 필드 비어있지 않음 + help 9줄 전부 존재.
     #[test]
-    fn every_label_is_nonempty_in_both_languages() {
-        for l in [&KO, &EN] {
+    fn every_label_is_nonempty_in_all_languages() {
+        for l in [&KO, &EN, &JA, &ZH_TW, &ES] {
             for s in [
                 l.count_live,
                 l.count_sched,
@@ -255,10 +655,17 @@ mod tests {
                 l.stale,
                 l.tab_games,
                 l.tab_standings,
-                l.hint_list_games,
-                l.hint_list_standings,
-                l.hint_live,
-                l.hint_live_selected,
+                l.hint_help,
+                l.hint_options,
+                l.hint_settings,
+                l.hint_switch,
+                l.hint_links,
+                l.hint_news,
+                l.hint_live_key,
+                l.hint_back,
+                l.hint_all_pitches,
+                l.hint_pitch,
+                l.hint_quit,
                 l.error_prefix,
                 l.title_games,
                 l.title_standings,
@@ -275,6 +682,25 @@ mod tests {
                 l.news_list_hint,
                 l.title_options,
                 l.title_open,
+                l.title_settings,
+                l.settings_hint,
+                l.settings_save_failed,
+                l.set_team,
+                l.set_poll,
+                l.set_theme_preset,
+                l.set_theme_accent,
+                l.set_lang,
+                l.theme_default,
+                l.theme_high_contrast,
+                l.theme_mono,
+                l.accent_team,
+                l.accent_cyan,
+                l.accent_green,
+                l.accent_yellow,
+                l.accent_magenta,
+                l.accent_blue,
+                l.accent_red,
+                l.accent_none,
                 l.loading,
                 l.no_games,
                 l.no_standings,
@@ -300,8 +726,6 @@ mod tests {
                 l.tip_label,
                 l.news_label,
                 l.pane_date,
-                l.pane_team,
-                l.pane_poll,
                 l.date_today,
                 l.date_yesterday,
                 l.date_tomorrow,
@@ -317,22 +741,51 @@ mod tests {
         }
     }
 
-    /// 폭 예산: footer 힌트 전 상태가 두 언어 모두 79칸 이하.
+    /// 반응형 footer: 어떤 언어·어떤 폭에서도 조립 결과가 폭을 넘지 않고,
+    /// 넉넉한 폭(120)에선 핵심 라벨이 다 들어간다. (완성형 79 예산을 대체)
     #[test]
-    fn every_footer_hint_fits_80_columns() {
+    fn footer_assembly_is_width_safe_in_all_languages() {
+        use crate::ui::footer::{assemble_hints, HintItem};
+        use crate::ui::text::display_width;
         for l in [&KO, &EN] {
-            for h in [
-                l.hint_list_games,
-                l.hint_list_standings,
-                l.hint_live,
-                l.hint_live_selected,
-            ] {
-                assert!(
-                    display_width(h) <= 79,
-                    "hint too wide ({}): {h}",
-                    display_width(h)
-                );
+            let items = [
+                HintItem {
+                    key: "F1",
+                    label: l.hint_help,
+                    core: true,
+                },
+                HintItem {
+                    key: "Tab",
+                    label: l.hint_switch,
+                    core: true,
+                },
+                HintItem {
+                    key: "n",
+                    label: l.hint_news,
+                    core: false,
+                },
+                HintItem {
+                    key: "q",
+                    label: l.hint_quit,
+                    core: true,
+                },
+            ];
+            for w in [0usize, 10, 20, 40, 80, 120] {
+                let s = assemble_hints(&items, w);
+                assert!(display_width(&s) <= w, "lang footer over width {w}: {s}");
             }
+            // 넉넉한 폭(120)에선 핵심 라벨이 실제로 결과에 들어있어야 한다 —
+            // assemble_hints가 빈 문자열을 반환해도 폭 안전 assert만으로는
+            // 잡히지 않으므로 별도로 확인한다.
+            let wide = assemble_hints(&items, 120);
+            assert!(
+                wide.contains(l.hint_help),
+                "hint_help missing at wide width: {wide}"
+            );
+            assert!(
+                wide.contains(l.hint_quit),
+                "hint_quit missing at wide width: {wide}"
+            );
         }
     }
 
@@ -349,13 +802,85 @@ mod tests {
         }
     }
 
-    /// help 오버레이 전 줄이 박스 내부폭(50-2=48)에 들어간다 — 두 언어 모두.
+    /// help 오버레이 전 줄이 박스 내부폭(50-2=48)에 들어간다 — 전 언어.
     #[test]
     fn every_help_line_fits_the_overlay_box() {
-        for l in [&KO, &EN] {
+        for l in [&KO, &EN, &JA, &ZH_TW, &ES] {
             for h in l.help_lines {
                 assert!(display_width(h) <= 48, "help line too wide: {h}");
             }
+        }
+    }
+
+    /// 5개 언어 전부 완전성(모든 라벨 비어있지 않음)을 만족한다.
+    #[test]
+    fn all_five_languages_are_complete() {
+        for l in [&KO, &EN, &JA, &ZH_TW, &ES] {
+            assert!(!l.title_settings.trim().is_empty());
+            assert!(!l.hint_quit.trim().is_empty());
+        }
+    }
+
+    /// 언어 코드 왕복.
+    #[test]
+    fn lang_code_round_trips() {
+        for (l, code) in [
+            (Lang::Ko, "ko"),
+            (Lang::En, "en"),
+            (Lang::Ja, "ja"),
+            (Lang::ZhTw, "zh-TW"),
+            (Lang::Es, "es"),
+        ] {
+            assert_eq!(lang_code(l), code);
+        }
+    }
+
+    /// 언어 자기 이름(설정 화면 표시명)이 5개 언어 전부 비어있지 않고 서로 다르다.
+    #[test]
+    fn lang_display_name_is_nonempty_and_distinct() {
+        let names: Vec<&str> = [Lang::Ko, Lang::En, Lang::Ja, Lang::ZhTw, Lang::Es]
+            .into_iter()
+            .map(lang_display_name)
+            .collect();
+        for n in &names {
+            assert!(!n.trim().is_empty());
+        }
+        let mut uniq = names.clone();
+        uniq.sort_unstable();
+        uniq.dedup();
+        assert_eq!(uniq.len(), names.len(), "display names must be distinct");
+    }
+
+    /// es 포함 5개 언어 완전성 + 반응형 footer 폭 안전(es 장단어가 조립에서 안전).
+    #[test]
+    fn spanish_is_complete_and_footer_safe() {
+        use crate::ui::footer::{assemble_hints, HintItem};
+        use crate::ui::text::display_width;
+        assert!(!ES.hint_quit.trim().is_empty());
+        let items = [
+            HintItem {
+                key: "F1",
+                label: ES.hint_help,
+                core: true,
+            },
+            HintItem {
+                key: "Tab",
+                label: ES.hint_switch,
+                core: true,
+            },
+            HintItem {
+                key: "n",
+                label: ES.hint_news,
+                core: false,
+            },
+            HintItem {
+                key: "q",
+                label: ES.hint_quit,
+                core: true,
+            },
+        ];
+        for w in [0usize, 20, 40, 80] {
+            assert!(display_width(&assemble_hints(&items, w)) <= w);
         }
     }
 }

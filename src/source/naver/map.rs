@@ -1,12 +1,11 @@
 use super::dto::{
-    ApiEnvelope, Lineup, NewsResult, PtsOption, RelayResult, ScheduleGame, ScheduleResult,
-    StandingsResult, TextRelayData,
+    ApiEnvelope, Lineup, PtsOption, RelayResult, ScheduleGame, ScheduleResult, StandingsResult,
+    TextRelayData,
 };
 use crate::error::Result;
 use crate::model::{
-    BaseState, Count, Game, GameStatus, LiveState, NewsItem, Pitch, PitchResult, Standing, Team,
+    BaseState, Count, Game, GameStatus, LiveState, Pitch, PitchResult, Standing, Team,
 };
-use crate::source::text::{lead_excerpt, strip_html_to_text, EXCERPT_CHARS};
 
 fn status_of(g: &ScheduleGame) -> GameStatus {
     if g.cancel {
@@ -88,34 +87,6 @@ pub fn standings_from_json(json: &str) -> Result<Vec<Standing>> {
         .collect();
     out.sort_by_key(|s| s.rank);
     Ok(out)
-}
-
-/// 뉴스 목록: title 없는 항목은 건너뛰고, 깨진 응답은 빈 목록(관용 — 뉴스는
-/// 부가 기능이라 실패가 앱에 전파되면 안 된다).
-pub fn news_from_json(json: &str) -> Result<Vec<NewsItem>> {
-    let env: ApiEnvelope<NewsResult> = serde_json::from_str(json)?;
-    let list = env.result.map(|r| r.news_list).unwrap_or_default();
-    Ok(list
-        .into_iter()
-        .filter(|a| !a.title.trim().is_empty())
-        .map(|a| {
-            let url = if a.oid.is_empty() || a.aid.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    "https://m.sports.naver.com/kbaseball/article/{}/{}",
-                    a.oid, a.aid
-                )
-            };
-            NewsItem {
-                title: a.title,
-                source: a.source_name,
-                url,
-                summary: lead_excerpt(&strip_html_to_text(&a.sub_content), EXCERPT_CHARS),
-                published: String::new(),
-            }
-        })
-        .collect())
 }
 
 fn parse_u8(s: &str) -> u8 {
@@ -620,57 +591,6 @@ mod tests {
                 Some("21:06:46".to_string()),
                 Some("21:07:06".to_string()),
             ]
-        );
-    }
-
-    #[test]
-    fn news_from_json_parses_titles_and_sources_leniently() {
-        let json = r#"{"code":200,"success":true,"result":{"newsList":[
-            {"title":"제목1","sourceName":"연합뉴스"},
-            {"title":"제목2"},
-            {"sourceName":"출처만"},
-            {"title":null,"sourceName":null}
-        ]}}"#;
-        let items = news_from_json(json).unwrap();
-        // 완전성: title이 있는 항목은 전부 수집(2개), 없는 항목은 조용히 건너뜀.
-        assert_eq!(items.len(), 2);
-        assert_eq!(items[0].title, "제목1");
-        assert_eq!(items[0].source, "연합뉴스");
-        assert_eq!(items[1].source, ""); // sourceName 결측 관용
-                                         // 깨진 응답도 에러 아닌 빈 목록
-        assert!(news_from_json("{}").unwrap().is_empty());
-    }
-
-    #[test]
-    fn news_from_json_builds_article_urls_from_oid_aid_leniently() {
-        let json = r#"{"code":200,"success":true,"result":{"newsList":[
-            {"title":"제목1","sourceName":"A","oid":"450","aid":"0000152707"},
-            {"title":"제목2","sourceName":"B"}
-        ]}}"#;
-        let items = news_from_json(json).unwrap();
-        assert_eq!(
-            items[0].url,
-            "https://m.sports.naver.com/kbaseball/article/450/0000152707"
-        );
-        assert_eq!(items[1].url, "", "missing oid/aid → empty url, item kept");
-    }
-
-    /// 목록 파싱이 subContent를 발췌(summary)로 채운다 — 기사 본문 fetch 없이
-    /// 오버레이에 보여줄 텍스트를 목록 단계에서 확보한다.
-    #[test]
-    fn news_items_carry_summary_from_sub_content() {
-        let json = r#"{"result":{"newsList":[{"title":"t","sourceName":"s","oid":"144","aid":"0001","subContent":"<b>요약</b> 본문 조각"}]}}"#;
-        let items = news_from_json(json).unwrap();
-        assert_eq!(items[0].summary, "요약 본문 조각", "HTML은 제거돼야 한다");
-        let long = "가".repeat(500);
-        let json2 = format!(
-            r#"{{"result":{{"newsList":[{{"title":"t","sourceName":"s","oid":"1","aid":"2","subContent":"{long}"}}]}}}}"#
-        );
-        let items2 = news_from_json(&json2).unwrap();
-        assert!(
-            items2[0].summary.chars().count() <= EXCERPT_CHARS + 1,
-            "발췌 상한을 넘으면 안 된다: {}",
-            items2[0].summary.chars().count()
         );
     }
 
