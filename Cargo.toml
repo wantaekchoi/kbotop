@@ -1,8 +1,8 @@
 [package]
 name = "kbotop"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.88"
 description = "Watch KBO baseball in your terminal, with strike-zone pitch tracking."
 repository = "https://github.com/wantaekchoi/kbotop"
 homepage = "https://github.com/wantaekchoi/kbotop"
@@ -24,16 +24,16 @@ include = [
 
 [dependencies]
 ratatui = "0.29"
-crossterm = "0.28"
+crossterm = "0.29"
 ureq = { version = "2.10", features = ["json", "tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 clap = { version = "4.5", features = ["derive"] }
-toml = "0.8"
-directories = "5"
+toml = "1"
+directories = "6"
 anyhow = "1"
 thiserror = "2"
-signal-hook = "0.3"
+signal-hook = "0.4"
 roxmltree = "0.21"
 
 [profile.release]

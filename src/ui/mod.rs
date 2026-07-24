@@ -69,7 +69,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         // 뉴스 제목은 동적이라 얼마든지 길 수 있다 — 정직한 말줄임(§15).
         // 팁은 소스에서 폭을 강제하지만 같은 벨트를 채워 둔다.
         let width = chunks[2].width as usize;
-        let line = if !app.news.is_empty() && minute % 2 == 0 {
+        let line = if !app.news.is_empty() && minute.is_multiple_of(2) {
             let n = &app.news[current_news_index(app.now_secs, app.news.len())];
             let full = if n.source.is_empty() {
                 n.title.clone()

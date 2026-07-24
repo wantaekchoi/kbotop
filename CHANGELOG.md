@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-25
+
+### Changed
+- 의존성을 최신 버전으로 올렸습니다(crossterm 0.29, toml 1, directories 6, signal-hook 0.4). 설정 파일 위치와 화면 동작은 그대로입니다 — 실제 터미널에서 렌더를 확인했습니다.
+- 소스에서 직접 빌드하려면 이제 Rust 1.88 이상이 필요합니다(이전 1.75). 새 의존성이 요구하는 버전을 반영한 것으로, 배포된 바이너리·Homebrew·설치 스크립트 사용자는 영향받지 않습니다.
+
 ## [0.10.0] - 2026-07-25
 
 ### Removed
@@ -116,7 +122,10 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/wantaekchoi/kbotop/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/wantaekchoi/kbotop/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/wantaekchoi/kbotop/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/wantaekchoi/kbotop/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/wantaekchoi/kbotop/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/wantaekchoi/kbotop/compare/v0.5.0...v0.6.0

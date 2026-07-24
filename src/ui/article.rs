@@ -227,14 +227,8 @@ mod tests {
         app.lang = crate::ui::i18n::Lang::Ko; // article_read_full="발췌입니다 — 원문 전체는 Enter 또는 o를 누르세요"
         let mut item = sample();
         let word = "á".repeat(25); // 74칸 행에 2개만 들어가는 긴 악센트 단일 토큰
-        let line = std::iter::repeat(word)
-            .take(10)
-            .collect::<Vec<_>>()
-            .join(" ");
-        item.summary = std::iter::repeat(line)
-            .take(6)
-            .collect::<Vec<_>>()
-            .join("\n");
+        let line = std::iter::repeat_n(word, 10).collect::<Vec<_>>().join(" ");
+        item.summary = std::iter::repeat_n(line, 6).collect::<Vec<_>>().join("\n");
         app.article_view = Some(ArticleView {
             item,
             scroll: u16::MAX,
