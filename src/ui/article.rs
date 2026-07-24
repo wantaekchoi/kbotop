@@ -10,9 +10,24 @@ use ratatui::{
     Frame,
 };
 
-/// 한 Line이 폭 `cols`에서 차지하는 시각적 행 수(대략). ratatui의 word-wrap과
-/// 정확히 일치하진 않지만(공백 경계 우선) 스크롤 상한·스크롤바 산정에는 충분하다.
-/// 전각(CJK) 문자는 display_width가 2로 세므로 CJK 본문에선 char-wrap과 근사한다.
+/// 한 Line이 폭 `cols`에서 차지하는 시각적 행 수(대략). ratatui의 실제 렌더는
+/// `Wrap`로 **word-wrap**(단어 경계 우선)한다 — 줄 끝에 단어가 안 들어가면
+/// 통째로 다음 행으로 넘기므로 행 끝에 여백(slack)이 생긴다. 그래서 실제 행
+/// 수는 항상 **char-wrap 추정치(폭을 cols로 그냥 나눈 값) 이상**이다.
+///
+/// 이 함수는 `ui::text::display_width`(비ASCII을 전부 2칸으로 보는 휴리스틱)
+/// 로 폭을 잰다. 한글·CJK 전각 문자는 실제로도 2칸이라 정확하지만, 악센트
+/// (é, ñ 등) 같은 실제 width-1 비ASCII 문자는 두 배로 **과다 계산**한다. 이
+/// 과다 계산은 버그가 아니라 **의도된 안전마진**이다 — word-wrap slack을
+/// 미리 덮어줘서 스크롤 상한이 실제 렌더 행 수보다 작아지는 사고를 막는다.
+///
+/// 한때 `Line::width()`(ratatui 자체가 실제 wrap에도 쓰는 unicode-width 기준
+/// 정확한 폭)로 "정밀화"했지만(fix 2-5), 그러면 이 안전마진이 사라져 Es(스페
+/// 인어 악센트) 로케일에서 긴 발췌를 스크롤할 때 마지막 콘텐츠 줄(원문 CTA)
+/// 에 도달하지 못하는 실제 회귀가 생겼다 — **스크롤 상한 추정기는 절대
+/// 과소추정하면 안 되고, 과대추정으로 편향돼야 안전하다**(과대추정은 빈
+/// 줄까지 스크롤되는 무해한 코스메틱, 과소추정은 마지막 줄 도달불가라는
+/// 실버그다). 그래서 되돌린다. 진짜 word-wrap-aware 행 수 계산은 백로그.
 fn line_rows(line: &Line, cols: usize) -> u16 {
     let w = cols.max(1);
     let width: usize = line
@@ -36,9 +51,12 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let rect = super::help_rect(w, h, area);
     let inner = rect.inner(Margin::new(1, 1)); // 테두리 안쪽(본문 렌더 영역)
 
-    let block = Block::bordered()
-        .title(l.title_article)
-        .title_bottom(l.article_hint);
+    // 하단 힌트도 title 영역 폭(테두리 2칸 제외)을 넘지 않게 ellipsize한다 —
+    // 안 그러면 좁은 터미널에서 ratatui가 말줄임 없이 조용히 잘라 박스 경계를
+    // 침범할 수 있다(리뷰 지적 fix 2-4).
+    let hint_budget = rect.width.saturating_sub(2) as usize;
+    let hint = super::text::ellipsize(l.article_hint, hint_budget);
+    let block = Block::bordered().title(l.title_article).title_bottom(hint);
 
     f.render_widget(Clear, rect);
 
@@ -150,5 +168,111 @@ mod tests {
             scroll: 9999,
         });
         let _ = render_to_string(&app); // 패닉 없으면 통과
+    }
+
+    /// line_rows는 `ui::text::display_width`(비ASCII=2칸 고정)를 쓰므로
+    /// 악센트(é, ñ 등) 같은 실제 width-1 비ASCII 문자를 두 배로 과다 계산한다
+    /// — width-1 문자 200개를 40칸에 나누면 실제로는 5행(200/40)이지만
+    /// 과다계산은 400/40=10행을 낸다. 이 과다계산은 버그가 아니라 **의도된
+    /// 안전마진**이다: ratatui의 실제 렌더는 word-wrap이라 줄 끝에 단어가
+    /// 안 들어가면 다음 행으로 넘겨 슬랙(빈 여백)이 생기고, 그만큼 실제 행
+    /// 수는 char-wrap 추정치보다 커질 수 있다. display_width의 과다계산이
+    /// 그 슬랙을 미리 덮어줘서 스크롤 상한이 과소추정되는(마지막 줄 도달
+    /// 불가) 사고를 막는다.
+    #[test]
+    fn line_rows_over_estimates_width_one_non_ascii_as_safety_margin() {
+        let line = Line::from("á".repeat(200));
+        assert_eq!(
+            line_rows(&line, 40),
+            10,
+            "expected the doubled-width over-estimate, not the exact width"
+        );
+    }
+
+    /// fix 2-5 무회귀: 한글(전각, width-2)·ASCII 문자는 unicode-width로 재도
+    /// 예전과 동일한 값이 나와야 한다(한글은 실제로도 2칸이라 무회귀).
+    #[test]
+    fn line_rows_unchanged_for_korean_and_ascii() {
+        let ko = Line::from("한".repeat(10)); // 10자 * 2칸 = 20칸
+        assert_eq!(line_rows(&ko, 8), 3); // ceil(20/8) = 3, 예전과 동일
+
+        let ascii = Line::from("hello world".to_string()); // 11칸
+        assert_eq!(line_rows(&ascii, 5), 3); // ceil(11/5) = 3, 예전과 동일
+    }
+
+    /// 실제 word-wrap slack이 쌓이는 회귀 재현: 폭(inner≈74)보다 짧지만 74칸
+    /// 행에 2개만 들어가는 긴 악센트 "단어"(25칸, 공백 없는 단일 토큰)를 줄당
+    /// 10개씩 6줄 채운다. word-wrap은 단어 경계에서 넘기므로 한 행에 2단어
+    /// (51/74칸)만 쓰고 23칸을 버려 실제 렌더 행 수(5행/줄)가 char-wrap
+    /// 추정치(4행/줄, `Line::width()`)보다 커진다 — 총 6줄 슬랙이 쌓이면
+    /// scroll을 최댓값(u16::MAX)으로 줘도 clamp된 scroll이 실제 마지막 줄
+    /// (원문 CTA)에 못 미친다.
+    ///
+    /// `article_hint`(하단 힌트)에도 "artículo completo"가 들어 있어 그 문구로
+    /// 단언하면 스크롤과 무관하게 항상 통과하는 가짜 테스트가 된다. 대신
+    /// `article_read_full`(CTA 줄)에만 있는 "pulsa Enter u o"로 단언한다.
+    ///
+    /// 되돌린 과대추정 heuristic(`display_width`)이 CTA 도달을 보장한다.
+    /// `Line::width()`로 정밀화된 채로 두면(word-wrap slack을 못 덮으면) 이
+    /// 테스트가 FAIL한다.
+    #[test]
+    fn extreme_scroll_with_accented_summary_still_reaches_cta_line() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Es; // article_read_full="Extracto — lee el artículo completo: pulsa Enter u o"
+        let mut item = sample();
+        let word = "á".repeat(25); // 74칸 행에 2개만 들어가는 긴 악센트 단일 토큰
+        let line = std::iter::repeat(word)
+            .take(10)
+            .collect::<Vec<_>>()
+            .join(" ");
+        item.summary = std::iter::repeat(line)
+            .take(6)
+            .collect::<Vec<_>>()
+            .join("\n");
+        app.article_view = Some(ArticleView {
+            item,
+            scroll: u16::MAX,
+        });
+        let text = render_to_string(&app);
+        assert!(
+            text.contains("pulsa Enter u o"),
+            "scrolled-to-end should still reveal the CTA line, got:\n{text}"
+        );
+    }
+
+    /// fix 2-4: 하단 힌트(title_bottom)는 title 영역 폭(테두리 2칸 제외)을
+    /// 넘지 않게 ellipsize된다 — 좁은 터미널에서도 박스 모서리(└ ┘)가 힌트
+    /// 텍스트로 덮이면 안 된다(리뷰 지적).
+    #[test]
+    fn bottom_hint_never_overwrites_box_corners_at_narrow_width() {
+        let mut app = App::new(Default::default());
+        app.article_view = Some(ArticleView {
+            item: sample(),
+            scroll: 0,
+        });
+        for width in [10u16, 15, 20, 30, 52, 80] {
+            let area = Rect::new(0, 0, width, 24);
+            let mut term = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            term.draw(|f| render(f, f.area(), &app)).unwrap();
+            let buf = term.backend().buffer().clone();
+
+            let w = area.width.saturating_sub(4).max(1);
+            let h = area.height.saturating_sub(2).max(1);
+            let rect = super::super::help_rect(w, h, area);
+            let bottom_y = rect.y + rect.height - 1;
+            let left_x = rect.x;
+            let right_x = rect.x + rect.width - 1;
+
+            assert_eq!(
+                buf[(left_x, bottom_y)].symbol(),
+                "└",
+                "width {width}: bottom-left corner overwritten by hint"
+            );
+            assert_eq!(
+                buf[(right_x, bottom_y)].symbol(),
+                "┘",
+                "width {width}: bottom-right corner overwritten by hint"
+            );
+        }
     }
 }

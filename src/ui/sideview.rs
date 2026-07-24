@@ -59,7 +59,10 @@ pub fn render(
                 y1: sz_bottom,
                 x2: 0.7,
                 y2: sz_top,
-                color: Color::White,
+                // 배경 무관 색: 고정 White는 밝은 배경 터미널에서 사라진다.
+                // Reset은 터미널 기본 전경을 상속하면서 글리프는 그대로 그린다
+                // (strikezone 존 테두리와 동일 정책, v0.8에서 검증됨).
+                color: Color::Reset,
             });
             for (idx, p) in pitches.iter().enumerate() {
                 if let Some(sel) = selected {
@@ -292,6 +295,72 @@ mod tests {
             has_braille_dot,
             "mono trajectory (Color::Reset) must still draw braille marker dots, \
              not just the order label:\n{}",
+            buf.content().iter().map(|c| c.symbol()).collect::<String>()
+        );
+    }
+
+    /// 배경 무관 색(v0.9): 고정 chrome(존 상·하한 눈금선)이 Color::White면
+    /// 밝은 배경 터미널에서 사라진다. White 대신 Color::Reset(터미널 기본
+    /// 전경 상속)을 써야 한다 — strikezone 존 테두리에 적용한 것과 동일 정책.
+    /// fix 전에는 CanvasLine의 color: Color::White가 그대로 버퍼 fg에 찍혀
+    /// 이 테스트가 실패한다(RED).
+    #[test]
+    fn side_view_has_no_fixed_white_foreground() {
+        use ratatui::style::Color;
+        let pitches: Vec<Pitch> = (1u8..=2).map(traj_pitch).collect();
+        let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
+        term.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &pitches,
+                None,
+                crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                "default",
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+        assert!(
+            !buf.content().iter().any(|c| c.fg == Color::White),
+            "side view must not use a fixed Color::White foreground \
+             (invisible on light-background terminals); use Color::Reset instead"
+        );
+    }
+
+    /// 배경 무관 색(v0.9) 무회귀: Reset으로 바꿔도 존 상·하한 눈금선(braille
+    /// 글리프)이 여전히 그려진다 — 사라짐 없음.
+    /// 투구 0건(&[])으로 렌더해 궤적선 글리프를 없앤다 — 그래야 남는 braille
+    /// 글리프가 존 경계 틱 CanvasLine 하나뿐이라 단언이 틱을 실제로 격리한다.
+    /// (투구가 있으면 궤적선도 braille을 채워 틱 draw를 꺼도 통과해버린다.)
+    /// zone_bounds(&[])는 안전 — 투구 없으면 DEFAULT_SZ_TOP/BOTTOM 폴백
+    /// (strikezone.rs zone_bounds 참고).
+    #[test]
+    fn zone_bound_ticks_still_draw_after_reset_fix() {
+        let pitches: Vec<Pitch> = vec![];
+        let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
+        term.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &pitches,
+                None,
+                crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                "default",
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+        let has_braille_dot = buf.content().iter().any(|c| {
+            c.symbol()
+                .chars()
+                .next()
+                .is_some_and(|ch| (0x2801..=0x28FF).contains(&(ch as u32)))
+        });
+        assert!(
+            has_braille_dot,
+            "zone bound tick line must still render braille glyphs after \
+             switching from Color::White to Color::Reset:\n{}",
             buf.content().iter().map(|c| c.symbol()).collect::<String>()
         );
     }

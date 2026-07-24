@@ -125,7 +125,11 @@ pub fn render(
                 y: sz_bottom,
                 width: PLATE_HALF_WIDTH_FT * 2.0,
                 height: sz_top - sz_bottom,
-                color: Color::White,
+                // 배경 무관(v0.9): White는 밝은 배경 터미널에서 사라진다.
+                // Reset은 터미널 기본 전경색을 상속하며, 도형 자체는
+                // 그대로 그려진다(theme::status_color_reset_still_draws_a_braille_marker_on_canvas,
+                // zone_box_reset_color_still_draws_border_glyph_on_canvas로 검증됨).
+                color: Color::Reset,
             });
             for (idx, p) in pitches.iter().enumerate() {
                 if let Some(sel) = selected {
@@ -642,6 +646,141 @@ mod tests {
         assert!(
             has_ball_color,
             "non-mono preset must keep the Ball pitch color (Green)"
+        );
+    }
+
+    /// 배경 무관(v0.9): 존 박스 테두리(Rectangle)는 Color::White로 고정되면
+    /// 안 된다(밝은 배경 터미널에서 사라짐). 투구가 있는 라이브 화면을 렌더해
+    /// 버퍼 전체에 White fg가 없는지 확인한다. 수정 전(Color::White) 코드면
+    /// 이 테스트는 실패(RED)한다. 무회귀로 마커·순번 렌더링과 존 박스 글리프
+    /// 자체(사라지지 않음)도 함께 확인한다.
+    /// height는 일부러 side band 임계(7+SIDE_HEIGHT=15)를 넘기지 않게 잡는다
+    /// — sideview.rs는 이 태스크 범위 밖(자체 White 상수를 별도로 가짐)이라
+    /// 버퍼 전체 스캔이 그쪽 이슈까지 잘못 집어내지 않게 격리한다.
+    #[test]
+    fn zone_border_is_not_fixed_white_and_zone_plus_markers_still_render() {
+        use ratatui::style::Color;
+        let pitches = sample_pitches();
+        let mut term = Terminal::new(TestBackend::new(40, 14)).unwrap();
+        term.draw(|f| {
+            render(
+                f,
+                f.area(),
+                &pitches,
+                None,
+                crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                "default",
+            )
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+
+        for cell in buf.content() {
+            assert!(
+                cell.fg != Color::White,
+                "zone border must not be fixed to Color::White \
+                 (invisible against a light terminal background): {:?}",
+                cell.fg
+            );
+        }
+
+        // 무회귀 1: 마커 순번은 여전히 렌더된다.
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(
+            text.contains('1'),
+            "pitch order 1 missing after border color fix:\n{text}"
+        );
+        assert!(
+            text.contains('2'),
+            "pitch order 2 missing after border color fix:\n{text}"
+        );
+
+        // 무회귀 2: 존 박스(캔버스 Rectangle) 자체가 사라지지 않는다.
+        //
+        // 리뷰 Important #2: 기존 가드("공백도 빈 braille도 아닌 셀이 있으면 통과")는
+        // Block 테두리 문자(┌─┐│└┘)·마커 순번·범례 텍스트만으로도 항상 통과해,
+        // 프로덕션에서 존 Rectangle의 ctx.draw 호출을 통째로 지워도 이 테스트가
+        // 걸러내지 못했다. 이제는 (a) 투구 0건으로 별도 렌더해 궤적 마커
+        // Rectangle을 애초에 안 그리고, (b) Canvas 기본 마커(Marker::Braille,
+        // ratatui 0.29 canvas.rs Default 구현)가 찍는 Braille 글리프(U+2801..=U+28FF,
+        // 빈 패턴 U+2800 제외)만 스캔한다. Block 테두리는 박스드로잉 문자(U+25xx대)라
+        // 이 범위 밖이고, 마커·범례 텍스트도 일반 ASCII라 걸리지 않는다 — 남는
+        // Braille 글리프는 오직 존 Rectangle에서만 나올 수 있다.
+        let h = buf.area().height;
+        let zone_bottom = h.saturating_sub(LEGEND_HEIGHT);
+
+        let mut markerless_term = Terminal::new(TestBackend::new(40, 14)).unwrap();
+        markerless_term
+            .draw(|f| {
+                render(
+                    f,
+                    f.area(),
+                    &[], // 투구 0건: 궤적 마커 Rectangle이 전혀 그려지지 않는다.
+                    None,
+                    crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+                    "default",
+                )
+            })
+            .unwrap();
+        let markerless_buf = markerless_term.backend().buffer().clone();
+        let has_zone_braille_glyph = (0..zone_bottom).any(|y| {
+            (0..markerless_buf.area().width).any(|x| {
+                let mut chars = markerless_buf[(x, y)].symbol().chars();
+                match (chars.next(), chars.next()) {
+                    (Some(ch), None) => (0x2801..=0x28FF).contains(&(ch as u32)),
+                    _ => false,
+                }
+            })
+        });
+        assert!(
+            has_zone_braille_glyph,
+            "zone box Rectangle braille glyphs disappeared after the color fix \
+             (a Block border alone cannot satisfy this guard)"
+        );
+    }
+
+    /// 결정적 재현(theme::status_color_reset_still_draws_a_braille_marker_on_canvas와
+    /// 동일 접근): 존 박스 Rectangle이 Color::Reset이어도 ratatui Canvas가 그 도형을
+    /// 그리지 않는 게 아니라 fg만 터미널 기본색으로 상속함을 최소 재현으로 못박는다.
+    #[test]
+    fn zone_box_reset_color_still_draws_border_glyph_on_canvas() {
+        use ratatui::{
+            backend::TestBackend,
+            widgets::canvas::{Canvas, Rectangle},
+            Terminal,
+        };
+
+        let mut term = Terminal::new(TestBackend::new(10, 10)).unwrap();
+        term.draw(|f| {
+            let canvas = Canvas::default()
+                .x_bounds([-2.5, 2.5])
+                .y_bounds([-0.5, 5.5])
+                .paint(move |ctx| {
+                    ctx.draw(&Rectangle {
+                        x: -PLATE_HALF_WIDTH_FT,
+                        y: DEFAULT_SZ_BOTTOM,
+                        width: PLATE_HALF_WIDTH_FT * 2.0,
+                        height: DEFAULT_SZ_TOP - DEFAULT_SZ_BOTTOM,
+                        // 리뷰 Important #1: 이름이 "Reset color still draws" 인데 정작
+                        // Color::White를 그려 Reset 경로를 전혀 테스트하지 않았다.
+                        // 프로덕션과 동일한 Color::Reset으로 렌더해야 이름과 목적이 맞는다.
+                        color: Color::Reset,
+                    });
+                });
+            f.render_widget(canvas, f.area());
+        })
+        .unwrap();
+
+        let buf = term.backend().buffer().clone();
+        let has_border_glyph = buf
+            .content()
+            .iter()
+            .any(|c| c.symbol() != " " && c.symbol() != "\u{2800}");
+        assert!(
+            has_border_glyph,
+            "Color::Reset zone box border must still render a glyph on the canvas \
+             (fg falls back to the terminal default, the shape isn't skipped): {:?}",
+            buf.content().iter().map(|c| c.symbol()).collect::<String>()
         );
     }
 }

@@ -12,7 +12,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/wantaekchoi/kbotop/ci.yml?style=flat-square&label=CI)](https://github.com/wantaekchoi/kbotop/actions/workflows/ci.yml)
 [![MSRV](https://img.shields.io/badge/MSRV-1.75-blue?style=flat-square)](https://www.rust-lang.org)
 
-![demo](docs/demo.gif)
+![demo](docs/demo.en.gif)
 
 [한국어](README.md)
 

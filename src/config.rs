@@ -1,5 +1,7 @@
 use serde::Deserialize;
 use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(default)]
@@ -64,7 +66,7 @@ pub fn load() -> Config {
 }
 
 /// XDG 설정 파일 경로.
-pub fn config_path() -> Option<std::path::PathBuf> {
+pub fn config_path() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "kbotop").map(|d| d.config_dir().join("config.toml"))
 }
 
@@ -97,7 +99,14 @@ fn merge_into_toml(existing: &str, cfg: &Config) -> Result<String, toml::de::Err
             table.remove("lang");
         }
     }
-    let mut theme = toml::Table::new();
+    // [theme] 테이블도 top-level과 동일한 원리로 다룬다: 통째로 재생성하지
+    // 않고 기존 하위 키(사용자 수기 입력·미래 버전의 신규 키)를 읽어와 아는
+    // 키(preset·accent)만 덮어쓴다. 기존 [theme]가 테이블이 아니거나 없으면
+    // 빈 테이블에서 새로 시작한다.
+    let mut theme = match table.get("theme") {
+        Some(toml::Value::Table(t)) => t.clone(),
+        _ => toml::Table::new(),
+    };
     theme.insert(
         "preset".into(),
         toml::Value::String(cfg.theme.preset.clone()),
@@ -110,36 +119,139 @@ fn merge_into_toml(existing: &str, cfg: &Config) -> Result<String, toml::de::Err
     Ok(toml::to_string_pretty(&table).unwrap_or_default())
 }
 
+// --- 다중 인스턴스 저장 직렬화 (락파일, std-only) ---
+//
+// 원자적 rename만으로는 "두 인스턴스가 거의 동시에 save()"하는 경우를 막지
+// 못한다: 각자 기존 파일을 읽어 merge한 뒤 tmp→rename하므로, 나중에
+// rename하는 쪽이 앞선 쪽의 변경을 통째로 덮어써 lost-update가 난다. 락파일로
+// "읽기→merge→쓰기" 구간 전체를 직렬화한다.
+
+/// 락 파일이 이 시간(초)보다 오래되면 크래시로 잔재만 남은 것으로 보고
+/// 탈취한다(정상 저장은 수 ms~수십 ms면 끝나므로 넉넉히 잡음).
+const LOCK_STALE_SECS: u64 = 10;
+/// 락 획득 재시도 최대 횟수. stale 락 탈취 직후의 재시도도 이 예산을 쓴다.
+const LOCK_MAX_ATTEMPTS: u32 = 8;
+const LOCK_RETRY_DELAY_MS: u64 = 50;
+
+/// 저장 락 RAII 가드. 스코프를 벗어나면(정상 반환·Err·`?` 조기반환 모두)
+/// Drop에서 락 파일을 제거한다 — 락 해제를 성공 경로에만 수동으로 넣으면
+/// 중간의 `?`가 락을 영영 남길 수 있어, 그 실수 자체를 구조적으로 없앤다.
+struct SaveLock {
+    path: PathBuf,
+}
+
+impl Drop for SaveLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// config 경로에 대응하는 락 파일 경로(`config.toml` → `config.toml.lock`).
+fn lock_path_for(config_path: &Path) -> PathBuf {
+    let mut os = config_path.as_os_str().to_os_string();
+    os.push(".lock");
+    PathBuf::from(os)
+}
+
+/// 락 파일 mtime이 임계치보다 오래됐으면 크래시로 남은 잔재로 간주한다.
+/// 메타데이터를 못 읽으면(경합 중 다른 프로세스가 이미 지웠을 수 있음)
+/// stale로 단정하지 않는다 — 다음 create_new 시도가 자연히 처리한다.
+fn is_stale_lock(lock_path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(lock_path) else {
+        return false;
+    };
+    let Ok(modified) = meta.modified() else {
+        return false;
+    };
+    SystemTime::now()
+        .duration_since(modified)
+        .map(|age| age > Duration::from_secs(LOCK_STALE_SECS))
+        .unwrap_or(false)
+}
+
+/// 저장 락을 잡는다. `OpenOptions::create_new`는 POSIX상 원자적이라 두
+/// 인스턴스가 동시에 시도해도 하나만 성공한다. 이미 잡혀 있으면 stale
+/// 여부를 확인해 잔재면 제거 후 즉시 재시도하고, 살아있는 락이면 짧게
+/// 대기 후 재시도한다. 예산(LOCK_MAX_ATTEMPTS)을 다 쓰면 None을 돌려주고
+/// 호출부가 Err로 조용히 저하한다.
+fn acquire_lock(lock_path: &Path) -> Option<SaveLock> {
+    for _ in 0..LOCK_MAX_ATTEMPTS {
+        match std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(lock_path)
+        {
+            Ok(_) => {
+                return Some(SaveLock {
+                    path: lock_path.to_path_buf(),
+                });
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                if is_stale_lock(lock_path) {
+                    let _ = std::fs::remove_file(lock_path);
+                    continue; // 잔재 정리 직후이므로 대기 없이 바로 재시도
+                }
+                std::thread::sleep(Duration::from_millis(LOCK_RETRY_DELAY_MS));
+            }
+            // 락 파일 자체를 못 만드는 상황(권한 등) — 재시도해도 소용없음
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
+/// 저장 코어: 기존 파일 읽기 → merge → tmp 파일 write → rename. 락 상태와
+/// 무관한 순수 저장 로직만 담당한다(락 획득은 호출부 save_to의 몫).
+///
+/// "파일 없음"과 "파일은 있는데 읽기/파싱 실패"를 구분한다: 파일이 없으면
+/// 빈 테이블에서 시작(첫 저장, 정상)하지만, 파일이 있는데 파싱에
+/// 실패하면(사용자 수기 오타 등) 빈 테이블로 폴백하지 않고 Err를 반환해
+/// 파일을 건드리지 않는다 — 그래야 앱이 모르는 키·섹션이 소실되지 않는다.
+fn write_config(path: &Path, cfg: &Config) -> std::io::Result<()> {
+    let existing = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e),
+    };
+    let body = merge_into_toml(&existing, cfg)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    // pid를 섞어 동시에 저장하는 두 인스턴스의 tmp 파일이 서로 덮어쓰지
+    // 않게 한다(rename 자체는 원자적이라 최종 파일은 항상 안전).
+    let tmp = path.with_extension(format!("toml.{}.tmp", std::process::id()));
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(body.as_bytes())?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
 impl Config {
-    /// XDG 경로에 원자적으로 저장한다(임시파일 → rename). 디렉터리·파일을 못
-    /// 쓰거나(권한 등) 기존 파일이 파싱 불가면 Err를 돌려주되 호출부(설정
-    /// 화면)가 조용히 저하한다 — 앱은 죽지 않는다.
-    ///
-    /// "파일 없음"과 "파일은 있는데 읽기/파싱 실패"를 구분한다: 파일이 없으면
-    /// 빈 테이블에서 시작(첫 저장, 정상)하지만, 파일이 있는데 파싱에
-    /// 실패하면(사용자 수기 오타 등) 빈 테이블로 폴백하지 않고 Err를 반환해
-    /// 파일을 건드리지 않는다 — 그래야 앱이 모르는 키·섹션이 소실되지 않는다.
+    /// XDG 경로에 원자적으로 저장한다(락파일로 직렬화 + 임시파일 → rename).
+    /// 디렉터리·파일을 못 쓰거나(권한 등), 기존 파일이 파싱 불가하거나,
+    /// 락을 못 잡으면 Err를 돌려주되 호출부(설정 화면)가 조용히 저하한다 —
+    /// 앱은 죽지 않는다. 실제 경로는 여기서 고정하고, 테스트 가능한 코어는
+    /// save_to에 둔다(경로 주입).
     pub fn save(&self) -> std::io::Result<()> {
         let path = config_path().ok_or_else(|| std::io::Error::other("no config dir"))?;
+        self.save_to(&path)
+    }
+
+    /// 경로를 주입 가능한 저장 코어. 실 XDG config를 건드리지 않고 락·저장
+    /// 로직을 테스트하기 위해 save()에서 분리했다.
+    ///
+    /// 락 파일(`<path>.lock`)을 먼저 잡아 저장을 직렬화한다. 락은 RAII
+    /// 가드(SaveLock)로 관리되어, write_config가 `?`로 조기반환하든
+    /// 정상적으로 끝나든 이 함수를 벗어날 때 항상 제거된다.
+    fn save_to(&self, path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let existing = match std::fs::read_to_string(&path) {
-            Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(e) => return Err(e),
-        };
-        let body = merge_into_toml(&existing, self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        // pid를 섞어 동시에 저장하는 두 인스턴스의 tmp 파일이 서로 덮어쓰지
-        // 않게 한다(rename 자체는 원자적이라 최종 파일은 항상 안전).
-        let tmp = path.with_extension(format!("toml.{}.tmp", std::process::id()));
-        {
-            let mut f = std::fs::File::create(&tmp)?;
-            f.write_all(body.as_bytes())?;
-            f.sync_all()?;
-        }
-        std::fs::rename(&tmp, &path)?;
+        let lock_path = lock_path_for(path);
+        let _lock = acquire_lock(&lock_path)
+            .ok_or_else(|| std::io::Error::other("save lock busy, giving up"))?;
+        write_config(path, self)?;
         Ok(())
     }
 }
@@ -262,5 +374,163 @@ mod tests {
         let c2 = config_from_toml_str("[theme]\npreset = \"mono\"\naccent = \"cyan\"");
         assert_eq!(c2.theme.preset, "mono");
         assert_eq!(c2.theme.accent, "cyan");
+    }
+
+    /// [theme] 하위의 사용자 수기 입력·미래 버전 신규 키를 save가 날리지
+    /// 않는다 — top-level 미지 키 보존과 동일한 원리를 중첩 테이블에도 적용.
+    #[test]
+    fn merge_preserves_unknown_theme_keys() {
+        let existing = "[theme]\ncustom_future_key = 1\npreset = \"x\"\n";
+        let cfg = Config {
+            favorite_team: None,
+            poll_secs: 5,
+            lang: None,
+            theme: ThemeConfig {
+                preset: "mono".into(),
+                accent: "cyan".into(),
+            },
+        };
+        let out = merge_into_toml(existing, &cfg).unwrap();
+        assert!(
+            out.contains("custom_future_key = 1"),
+            "unknown [theme] key dropped:\n{out}"
+        );
+        assert!(
+            out.contains("preset = \"mono\""),
+            "preset not updated:\n{out}"
+        );
+        assert!(
+            out.contains("accent = \"cyan\""),
+            "accent not updated:\n{out}"
+        );
+    }
+
+    // --- save 락파일 직렬화 테스트 ---
+    //
+    // 실제 XDG config를 절대 건드리지 않도록, config_path()/save()가 아니라
+    // 경로 주입 가능한 save_to()·lock_path_for()를 직접 호출해 std::env::temp_dir()
+    // 아래 유니크 경로에서만 동작을 검증한다.
+
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// std::env::temp_dir() 아래 이 테스트 실행 전용 유니크 디렉터리 경로.
+    /// pid + nanos + 카운터를 섞어 병렬 테스트 스레드 간 충돌을 피한다.
+    fn unique_test_dir(label: &str) -> std::path::PathBuf {
+        let n = TEST_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before UNIX_EPOCH")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "kbotop-config-test-{label}-{}-{nanos}-{n}",
+            std::process::id()
+        ))
+    }
+
+    /// 저장 성공 후 config 파일이 쓰이고, 락 파일은 남지 않는다.
+    #[test]
+    fn save_to_writes_config_and_releases_lock_on_success() {
+        let dir = unique_test_dir("ok");
+        let path = dir.join("config.toml");
+        let cfg = Config {
+            favorite_team: Some("LG".into()),
+            poll_secs: 9,
+            lang: None,
+            theme: ThemeConfig::default(),
+        };
+
+        cfg.save_to(&path).expect("save_to should succeed");
+
+        let saved = std::fs::read_to_string(&path).expect("config file should exist");
+        assert!(saved.contains("favorite_team = \"LG\""));
+        assert!(
+            !lock_path_for(&path).exists(),
+            "lock file must be removed after a successful save"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 다른 인스턴스가 저장 중임을 뜻하는 신선한(mtime 최근) 락이 있으면,
+    /// 재시도 예산을 다 쓰고 Err를 반환하며 그 락을 함부로 지우지 않는다.
+    #[test]
+    fn save_to_fails_when_a_fresh_lock_is_held() {
+        let dir = unique_test_dir("busy");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        let lock = lock_path_for(&path);
+        std::fs::write(&lock, b"").expect("seed a fresh lock file");
+
+        let cfg = Config::default();
+        let result = cfg.save_to(&path);
+
+        assert!(
+            result.is_err(),
+            "save_to must not proceed while a fresh lock is held"
+        );
+        assert!(
+            lock.exists(),
+            "save_to must not remove a lock it doesn't own"
+        );
+        assert!(
+            !path.exists(),
+            "config file must not be written while locked out"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// mtime이 stale 임계치보다 오래된 락(크래시 잔재)은 탈취되어 저장이
+    /// 정상 진행된다 — 데드락 방지.
+    #[test]
+    fn save_to_steals_a_stale_lock() {
+        let dir = unique_test_dir("stale");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        let lock = lock_path_for(&path);
+        let f = std::fs::File::create(&lock).expect("seed a stale lock file");
+        let old = SystemTime::now() - Duration::from_secs(LOCK_STALE_SECS + 5);
+        f.set_modified(old).expect("backdate lock mtime");
+        drop(f);
+
+        let cfg = Config::default();
+        let result = cfg.save_to(&path);
+
+        assert!(result.is_ok(), "stale lock should be stolen: {result:?}");
+        assert!(
+            !lock.exists(),
+            "lock must be released after the stolen save completes"
+        );
+        assert!(path.exists(), "config file should have been written");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// write_config가 `?`로 조기반환해도(기존 파일이 파싱 불가) save_to의
+    /// RAII 락 가드는 락 파일을 남기지 않는다.
+    #[test]
+    fn save_to_releases_lock_even_when_write_config_fails() {
+        let dir = unique_test_dir("failcore");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        // 기존 파일이 파싱 불가 → write_config가 merge_into_toml의 Err를
+        // `?`로 조기반환한다.
+        std::fs::write(&path, "favorite_team = \"OB\"\n[broken\nnope").unwrap();
+
+        let cfg = Config::default();
+        let result = cfg.save_to(&path);
+
+        assert!(
+            result.is_err(),
+            "malformed existing config must propagate as Err, not be swallowed"
+        );
+        assert!(
+            !lock_path_for(&path).exists(),
+            "lock must be released even when the save core returns Err early"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

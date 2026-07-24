@@ -1,9 +1,9 @@
 [package]
 name = "kbotop"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 rust-version = "1.75"
-description = "Watch KBO baseball from your terminal — live scoreboard & strike-zone pitch tracking, in the spirit of htop."
+description = "Watch KBO baseball in your terminal, with strike-zone pitch tracking."
 repository = "https://github.com/wantaekchoi/kbotop"
 homepage = "https://github.com/wantaekchoi/kbotop"
 license = "MIT"

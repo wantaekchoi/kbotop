@@ -44,6 +44,11 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     } else {
         l.settings_hint
     };
+    // 하단 힌트도 title 영역 폭(테두리 2칸 제외)을 넘지 않게 ellipsize한다 —
+    // 안 그러면 좁은 터미널에서 ratatui가 말줄임 없이 조용히 잘라 박스 경계를
+    // 침범할 수 있다(리뷰 지적 fix 2-4).
+    let hint_budget = rect.width.saturating_sub(2) as usize;
+    let hint = super::text::ellipsize(hint, hint_budget);
     let widget = List::new(items)
         .block(Block::bordered().title(l.title_settings).title_bottom(hint))
         .highlight_symbol("> ")
@@ -185,6 +190,77 @@ mod tests {
                 let mut term = Terminal::new(TestBackend::new(width, 24)).unwrap();
                 term.draw(|f| render(f, f.area(), &app)).unwrap(); // 패닉 없으면 통과
             }
+        }
+    }
+
+    /// fix 2-4: 하단 힌트(title_bottom)는 title 영역 폭(테두리 2칸 제외)을
+    /// 넘지 않게 ellipsize된다 — 좁은 터미널에서도 박스 모서리(└ ┘)가 힌트
+    /// 텍스트로 덮이면 안 된다(리뷰 지적).
+    #[test]
+    fn bottom_hint_never_overwrites_box_corners_at_narrow_width() {
+        let mut app = App::new(Default::default());
+        app.settings = Some(SettingsState {
+            cursor: 0,
+            save_failed: false,
+        });
+        for width in [10u16, 15, 20, 30, 52, 80] {
+            let area = Rect::new(0, 0, width, 24);
+            let mut term = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            term.draw(|f| render(f, f.area(), &app)).unwrap();
+            let buf = term.backend().buffer().clone();
+
+            let w = area.width.saturating_sub(4).max(1);
+            let h = area.height.saturating_sub(2).max(1);
+            let rect = super::super::help_rect(w, h, area);
+            let bottom_y = rect.y + rect.height - 1;
+            let left_x = rect.x;
+            let right_x = rect.x + rect.width - 1;
+
+            assert_eq!(
+                buf[(left_x, bottom_y)].symbol(),
+                "└",
+                "width {width}: bottom-left corner overwritten by hint"
+            );
+            assert_eq!(
+                buf[(right_x, bottom_y)].symbol(),
+                "┘",
+                "width {width}: bottom-right corner overwritten by hint"
+            );
+        }
+    }
+
+    /// fix 2-4: save_failed 힌트(더 긴 문구)도 마찬가지로 모서리를 침범하지
+    /// 않아야 한다.
+    #[test]
+    fn save_failed_hint_never_overwrites_box_corners_at_narrow_width() {
+        let mut app = App::new(Default::default());
+        app.settings = Some(SettingsState {
+            cursor: 0,
+            save_failed: true,
+        });
+        for width in [10u16, 15, 20, 30] {
+            let area = Rect::new(0, 0, width, 24);
+            let mut term = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            term.draw(|f| render(f, f.area(), &app)).unwrap();
+            let buf = term.backend().buffer().clone();
+
+            let w = area.width.saturating_sub(4).max(1);
+            let h = area.height.saturating_sub(2).max(1);
+            let rect = super::super::help_rect(w, h, area);
+            let bottom_y = rect.y + rect.height - 1;
+            let left_x = rect.x;
+            let right_x = rect.x + rect.width - 1;
+
+            assert_eq!(
+                buf[(left_x, bottom_y)].symbol(),
+                "└",
+                "width {width}: bottom-left corner overwritten by hint"
+            );
+            assert_eq!(
+                buf[(right_x, bottom_y)].symbol(),
+                "┘",
+                "width {width}: bottom-right corner overwritten by hint"
+            );
         }
     }
 }

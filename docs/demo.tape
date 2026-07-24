@@ -60,7 +60,7 @@ Right
 Sleep 1000ms
 Right
 Sleep 1600ms
-# 언어를 순환: 한국어 → English → 日本語 (UI 전체가 즉시 바뀐다)
+# 강조색을 순환(팀 색 → 명명색) — mono라 화면색 변화는 없고 설정값만 바뀐다
 Down
 Sleep 500ms
 Right
