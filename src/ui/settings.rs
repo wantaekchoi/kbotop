@@ -97,24 +97,26 @@ mod tests {
         assert!(!text.contains("Settings"));
     }
 
-    /// 리뷰 지적(Important): 값 컬럼이 ellipsize 없이 그대로 렌더되면, 스페인어처럼
-    /// 값이 긴 언어(예: accent_team "Color del equipo")에서 좁은 터미널(40칸)
-    /// 진입 시 마지막 글자가 안내("…") 없이 잘려 박스 경계까지 밀린다. 값도
-    /// 라벨과 동일하게 예산껏 ellipsize해서 각 행("> "+라벨+"  "+값")이 박스
-    /// 내부 폭을 절대 넘지 않아야 한다. 이 테스트는 render()가 실제로 만든
-    /// 버퍼 셀을, render()와 동일한 rect/예산 계산으로 재구성한 기댓값과
-    /// 정확히 비교한다 — 값이 안 잘리는 값(Poll/ThemePreset/Lang)과 잘리는
-    /// 값(Team/ThemeAccent)을 한 번에 봉인한다.
+    /// 리뷰 지적(Important): 값 컬럼이 ellipsize 없이 그대로 렌더되면, 값이 긴
+    /// 좁은 터미널 진입 시 마지막 글자가 안내("…") 없이 잘려 박스 경계까지
+    /// 밀린다. 값도 라벨과 동일하게 예산껏 ellipsize해서 각 행("> "+라벨+"  "+값")
+    /// 이 박스 내부 폭을 절대 넘지 않아야 한다. 이 테스트는 render()가 실제로
+    /// 만든 버퍼 셀을, render()와 동일한 rect/예산 계산으로 재구성한 기댓값과
+    /// 정확히 비교한다 — 그래서 en처럼 폭-1 문자만 쓰는 언어여야 한다(전각
+    /// 문자는 TestBackend가 다음 셀에 플레이스홀더 공백을 남겨 이 셀 단위
+    /// 비교가 어긋난다). 폭 36에서 en 값은 Team("None (clear)")·Poll("5s live
+    /// poll")이 잘리고 ThemePreset/ThemeAccent/Lang은 안 잘려, 값이 안 잘리는
+    /// 행과 잘리는 행을 한 번에 봉인한다.
     #[test]
-    fn value_column_ellipsizes_within_box_at_narrow_width_es() {
+    fn value_column_ellipsizes_within_box_at_narrow_width() {
         let mut app = App::new(Default::default());
-        app.lang = crate::ui::i18n::Lang::Es;
+        app.lang = crate::ui::i18n::Lang::En;
         app.settings = Some(SettingsState {
             cursor: 0,
             save_failed: false,
         });
 
-        let width = 40u16;
+        let width = 36u16;
         let height = 24u16;
         let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
         term.draw(|f| render(f, f.area(), &app)).unwrap();
@@ -177,8 +179,6 @@ mod tests {
             crate::ui::i18n::Lang::Ko,
             crate::ui::i18n::Lang::En,
             crate::ui::i18n::Lang::Ja,
-            crate::ui::i18n::Lang::ZhTw,
-            crate::ui::i18n::Lang::Es,
         ] {
             let mut app = App::new(Default::default());
             app.lang = lang;
@@ -198,69 +198,31 @@ mod tests {
     /// 텍스트로 덮이면 안 된다(리뷰 지적).
     #[test]
     fn bottom_hint_never_overwrites_box_corners_at_narrow_width() {
-        let mut app = App::new(Default::default());
-        app.settings = Some(SettingsState {
-            cursor: 0,
-            save_failed: false,
-        });
-        for width in [10u16, 15, 20, 30, 52, 80] {
-            let area = Rect::new(0, 0, width, 24);
-            let mut term = Terminal::new(TestBackend::new(width, 24)).unwrap();
-            term.draw(|f| render(f, f.area(), &app)).unwrap();
-            let buf = term.backend().buffer().clone();
-
-            let w = area.width.saturating_sub(4).max(1);
-            let h = area.height.saturating_sub(2).max(1);
-            let rect = super::super::help_rect(w, h, area);
-            let bottom_y = rect.y + rect.height - 1;
-            let left_x = rect.x;
-            let right_x = rect.x + rect.width - 1;
-
-            assert_eq!(
-                buf[(left_x, bottom_y)].symbol(),
-                "└",
-                "width {width}: bottom-left corner overwritten by hint"
-            );
-            assert_eq!(
-                buf[(right_x, bottom_y)].symbol(),
-                "┘",
-                "width {width}: bottom-right corner overwritten by hint"
-            );
-        }
+        crate::ui::test_support::assert_bottom_hint_keeps_box_corners(
+            &[10, 15, 20, 30, 52, 80],
+            |app| {
+                app.settings = Some(SettingsState {
+                    cursor: 0,
+                    save_failed: false,
+                });
+            },
+            render,
+        );
     }
 
     /// fix 2-4: save_failed 힌트(더 긴 문구)도 마찬가지로 모서리를 침범하지
     /// 않아야 한다.
     #[test]
     fn save_failed_hint_never_overwrites_box_corners_at_narrow_width() {
-        let mut app = App::new(Default::default());
-        app.settings = Some(SettingsState {
-            cursor: 0,
-            save_failed: true,
-        });
-        for width in [10u16, 15, 20, 30] {
-            let area = Rect::new(0, 0, width, 24);
-            let mut term = Terminal::new(TestBackend::new(width, 24)).unwrap();
-            term.draw(|f| render(f, f.area(), &app)).unwrap();
-            let buf = term.backend().buffer().clone();
-
-            let w = area.width.saturating_sub(4).max(1);
-            let h = area.height.saturating_sub(2).max(1);
-            let rect = super::super::help_rect(w, h, area);
-            let bottom_y = rect.y + rect.height - 1;
-            let left_x = rect.x;
-            let right_x = rect.x + rect.width - 1;
-
-            assert_eq!(
-                buf[(left_x, bottom_y)].symbol(),
-                "└",
-                "width {width}: bottom-left corner overwritten by hint"
-            );
-            assert_eq!(
-                buf[(right_x, bottom_y)].symbol(),
-                "┘",
-                "width {width}: bottom-right corner overwritten by hint"
-            );
-        }
+        crate::ui::test_support::assert_bottom_hint_keeps_box_corners(
+            &[10, 15, 20, 30],
+            |app| {
+                app.settings = Some(SettingsState {
+                    cursor: 0,
+                    save_failed: true,
+                });
+            },
+            render,
+        );
     }
 }

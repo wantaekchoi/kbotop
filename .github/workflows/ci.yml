@@ -25,3 +25,33 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: test
         run: cargo test --all-features
+
+  # NOTE: the codecov badge in README.md / README.en.md only fills in once a
+  # human links this repo on codecov.io and adds a CODECOV_TOKEN secret in
+  # this repo's GitHub settings (Settings > Secrets and variables > Actions).
+  # That is a one-time, manual setup step this workflow cannot perform.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: coverage (lcov)
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+      - name: coverage summary
+        run: |
+          {
+            echo '```'
+            cargo llvm-cov report
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: upload to codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

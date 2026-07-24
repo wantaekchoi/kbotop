@@ -146,6 +146,54 @@ pub fn current_news_index(now_secs: u64, len: usize) -> usize {
     ((now_secs / 60 / 2) as usize) % len
 }
 
+/// article/newslist/settings 세 오버레이 테스트가 공유하는 fix 2-4 가드
+/// 헬퍼(v0.10 DRY 정리 — 복붙 4곳 통합). 프로덕션 코드 아님: 전부
+/// `#[cfg(test)]`이고 `pub(crate)`라 각 ui 서브모듈의 `#[cfg(test)] mod tests`
+/// 에서만 보인다.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use crate::app::App;
+    use ratatui::{backend::TestBackend, layout::Rect, Frame, Terminal};
+
+    /// 하단 힌트(title_bottom)가 좁은 폭에서 박스 하단 좌/우 모서리(└/┘)를
+    /// 덮지 않는지 검증한다 — 오버레이별 `setup`(App에 오버레이 상태를 채움)과
+    /// 해당 모듈의 `render`를 넘겨받아, 각 `widths` 값마다 렌더 → `help_rect`로
+    /// 박스 좌표를 재계산 → 모서리 심볼을 단언한다(기존 4곳의 로직 그대로).
+    pub(crate) fn assert_bottom_hint_keeps_box_corners(
+        widths: &[u16],
+        setup: impl FnOnce(&mut App),
+        render: fn(&mut Frame, Rect, &App),
+    ) {
+        let mut app = App::new(Default::default());
+        setup(&mut app);
+
+        for &width in widths {
+            let area = Rect::new(0, 0, width, 24);
+            let mut term = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            term.draw(|f| render(f, f.area(), &app)).unwrap();
+            let buf = term.backend().buffer().clone();
+
+            let w = area.width.saturating_sub(4).max(1);
+            let h = area.height.saturating_sub(2).max(1);
+            let rect = super::help_rect(w, h, area);
+            let bottom_y = rect.y + rect.height - 1;
+            let left_x = rect.x;
+            let right_x = rect.x + rect.width - 1;
+
+            assert_eq!(
+                buf[(left_x, bottom_y)].symbol(),
+                "└",
+                "width {width}: bottom-left corner overwritten by hint"
+            );
+            assert_eq!(
+                buf[(right_x, bottom_y)].symbol(),
+                "┘",
+                "width {width}: bottom-right corner overwritten by hint"
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

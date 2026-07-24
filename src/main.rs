@@ -41,12 +41,13 @@ struct Cli {
     /// Date: YYYY-MM-DD, YYYYMMDD, today, yesterday, tomorrow, +N, -N (default: today, KST)
     #[arg(long)]
     date: Option<String>,
-    /// UI language: ko | en | ja | zh-TW | es (default: auto by locale)
+    /// UI language: ko | en | ja (default: auto by locale)
     #[arg(long)]
     lang: Option<String>,
 }
 
-/// 언어 결정: CLI > config > env(LC_ALL→LANG, "ko"/"ja"/"zh_TW"/"es" 접두) > En.
+/// 언어 결정: CLI > config > env(LC_ALL→LANG, "ko"/"ja" 접두) > En.
+/// config는 영속 상태라 모르는 값(구버전에서 저장된 이제 없는 언어)이면 무시하고 env/기본으로 폴백한다 — CLI만 fail-fast.
 fn detect_lang(
     cli: Option<&str>,
     config: Option<&str>,
@@ -57,30 +58,21 @@ fn detect_lang(
         "ko" | "kr" | "korean" => Ok(Lang::Ko),
         "en" | "english" => Ok(Lang::En),
         "ja" | "japanese" => Ok(Lang::Ja),
-        "zh-tw" | "zh_tw" | "zh-hant" | "zh_hant" | "zhtw" => Ok(Lang::ZhTw),
-        "es" | "spanish" | "espanol" | "español" => Ok(Lang::Es),
-        other => Err(format!(
-            "unsupported --lang: {other} (use ko, en, ja, zh-TW, or es)"
-        )),
+        other => Err(format!("unsupported --lang: {other} (use ko, en, or ja)")),
     };
     if let Some(s) = cli {
         return parse(s);
     }
     if let Some(s) = config {
-        return parse(s);
+        if let Ok(lang) = parse(s) {
+            return Ok(lang);
+        }
+        // config에 이제 없는 언어(구버전 zh-TW/es 등)는 무시하고 env/기본으로 폴백 —
+        // 영속 config가 앱 시작을 막으면 안 된다(CLI만 fail-fast).
     }
     Ok(match env_lang.map(|e| e.to_ascii_lowercase()) {
         Some(ref e) if e.starts_with("ko") => Lang::Ko,
         Some(ref e) if e.starts_with("ja") => Lang::Ja,
-        Some(ref e)
-            if e.starts_with("zh_tw")
-                || e.starts_with("zh-tw")
-                || e.starts_with("zh_hant")
-                || e.starts_with("zh-hant") =>
-        {
-            Lang::ZhTw
-        }
-        Some(ref e) if e.starts_with("es") => Lang::Es,
         _ => Lang::En,
     })
 }
@@ -614,33 +606,40 @@ mod tests {
         assert!(detect_lang(Some("jp"), None, None).is_err()); // fail fast
     }
 
-    /// 일본어·중국어(번체) 지역화(T10): CLI/config/env 전 경로에서 인식된다.
+    /// 일본어 지역화(T10): CLI/config/env 전 경로에서 인식된다.
     #[test]
-    fn detect_lang_recognizes_japanese_and_traditional_chinese() {
+    fn detect_lang_recognizes_japanese() {
         use kbotop::ui::i18n::Lang;
         assert_eq!(detect_lang(Some("ja"), None, None).unwrap(), Lang::Ja);
-        assert_eq!(detect_lang(Some("zh-TW"), None, None).unwrap(), Lang::ZhTw);
         assert_eq!(detect_lang(None, Some("ja"), None).unwrap(), Lang::Ja);
-        assert_eq!(detect_lang(None, Some("zh-TW"), None).unwrap(), Lang::ZhTw);
         assert_eq!(
             detect_lang(None, None, Some("ja_JP.UTF-8")).unwrap(),
             Lang::Ja
         );
-        for env in ["zh_TW.UTF-8", "zh-TW", "zh_Hant_TW.UTF-8"] {
-            assert_eq!(detect_lang(None, None, Some(env)).unwrap(), Lang::ZhTw);
-        }
-        assert!(detect_lang(Some("zh"), None, None).is_err()); // 모호(간체/번체 미구분) — fail fast
     }
 
-    /// 스페인어(T11): CLI/config/env 전 경로에서 인식된다.
+    /// v0.10 회귀 봉인: config에 남아있는 v0.8/v0.9 시절 언어(zh-TW, es 등)는
+    /// 앱 시작을 막지 않고 무시된 뒤 env/기본으로 관용적으로 폴백한다.
+    /// CLI는 명시적 사용자 입력이므로 여전히 fail-fast를 유지한다.
     #[test]
-    fn detect_lang_recognizes_spanish() {
+    fn detect_lang_config_falls_back_gracefully_for_removed_languages() {
         use kbotop::ui::i18n::Lang;
-        assert_eq!(detect_lang(Some("es"), None, None).unwrap(), Lang::Es);
-        assert_eq!(detect_lang(None, Some("es"), None).unwrap(), Lang::Es);
-        for env in ["es_ES.UTF-8", "es_MX.UTF-8", "es-419"] {
-            assert_eq!(detect_lang(None, None, Some(env)).unwrap(), Lang::Es);
-        }
+        // 구버전 config 값(zh-TW)은 무시하고 env로 폴백.
+        assert_eq!(
+            detect_lang(None, Some("zh-TW"), Some("en_US.UTF-8")).unwrap(),
+            Lang::En
+        );
+        // 구버전 config 값(es)에 env도 없으면 기본(En)으로 폴백.
+        assert_eq!(detect_lang(None, Some("es"), None).unwrap(), Lang::En);
+        // 여전히 유효한 config 값은 그대로 사용된다(무회귀).
+        assert_eq!(detect_lang(None, Some("ko"), None).unwrap(), Lang::Ko);
+        // CLI는 여전히 fail-fast: 잘못된 값은 에러.
+        assert!(detect_lang(Some("zh-TW"), None, None).is_err());
+        // config에 임의의 쓰레기 값이 있어도 무시하고 env로 폴백.
+        assert_eq!(
+            detect_lang(None, Some("garbage"), Some("ja_JP.UTF-8")).unwrap(),
+            Lang::Ja
+        );
     }
 
     /// --help가 예시와 키 요약까지 보여준다 — 초행 사용자의 발견 가능성.

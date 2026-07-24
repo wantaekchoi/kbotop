@@ -11,12 +11,12 @@ use ratatui::{
 };
 
 /// Date pane 항목: (표시 라벨, YYYY-MM-DD). 오늘은 now_secs 기준 KST.
-/// "-2"/"-3"/"+2"/"+3"의 접미(days/일/días)는 언어별 완성형이 아니라
+/// "-2"/"-3"/"+2"/"+3"의 접미(days/일)는 언어별 완성형이 아니라
 /// `l.date_days_fmt_minus`(공백 유무 포함 sep)로 데이터 주도 조립한다 —
 /// 언어 분기(match lang) 없이 라벨 데이터만 바뀌면 문구가 따라온다. sep는
-/// 접미의 첫 글자가 ASCII(라틴 문자 계열: en/es)인지로 결정한다 — 리터럴
-/// "days" 일치만 보면 "días"(ES)가 안 걸려 숫자에 그대로 붙어버린다
-/// ("-2días"). 한글/일본어/중국어 접미는 첫 글자가 비ASCII라 여전히 sep 없음.
+/// 접미의 첫 글자가 ASCII(라틴 문자 계열)인지로 결정한다 — 리터럴 "days"
+/// 문자열 일치만 보면 놓치는 라틴 변형 접미도 첫 글자 ASCII 판정이면
+/// 안전하게 걸린다. 한글/일본어 접미는 첫 글자가 비ASCII라 여전히 sep 없음.
 pub fn date_items(l: &'static Labels, now_secs: u64) -> Vec<(String, String)> {
     let today = kst_days(now_secs);
     let sep = if l
@@ -201,13 +201,18 @@ mod tests {
             ko[3].0
         );
 
-        // es: 라틴 문자 접미("días") → 숫자와 접미 사이 공백 있음(리터럴 "days"
-        // 일치만 보면 놓치는 케이스 — sep는 접미의 "첫 글자 ASCII 여부"로 판단).
-        let es = date_items(crate::ui::i18n::labels(crate::ui::i18n::Lang::Es), now);
+        // ja: 비ASCII 접미("日") → 숫자에 바로 붙음(공백 없음) — ko와 같은
+        // 경로를 다른 접미 문자열로 한 번 더 봉인한다.
+        let ja = date_items(crate::ui::i18n::labels(crate::ui::i18n::Lang::Ja), now);
         assert!(
-            es[3].0.starts_with("-2 días"),
-            "es suffix missing space before 'días': {}",
-            es[3].0
+            ja[3].0.starts_with("-2日"),
+            "ja suffix should attach directly (no space) before '日': {}",
+            ja[3].0
+        );
+        assert!(
+            !ja[3].0.starts_with("-2 "),
+            "ja suffix must not have a stray space: {}",
+            ja[3].0
         );
     }
 

@@ -10,6 +10,7 @@
 [![License: MIT](https://img.shields.io/github/license/wantaekchoi/kbotop?style=flat-square)](LICENSE)
 [![Downloads](https://img.shields.io/crates/d/kbotop?style=flat-square)](https://crates.io/crates/kbotop)
 [![CI](https://img.shields.io/github/actions/workflow/status/wantaekchoi/kbotop/ci.yml?style=flat-square&label=CI)](https://github.com/wantaekchoi/kbotop/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/wantaekchoi/kbotop/branch/main/graph/badge.svg)](https://codecov.io/gh/wantaekchoi/kbotop)
 [![MSRV](https://img.shields.io/badge/MSRV-1.75-blue?style=flat-square)](https://www.rust-lang.org)
 
 ![demo](docs/demo.gif)
@@ -45,7 +46,7 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/rele
 kbotop                    # 오늘 경기
 kbotop --team lg          # 내 팀 라이브 경기로 바로 진입
 kbotop --date yesterday   # 다른 날짜: YYYY-MM-DD, YYYYMMDD, today, tomorrow, +N, -N
-kbotop --lang en          # UI 언어 (기본: 로케일 자동, ko/en/ja/zh-TW/es)
+kbotop --lang en          # UI 언어 (기본: 로케일 자동, ko/en/ja)
 ```
 
 Vim 스타일로 움직입니다. 최신 키 목록은 앱 안 `?` 도움말이 기준입니다.
@@ -61,7 +62,7 @@ Vim 스타일로 움직입니다. 최신 키 목록은 앱 안 `?` 도움말이 
 - 도움말: `?`
 - 종료: `q`
 
-한국어·English·日本語·繁體中文·Español 5개국어를 지원합니다. 기본은 로케일 자동 감지이며, `--lang`이나 F9 설정 화면에서 즉시 바꿀 수 있습니다.
+한국어·English·日本語 3개 언어(ko/en/ja)를 지원합니다. 기본은 로케일 자동 감지이며, `--lang`이나 F9 설정 화면에서 즉시 바꿀 수 있습니다.
 
 ## 설정
 

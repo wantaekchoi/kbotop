@@ -10,6 +10,7 @@
 [![License: MIT](https://img.shields.io/github/license/wantaekchoi/kbotop?style=flat-square)](LICENSE)
 [![Downloads](https://img.shields.io/crates/d/kbotop?style=flat-square)](https://crates.io/crates/kbotop)
 [![CI](https://img.shields.io/github/actions/workflow/status/wantaekchoi/kbotop/ci.yml?style=flat-square&label=CI)](https://github.com/wantaekchoi/kbotop/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/wantaekchoi/kbotop/branch/main/graph/badge.svg)](https://codecov.io/gh/wantaekchoi/kbotop)
 [![MSRV](https://img.shields.io/badge/MSRV-1.75-blue?style=flat-square)](https://www.rust-lang.org)
 
 ![demo](docs/demo.en.gif)
@@ -45,7 +46,7 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/rele
 kbotop                    # today's games
 kbotop --team lg          # straight into your team's live game
 kbotop --date yesterday   # also: YYYY-MM-DD, YYYYMMDD, today, tomorrow, +N, -N
-kbotop --lang en          # UI language (default: auto by locale, ko/en/ja/zh-TW/es)
+kbotop --lang en          # UI language (default: auto by locale, ko/en/ja)
 ```
 
 Vim-style navigation; the in-app `?` help is the source of truth.
@@ -61,7 +62,7 @@ Vim-style navigation; the in-app `?` help is the source of truth.
 - Help: `?`
 - Quit: `q`
 
-Five languages are supported: Korean, English, 日本語, 繁體中文, and Español. The UI auto-detects your locale by default; switch it with `--lang` or from the F9 settings screen at any time.
+Three languages are supported: Korean, English, and 日本語 (ko/en/ja). The UI auto-detects your locale by default; switch it with `--lang` or from the F9 settings screen at any time.
 
 ## Configuration
 

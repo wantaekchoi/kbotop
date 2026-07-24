@@ -59,12 +59,10 @@ pub enum SettingKind {
 }
 
 /// 언어 순환 순서(F9 설정 화면의 Lang 행). change_setting이 이 순서로 순환한다.
-const LANGS: [crate::ui::i18n::Lang; 5] = [
+const LANGS: [crate::ui::i18n::Lang; 3] = [
     crate::ui::i18n::Lang::Ko,
     crate::ui::i18n::Lang::En,
     crate::ui::i18n::Lang::Ja,
-    crate::ui::i18n::Lang::ZhTw,
-    crate::ui::i18n::Lang::Es,
 ];
 
 /// 테마 프리셋 순환 순서(F9 설정 화면의 ThemePreset 행). 단일 진실 — change_setting과

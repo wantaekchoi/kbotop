@@ -22,9 +22,9 @@ use ratatui::{
 /// 미리 덮어줘서 스크롤 상한이 실제 렌더 행 수보다 작아지는 사고를 막는다.
 ///
 /// 한때 `Line::width()`(ratatui 자체가 실제 wrap에도 쓰는 unicode-width 기준
-/// 정확한 폭)로 "정밀화"했지만(fix 2-5), 그러면 이 안전마진이 사라져 Es(스페
-/// 인어 악센트) 로케일에서 긴 발췌를 스크롤할 때 마지막 콘텐츠 줄(원문 CTA)
-/// 에 도달하지 못하는 실제 회귀가 생겼다 — **스크롤 상한 추정기는 절대
+/// 정확한 폭)로 "정밀화"했지만(fix 2-5), 그러면 이 안전마진이 사라져 악센트
+/// (폭1 비ASCII 라틴) 문자가 많은 발췌를 스크롤할 때 마지막 콘텐츠 줄(원문
+/// CTA)에 도달하지 못하는 실제 회귀가 생겼다 — **스크롤 상한 추정기는 절대
 /// 과소추정하면 안 되고, 과대추정으로 편향돼야 안전하다**(과대추정은 빈
 /// 줄까지 스크롤되는 무해한 코스메틱, 과소추정은 마지막 줄 도달불가라는
 /// 실버그다). 그래서 되돌린다. 진짜 word-wrap-aware 행 수 계산은 백로그.
@@ -208,9 +208,15 @@ mod tests {
     /// scroll을 최댓값(u16::MAX)으로 줘도 clamp된 scroll이 실제 마지막 줄
     /// (원문 CTA)에 못 미친다.
     ///
-    /// `article_hint`(하단 힌트)에도 "artículo completo"가 들어 있어 그 문구로
-    /// 단언하면 스크롤과 무관하게 항상 통과하는 가짜 테스트가 된다. 대신
-    /// `article_read_full`(CTA 줄)에만 있는 "pulsa Enter u o"로 단언한다.
+    /// 이 마진을 RED로 드러내는 건 **폭1 비ASCII summary 콘텐츠**이고, summary는
+    /// UI 언어와 무관한 데이터다(chrome/CTA만 app.lang을 따른다). 번체 중국어·
+    /// 스페인어 UI 지원 종료 후에도 chrome은 생존 언어(Ko)로 두고 summary만
+    /// 악센트 라틴 그대로 유지해 마진 트리거를 보존한다.
+    ///
+    /// `article_hint`(하단 힌트, ko=" Esc 닫기 · Enter/o 원문 전체 · j/k 스크롤 ")
+    /// 에도 "원문 전체"가 들어 있어 그 문구로 단언하면 스크롤과 무관하게 항상
+    /// 통과하는 가짜 테스트가 된다. 대신 `article_read_full`(CTA 줄, ko="발췌입니다
+    /// — 원문 전체는 Enter 또는 o를 누르세요")에만 있는 "누르세요"로 단언한다.
     ///
     /// 되돌린 과대추정 heuristic(`display_width`)이 CTA 도달을 보장한다.
     /// `Line::width()`로 정밀화된 채로 두면(word-wrap slack을 못 덮으면) 이
@@ -218,7 +224,7 @@ mod tests {
     #[test]
     fn extreme_scroll_with_accented_summary_still_reaches_cta_line() {
         let mut app = App::new(Default::default());
-        app.lang = crate::ui::i18n::Lang::Es; // article_read_full="Extracto — lee el artículo completo: pulsa Enter u o"
+        app.lang = crate::ui::i18n::Lang::Ko; // article_read_full="발췌입니다 — 원문 전체는 Enter 또는 o를 누르세요"
         let mut item = sample();
         let word = "á".repeat(25); // 74칸 행에 2개만 들어가는 긴 악센트 단일 토큰
         let line = std::iter::repeat(word)
@@ -233,10 +239,15 @@ mod tests {
             item,
             scroll: u16::MAX,
         });
-        let text = render_to_string(&app);
+        // 전각 문자는 TestBackend에서 다음 셀에 플레이스홀더 공백을 남기므로
+        // (다른 테스트와 동일한 이유) 공백을 걷어내고 비교한다.
+        let compact: String = render_to_string(&app)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
         assert!(
-            text.contains("pulsa Enter u o"),
-            "scrolled-to-end should still reveal the CTA line, got:\n{text}"
+            compact.contains("누르세요"),
+            "scrolled-to-end should still reveal the CTA line, got:\n{compact}"
         );
     }
 
@@ -245,34 +256,15 @@ mod tests {
     /// 텍스트로 덮이면 안 된다(리뷰 지적).
     #[test]
     fn bottom_hint_never_overwrites_box_corners_at_narrow_width() {
-        let mut app = App::new(Default::default());
-        app.article_view = Some(ArticleView {
-            item: sample(),
-            scroll: 0,
-        });
-        for width in [10u16, 15, 20, 30, 52, 80] {
-            let area = Rect::new(0, 0, width, 24);
-            let mut term = Terminal::new(TestBackend::new(width, 24)).unwrap();
-            term.draw(|f| render(f, f.area(), &app)).unwrap();
-            let buf = term.backend().buffer().clone();
-
-            let w = area.width.saturating_sub(4).max(1);
-            let h = area.height.saturating_sub(2).max(1);
-            let rect = super::super::help_rect(w, h, area);
-            let bottom_y = rect.y + rect.height - 1;
-            let left_x = rect.x;
-            let right_x = rect.x + rect.width - 1;
-
-            assert_eq!(
-                buf[(left_x, bottom_y)].symbol(),
-                "└",
-                "width {width}: bottom-left corner overwritten by hint"
-            );
-            assert_eq!(
-                buf[(right_x, bottom_y)].symbol(),
-                "┘",
-                "width {width}: bottom-right corner overwritten by hint"
-            );
-        }
+        crate::ui::test_support::assert_bottom_hint_keeps_box_corners(
+            &[10, 15, 20, 30, 52, 80],
+            |app| {
+                app.article_view = Some(ArticleView {
+                    item: sample(),
+                    scroll: 0,
+                });
+            },
+            render,
+        );
     }
 }
