@@ -1,5 +1,6 @@
-//! 인앱 뉴스 기사 오버레이(v0.6). `n`이 여는 중앙 큰 박스 — 제목(강조) +
-//! 기자 + 본문(폭 안전 wrap) + 스크롤바. 본문 fetch 전에는 loading 문구만.
+//! 인앱 뉴스 발췌 오버레이(v0.7). `n`이 여는 중앙 큰 박스 — 제목(강조) +
+//! 매체 + 발췌(폭 안전 wrap) + 스크롤바. 선택한 NewsItem을 그대로 렌더하므로
+//! 비동기 fetch·loading 상태가 없다.
 use crate::app::App;
 use ratatui::{
     layout::{Margin, Rect},
@@ -41,31 +42,24 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
 
     f.render_widget(Clear, rect);
 
-    // 로딩 중: 안내 문구만(스크롤바 없음).
-    let Some(text) = &view.text else {
-        f.render_widget(Paragraph::new(l.loading).block(block), rect);
-        return;
-    };
-
-    // 제목(BOLD) → 기자(DIM, 있으면) → 빈 줄 → 발췌 본문 → 빈 줄 → 원문 CTA.
-    // body는 데이터 계층에서 리드 발췌로 잘려 온다(저작권: 전문 미표시).
+    let item = &view.item;
+    // 제목(BOLD) → 매체(DIM) → 빈 줄 → 발췌 → 빈 줄 → 원문 CTA.
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
-        text.title.clone(),
+        item.title.clone(),
         Style::default().add_modifier(Modifier::BOLD),
     )));
-    if !text.reporter.is_empty() {
+    if !item.source.is_empty() {
         lines.push(Line::from(Span::styled(
-            text.reporter.clone(),
+            item.source.clone(),
             Style::default().add_modifier(Modifier::DIM),
         )));
     }
     lines.push(Line::from(""));
-    for bl in text.body.split('\n') {
+    for bl in item.summary.split('\n') {
         lines.push(Line::from(bl.to_string()));
     }
     lines.push(Line::from(""));
-    // 발췌 고지 + 원문 전체 보기 CTA(강조: BOLD+UNDERLINED — 링크 신호, 배경 무관).
     lines.push(Line::from(Span::styled(
         l.article_read_full,
         Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
@@ -105,15 +99,16 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
 mod tests {
     use super::*;
     use crate::app::{App, ArticleView};
-    use crate::model::ArticleText;
+    use crate::model::NewsItem;
     use ratatui::{backend::TestBackend, Terminal};
 
-    fn sample() -> ArticleText {
-        ArticleText {
+    fn sample() -> NewsItem {
+        NewsItem {
             title: "제목텍스트".into(),
-            body: "본문 내용입니다.\n".repeat(40),
-            org_url: "https://m.example.com/x".into(),
-            reporter: "홍길동 기자".into(),
+            source: "홍길동일보".into(),
+            url: "https://m.example.com/x".into(),
+            summary: "본문 내용입니다.\n".repeat(40),
+            published: String::new(),
         }
     }
 
@@ -128,17 +123,14 @@ mod tests {
             .collect()
     }
 
-    /// 본문이 채워진 오버레이는 제목과 본문을 렌더한다(한국어).
+    /// 발췌가 채워진 항목은 제목과 발췌를 렌더한다(한국어).
     #[test]
-    fn renders_title_and_body_when_populated() {
+    fn renders_title_and_summary_when_populated() {
         let mut app = App::new(Default::default());
         app.lang = crate::ui::i18n::Lang::Ko;
         app.article_view = Some(ArticleView {
-            loading: false,
-            text: Some(sample()),
+            item: sample(),
             scroll: 0,
-            oid: "1".into(),
-            aid: "2".into(),
         });
         // 전각 문자는 TestBackend에서 다음 셀에 플레이스홀더 공백을 남긴다.
         let compact: String = render_to_string(&app)
@@ -146,25 +138,7 @@ mod tests {
             .filter(|c| !c.is_whitespace())
             .collect();
         assert!(compact.contains("제목텍스트"), "title missing:\n{compact}");
-        assert!(compact.contains("본문"), "body missing");
-    }
-
-    /// 로딩 중에는 안내 문구만(패닉 없음).
-    #[test]
-    fn renders_loading_placeholder_without_panic() {
-        let mut app = App::new(Default::default());
-        app.article_view = Some(ArticleView {
-            loading: true,
-            text: None,
-            scroll: 0,
-            oid: "1".into(),
-            aid: "2".into(),
-        });
-        let text = render_to_string(&app);
-        assert!(
-            text.contains("loading"),
-            "loading placeholder missing:\n{text}"
-        );
+        assert!(compact.contains("본문"), "summary missing");
     }
 
     /// 과도한 scroll 값이어도 clamp되어 패닉 없이 렌더된다(빈 공간 방어).
@@ -172,11 +146,8 @@ mod tests {
     fn over_scroll_is_clamped_without_panic() {
         let mut app = App::new(Default::default());
         app.article_view = Some(ArticleView {
-            loading: false,
-            text: Some(sample()),
+            item: sample(),
             scroll: 9999,
-            oid: "1".into(),
-            aid: "2".into(),
         });
         let _ = render_to_string(&app); // 패닉 없으면 통과
     }

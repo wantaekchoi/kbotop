@@ -21,7 +21,8 @@ use kbotop::config;
 use kbotop::dateutil::{civil_from_days, days_from_civil, format_civil, kst_days};
 use kbotop::poller::{self, Command, Update};
 use kbotop::source::naver::NaverSource;
-use kbotop::source::DataSource;
+use kbotop::source::rss::RssSource;
+use kbotop::source::{DataSource, NewsSource};
 use kbotop::ui;
 
 #[derive(Parser)]
@@ -277,6 +278,7 @@ fn main() -> Result<()> {
     let mut term = init_terminal()?;
 
     let source: Arc<dyn DataSource> = Arc::new(NaverSource::new());
+    let news_source: Arc<dyn NewsSource> = Arc::new(RssSource::new());
     let (tx_cmd, rx_cmd) = mpsc::channel::<Command>();
     let (tx_up, rx_up) = mpsc::channel::<Update>();
     // config.toml의 poll_secs(하한 3s 적용)를 라이브 뷰 폴링 주기로 흘려보낸다 —
@@ -286,6 +288,7 @@ fn main() -> Result<()> {
     let date_for_app = date.clone();
     let handle = poller::spawn(
         source,
+        news_source,
         date,
         rx_cmd,
         tx_up,
@@ -432,13 +435,6 @@ fn run(
             let _ = tx_cmd.send(Command::SetLivePoll(app.poll_choice));
             *sent_poll = app.poll_choice;
         }
-        // 기사 본문 요청(부가 기능, v0.6): `n` 키(T3)가 app.pending_article을
-        // 세팅하면 여기서 감지해 Command::FetchArticle을 보내고 비운다 — App은
-        // 채널을 모르므로 watched_game/sent_date와 동일하게 run()이 대신 전송한다.
-        if let Some((oid, aid)) = app.pending_article.take() {
-            let _ = tx_cmd.send(Command::FetchArticle { oid, aid });
-        }
-
         // Standings 탭이 떠 있는 동안은 조건 없이 매 tick RefreshStandings를 보낸다.
         // 이전엔 `standings.is_empty()`일 때만 보내, 최초 로드 이후엔 W/L·GB가
         // 바뀌어도 세션 내내 스냅샷이 얼어붙었다(버그 수정). 실제 fetch는

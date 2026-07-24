@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-24
+
+### Changed
+- `n` 뉴스 읽기를 티커 1건 오버레이에서 목록 브라우징으로 전환 — 여러 언론사 기사가 최신순으로 섞여 나열되고, 방향키(`j`/`k`)로 고른 뒤 `Enter`로 읽습니다.
+- 뉴스 소스를 네이버 비공식 API에서 언론사 RSS 피드로 전환 — 저작권상 더 안전한 경로이며, 피드 하나가 죽어도 나머지 피드로 계속됩니다.
+
 ## [0.6.0] - 2026-07-23
 
 ### Added
@@ -81,7 +87,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/wantaekchoi/kbotop/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/wantaekchoi/kbotop/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/wantaekchoi/kbotop/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/wantaekchoi/kbotop/compare/v0.3.0...v0.4.0

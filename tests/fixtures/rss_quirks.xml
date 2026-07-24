@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>테스트피드</title>
+    <item>
+      <title><![CDATA[김도영 동점 3점 홈런]]></title>
+      <link>https://example.com/a?utm_source=rss&amp;utm_medium=feed</link>
+      <description><![CDATA[<p>9회말 <b>동점</b> 홈런을 터뜨렸다.</p>]]></description>
+      <dc:date>2026-07-24 09:18:39</dc:date>
+      <category>프로야구</category>
+    </item>
+    <item>
+      <title>롯데 5연승</title>
+      <link>https://example.com/b</link>
+      <description>짧은 리드 &amp; 요약</description>
+      <pubDate>Thu, 24 Jul 2026 00:18:39 GMT</pubDate>
+      <category>연예</category>
+    </item>
+    <item>
+      <title></title>
+      <link>https://example.com/empty</link>
+      <description>제목 없는 항목은 버린다</description>
+    </item>
+  </channel>
+</rss>

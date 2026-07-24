@@ -103,25 +103,18 @@ pub struct LiveState {
     pub next_batter_name: String,
 }
 
-/// KBO 뉴스 헤드라인 한 건(하단 티커용).
+/// KBO 뉴스 헤드라인 한 건(하단 티커·인앱 오버레이용).
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewsItem {
     pub title: String,
     pub source: String, // 언론사명(출처 표시용, 결측 시 빈 문자열)
-    pub url: String,    // 기사 링크. 빈 값=링크 없음 — 열기 생략.
-    pub oid: String,    // 언론사 id. 기사 본문 fetch(oid/aid)에 쓴다. 결측 시 빈 문자열.
-    pub aid: String,    // 기사 id. 결측 시 빈 문자열.
-}
-
-/// 기사 본문(인앱 뉴스 표시용, v0.6 스파이크). title/body/reporter는 결측 시
-/// 빈 문자열(관용); org_url은 인앱 표시가 불가할 때 브라우저로 여는 GUI
-/// 폴백 링크로 쓴다(빈 값=폴백 링크 없음).
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct ArticleText {
-    pub title: String,
-    pub body: String,
-    pub org_url: String,
-    pub reporter: String,
+    pub url: String,    // 원문 링크. 빈 값=링크 없음 — 열기 생략.
+    /// 목록·오버레이에 보여줄 발췌. HTML 제거·상한(EXCERPT_CHARS) 적용 후 저장하며,
+    /// 전문은 어떤 경로로도 담지 않는다(저작권). 결측 시 빈 문자열.
+    pub summary: String,
+    /// 정렬용 정규화 발행시각 "YYYYMMDDHHMMSS". 여러 피드를 합칠 때 매체별로
+    /// 뭉치지 않게 하는 유일한 키다. 해석 실패·결측 시 빈 문자열(정렬 뒤로).
+    pub published: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]

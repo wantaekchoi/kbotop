@@ -5,6 +5,7 @@ pub mod header;
 pub mod help;
 pub mod i18n;
 pub mod live;
+pub mod newslist;
 pub mod options;
 pub mod sideview;
 pub mod standings;
@@ -119,6 +120,12 @@ pub fn draw(f: &mut Frame, app: &App) {
         help::render(f, f.area(), app);
     }
 
+    // 뉴스 목록은 기사보다 아래 층 — 기사가 목록 위에 겹쳐 열릴 수 있으므로
+    // (on_key의 소비 순서와 대응) 목록을 먼저 그리고 기사를 그 위에 그린다.
+    if app.news_list.is_some() {
+        newslist::render(f, f.area(), app);
+    }
+
     // 기사 오버레이는 최상위 — 열려 있으면 on_key가 다른 오버레이 오픈을 막으므로
     // 실제로 겹치는 일은 없지만, 그려질 땐 가장 위에 온다.
     if app.article_view.is_some() {
@@ -150,8 +157,8 @@ mod tests {
             title: "아주 ".repeat(60),
             source: "테스트일보".into(),
             url: String::new(),
-            oid: String::new(),
-            aid: String::new(),
+            summary: String::new(),
+            published: String::new(),
         }]));
         let text = render_to_string(&app);
         assert!(text.contains("News:"));
@@ -339,8 +346,8 @@ mod tests {
             title: "타이틀A".into(),
             source: "테스트일보".into(),
             url: String::new(),
-            oid: String::new(),
-            aid: String::new(),
+            summary: String::new(),
+            published: String::new(),
         }]));
         let render = |app: &App| {
             let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
@@ -414,16 +421,14 @@ mod tests {
         let mut app = App::new(Default::default());
         app.lang = crate::ui::i18n::Lang::Ko;
         app.article_view = Some(crate::app::ArticleView {
-            loading: false,
-            text: Some(crate::model::ArticleText {
+            item: crate::model::NewsItem {
                 title: "제목텍스트".into(),
-                body: "본문 내용".into(),
-                org_url: String::new(),
-                reporter: String::new(),
-            }),
+                source: String::new(),
+                url: String::new(),
+                summary: "본문 내용".into(),
+                published: String::new(),
+            },
             scroll: 0,
-            oid: "1".into(),
-            aid: "2".into(),
         });
         let compact: String = render_to_string(&app)
             .chars()
@@ -455,6 +460,29 @@ mod tests {
         assert!(
             compact.contains("팁:"),
             "expected Korean tip label:\n{text}"
+        );
+    }
+
+    /// draw 최상위에서 목록이 렌더되고 제목이 보인다.
+    #[test]
+    fn news_list_renders_through_draw() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        app.apply(Update::News(vec![crate::model::NewsItem {
+            title: "목록항목제목".into(),
+            source: "출처".into(),
+            url: String::new(),
+            summary: String::new(),
+            published: String::new(),
+        }]));
+        app.news_list = Some(crate::app::NewsListState { cursor: 0 });
+        let compact: String = render_to_string(&app)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(
+            compact.contains("목록항목제목"),
+            "목록 제목이 보여야 한다:\n{compact}"
         );
     }
 }

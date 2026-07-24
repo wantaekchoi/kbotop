@@ -37,6 +37,8 @@ pub struct Labels {
     pub title_article: &'static str,     // 기사 오버레이 상단 타이틀
     pub article_hint: &'static str,      // 기사 오버레이 하단 조작 힌트
     pub article_read_full: &'static str, // 발췌 고지 + 원문 전체 보기 CTA
+    pub title_news_list: &'static str,   // 뉴스 목록 오버레이 타이틀
+    pub news_list_hint: &'static str,    // 뉴스 목록 하단 조작 힌트
     pub title_options: &'static str,     // "Options" / "옵션" (pane 탭 조합은 코드)
     pub title_open: &'static str,        // chooser 타이틀
     // 상태 문구
@@ -105,6 +107,8 @@ pub const EN: Labels = Labels {
     title_article: " Article (excerpt) ",
     article_hint: " Esc close · Enter/o full article · j/k scroll ",
     article_read_full: "Excerpt — read the full article: press Enter or o",
+    title_news_list: " News ",
+    news_list_hint: " Enter read · j/k move · Esc close ",
     title_options: "Options",
     title_open: "Open in browser",
     loading: "loading...",
@@ -177,6 +181,8 @@ pub const KO: Labels = Labels {
     title_article: " 기사 (발췌) ",
     article_hint: " Esc 닫기 · Enter/o 원문 전체 · j/k 스크롤 ",
     article_read_full: "발췌입니다 — 원문 전체는 Enter 또는 o를 누르세요",
+    title_news_list: " 뉴스 ",
+    news_list_hint: " Enter 읽기 · j/k 이동 · Esc 닫기 ",
     title_options: "옵션",
     title_open: "브라우저로 열기",
     loading: "불러오는 중...",
@@ -265,6 +271,8 @@ mod tests {
                 l.title_article,
                 l.article_hint,
                 l.article_read_full,
+                l.title_news_list,
+                l.news_list_hint,
                 l.title_options,
                 l.title_open,
                 l.loading,

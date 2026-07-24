@@ -55,7 +55,7 @@ Vim-style navigation; the in-app `?` help is the source of truth.
 - Games / Standings: `Tab`
 - Options picker (date / team / poll): `F2`
 - Team links (official site / goods shop): `o`
-- Open the news headline: `n`
+- Open the news list: `n` (then `Enter` on an item to read it)
 - Inspect pitches: `Left` / `Right` (live view)
 - Help: `?`
 - Quit: `q`
@@ -70,7 +70,7 @@ The UI speaks Korean on ko locales; force English with `--lang en`.
 
 A fan-made, unofficial tool. Data comes from Naver Sports' public (unofficial) endpoints, and all rights to it belong to the KBO and Naver. For personal, non-commercial use; we respond promptly to any rights-holder request.
 
-News is shown as a headline and a short excerpt only; the full text is left to the original-source link. Article copyright belongs to each publisher and reporter.
+News comes from each publisher's own RSS feed, showing only the headline and a short excerpt; the full text is left to the original-source link. Article copyright belongs to each publisher and reporter.
 
 ## License
 
