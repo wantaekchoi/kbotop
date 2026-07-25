@@ -6,14 +6,33 @@ use crate::model::{Game, LiveState, Standing};
 use crate::source::DataSource;
 
 const BASE: &str = "https://api-gw.sports.naver.com";
+// 네이버 API와 무관한 별개 도메인(프로젝트 저장소 raw) — `base`와 분리된
+// 필드로 둬야 `with_base()`로 API base를 로컬 테스트 서버로 바꿔도 이 URL의
+// 기본값(실 서비스 주소)이 실수로 같이 바뀌지 않는다.
+const TIPS_URL: &str = "https://raw.githubusercontent.com/wantaekchoi/kbotop/main/data/tips.txt";
 
 pub struct NaverSource {
     agent: ureq::Agent,
     user_agent: String,
+    base: String,
+    tips_url: String,
 }
 
 impl NaverSource {
     pub fn new() -> Self {
+        Self::build(BASE.to_string(), TIPS_URL.to_string())
+    }
+
+    /// 테스트 전용 생성자: API base와 tips URL을 모두 주어진 주소로
+    /// override한다(로컬 mock 서버를 가리키게 해 실네트워크 없이 HTTP 경로를
+    /// 검증하기 위함). `new()`의 기본 동작·기본 URL·공개 시그니처는 그대로다.
+    #[cfg(test)]
+    fn with_base(base: impl Into<String>) -> Self {
+        let base = base.into();
+        Self::build(base.clone(), base)
+    }
+
+    fn build(base: String, tips_url: String) -> Self {
         NaverSource {
             agent: ureq::AgentBuilder::new()
                 .timeout(std::time::Duration::from_secs(10))
@@ -22,6 +41,8 @@ impl NaverSource {
                 "kbotop/{} (+github.com/wantaekchoi/kbotop; personal use)",
                 env!("CARGO_PKG_VERSION")
             ),
+            base,
+            tips_url,
         }
     }
 
@@ -46,26 +67,29 @@ impl Default for NaverSource {
 impl DataSource for NaverSource {
     fn games(&self, date: &str) -> Result<Vec<Game>> {
         let url = format!(
-            "{BASE}/schedule/games?upperCategoryId=kbaseball&categoryId=kbo&fromDate={date}&toDate={date}"
+            "{}/schedule/games?upperCategoryId=kbaseball&categoryId=kbo&fromDate={date}&toDate={date}",
+            self.base
         );
         map::games_from_schedule(&self.get(&url)?)
     }
 
     fn live(&self, game: &Game) -> Result<LiveState> {
-        let url = format!("{BASE}/schedule/games/{}/relay", game.id);
+        let url = format!("{}/schedule/games/{}/relay", self.base, game.id);
         map::live_from_relay(&self.get(&url)?, game.home.clone(), game.away.clone())
     }
 
     fn standings(&self, year: u16) -> Result<Vec<Standing>> {
-        let url = format!("{BASE}/statistics/categories/kbo/seasons/{year}/teams");
+        let url = format!(
+            "{}/statistics/categories/kbo/seasons/{year}/teams",
+            self.base
+        );
         map::standings_from_json(&self.get(&url)?)
     }
 
     // 네이버 API가 아니라 프로젝트 저장소 raw지만, HTTP 클라이언트를 가진 유일한
     // 소스 객체라 여기 얹는다 — 별도 소스 추상화는 YAGNI.
     fn tips(&self) -> Result<Vec<String>> {
-        let raw =
-            self.get("https://raw.githubusercontent.com/wantaekchoi/kbotop/main/data/tips.txt")?;
+        let raw = self.get(&self.tips_url)?;
         Ok(crate::ui::tips::parse_remote(&raw).unwrap_or_default())
     }
 }
@@ -73,6 +97,7 @@ impl DataSource for NaverSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{GameStatus, Team};
     use crate::source::DataSource;
 
     #[test]
@@ -106,6 +131,238 @@ mod tests {
                 .ends_with(" (+github.com/wantaekchoi/kbotop; personal use)"),
             "unexpected UA suffix: {}",
             src.user_agent
+        );
+    }
+
+    /// 테스트 전용 최소 HTTP 응답기. `TcpListener::bind("127.0.0.1:0")`로 OS가
+    /// 할당한 포트에서 요청을 정확히 1개만 받아 고정 상태줄+`Content-Length`+
+    /// 본문을 돌려주고 스레드를 끝낸다. accept 대기·읽기에 각각 상한(5s)을 둬
+    /// 클라이언트가 끝내 연결하지 않는 버그가 나도 테스트 프로세스가 무기한
+    /// 블록되지 않는다. 새 크레이트(mockito 등) 없이 std만으로 구현.
+    struct LocalServer {
+        addr: std::net::SocketAddr,
+        request_rx: std::sync::mpsc::Receiver<Vec<u8>>,
+        handle: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl LocalServer {
+        fn spawn(status_line: impl Into<String>, body: impl Into<String>) -> Self {
+            let status_line = status_line.into();
+            let body = body.into();
+            let listener =
+                std::net::TcpListener::bind("127.0.0.1:0").expect("bind local test listener");
+            listener
+                .set_nonblocking(true)
+                .expect("set listener nonblocking");
+            let addr = listener.local_addr().expect("read local_addr");
+            let (tx, rx) = std::sync::mpsc::channel();
+            let handle = std::thread::spawn(move || {
+                use std::io::{Read, Write};
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                let mut accepted = None;
+                while std::time::Instant::now() < deadline {
+                    match listener.accept() {
+                        Ok((s, _)) => {
+                            accepted = Some(s);
+                            break;
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let Some(mut stream) = accepted else {
+                    return;
+                };
+                // 리스너의 nonblocking 플래그가 accept된 소켓에 그대로 상속되는
+                // 플랫폼(macOS 등)이 있다 — 그대로 두면 큰 본문(relay fixture,
+                // 200KB+)을 쓸 때 `write_all`이 `WouldBlock`을 재시도 없이
+                // 그대로 에러로 반환해 응답이 잘린 채 전송되는 flaky 실패가
+                // 난다. 요청 1개를 다루는 이 연결은 명시적으로 블로킹으로
+                // 되돌려 일반적인 blocking read/write를 보장한다.
+                stream.set_nonblocking(false).ok();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .ok();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    match stream.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            buf.extend_from_slice(&chunk[..n]);
+                            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let _ = tx.send(buf);
+                let response = format!(
+                    "{status_line}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            });
+            LocalServer {
+                addr,
+                request_rx: rx,
+                handle: Some(handle),
+            }
+        }
+
+        fn base_url(&self) -> String {
+            format!("http://{}", self.addr)
+        }
+
+        /// 캡처된 요청 헤더(첫 줄 포함)를 문자열로 돌려준다. 5초 안에 요청이
+        /// 오지 않으면 `None` — 여기서도 무기한 블록되지 않는다.
+        fn recv_request(&self) -> Option<String> {
+            self.request_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .ok()
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        }
+    }
+
+    impl Drop for LocalServer {
+        fn drop(&mut self) {
+            // 스레드는 요청 1개 처리 후 스스로 끝나므로 보통 즉시 join된다.
+            // accept 타임아웃(5s) 경로로 빠졌더라도 여기서 마저 기다려 좀비
+            // 스레드를 남기지 않는다.
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
+    fn dummy_game() -> Game {
+        Game {
+            id: "20260719KTLG02026".into(),
+            start: String::new(),
+            status: GameStatus::Live,
+            status_label: String::new(),
+            home: Team {
+                code: "LG".into(),
+                name: "LG".into(),
+            },
+            away: Team {
+                code: "KT".into(),
+                name: "KT".into(),
+            },
+            home_score: None,
+            away_score: None,
+        }
+    }
+
+    #[test]
+    fn games_parses_a_200_response_with_real_fixture_body() {
+        const SCHEDULE: &str = include_str!("../../../tests/fixtures/schedule_20260719.json");
+        let server = LocalServer::spawn("HTTP/1.1 200 OK", SCHEDULE);
+        let src = NaverSource::with_base(server.base_url());
+        let games = src.games("2026-07-19").unwrap();
+        assert!(!games.is_empty());
+    }
+
+    #[test]
+    fn standings_parses_a_200_response_with_real_fixture_body() {
+        const STANDINGS: &str = include_str!("../../../tests/fixtures/standings_2026.json");
+        let server = LocalServer::spawn("HTTP/1.1 200 OK", STANDINGS);
+        let src = NaverSource::with_base(server.base_url());
+        let standings = src.standings(2026).unwrap();
+        assert!(!standings.is_empty());
+    }
+
+    #[test]
+    fn live_parses_a_200_response_with_real_fixture_body() {
+        const RELAY: &str = include_str!("../../../tests/fixtures/relay_20260719KTLG.json");
+        let server = LocalServer::spawn("HTTP/1.1 200 OK", RELAY);
+        let src = NaverSource::with_base(server.base_url());
+        let live = src.live(&dummy_game()).unwrap();
+        assert!(!live.current_pitches.is_empty());
+    }
+
+    #[test]
+    fn tips_parses_a_200_response_body_into_lines() {
+        let body: String = (1..=12)
+            .map(|i| format!("tip {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let server = LocalServer::spawn("HTTP/1.1 200 OK", body);
+        let src = NaverSource::with_base(server.base_url());
+        let tips = src.tips().unwrap();
+        assert_eq!(tips.len(), 12);
+    }
+
+    #[test]
+    fn games_non_200_status_maps_to_err_not_panic() {
+        let server = LocalServer::spawn("HTTP/1.1 404 Not Found", "not found");
+        let src = NaverSource::with_base(server.base_url());
+        assert!(src.games("2026-07-19").is_err());
+    }
+
+    #[test]
+    fn standings_non_200_status_maps_to_err_not_panic() {
+        let server = LocalServer::spawn("HTTP/1.1 500 Internal Server Error", "boom");
+        let src = NaverSource::with_base(server.base_url());
+        assert!(src.standings(2026).is_err());
+    }
+
+    #[test]
+    fn live_non_200_status_maps_to_err_not_panic() {
+        let server = LocalServer::spawn("HTTP/1.1 404 Not Found", "not found");
+        let src = NaverSource::with_base(server.base_url());
+        assert!(src.live(&dummy_game()).is_err());
+    }
+
+    #[test]
+    fn tips_non_200_status_maps_to_err_not_panic() {
+        let server = LocalServer::spawn("HTTP/1.1 500 Internal Server Error", "boom");
+        let src = NaverSource::with_base(server.base_url());
+        assert!(src.tips().is_err());
+    }
+
+    #[test]
+    fn games_truncated_json_body_maps_to_err_not_panic() {
+        // 200 응답이지만 본문이 중간에 잘려 있다 — 관용 파싱이 패닉 없이
+        // Err로 떨어지는지 확인한다.
+        let server = LocalServer::spawn(
+            "HTTP/1.1 200 OK",
+            r#"{"result":{"games":[{"gameId":"g1","homeTeamCode":"LG""#,
+        );
+        let src = NaverSource::with_base(server.base_url());
+        assert!(src.games("2026-07-19").is_err());
+    }
+
+    #[test]
+    fn standings_truncated_json_body_maps_to_err_not_panic() {
+        let server = LocalServer::spawn(
+            "HTTP/1.1 200 OK",
+            r#"{"result":{"seasonTeamStats":[{"teamId":"WO""#,
+        );
+        let src = NaverSource::with_base(server.base_url());
+        assert!(src.standings(2026).is_err());
+    }
+
+    #[test]
+    fn user_agent_header_is_actually_sent_over_the_wire() {
+        let server = LocalServer::spawn("HTTP/1.1 200 OK", "{}");
+        let src = NaverSource::with_base(server.base_url());
+        // 파싱 성공 여부는 무관 — 요청이 실제로 나갔는지, 그 안의 UA 헤더가
+        // `new()`가 세팅하는 값과 일치하는지만 본다(기존
+        // `user_agent_matches_required_format`은 문자열 포맷만 보고 실제
+        // 전송은 보지 않았다).
+        let _ = src.games("2026-07-19");
+        let request = server
+            .recv_request()
+            .expect("local server never received a request");
+        let expected_header = format!("user-agent: {}", src.user_agent).to_lowercase();
+        assert!(
+            request.to_lowercase().contains(&expected_header),
+            "request head missing expected User-Agent header.\nrequest head:\n{request}"
         );
     }
 }

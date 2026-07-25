@@ -5,6 +5,11 @@
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-25
+
+### Changed
+- 네이버 API 통신 계층에 테스트를 채웠습니다. 응답이 실패하거나 본문이 깨져 와도 앱이 죽지 않고 오류로 처리하는 것을 자동으로 검증합니다. 화면과 동작은 그대로입니다.
+
 ## [0.12.0] - 2026-07-25
 
 ### Fixed
@@ -127,7 +132,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/wantaekchoi/kbotop/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/wantaekchoi/kbotop/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/wantaekchoi/kbotop/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/wantaekchoi/kbotop/compare/v0.9.0...v0.10.0
