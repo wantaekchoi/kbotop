@@ -207,19 +207,27 @@ fn render_scoreline(
     );
 }
 
+/// "HH:MM:SS" → 자정 기준 경과 초. 게임 시작 시각(elapsed_label)과 예정 경기
+/// 카운트다운(games.rs::scheduled_eta_hm, v0.15 A-3)이 공유하는 시:분:초 파서 —
+/// 두 곳 다 같은 "HH:MM:SS" 원문 포맷을 다루므로 파싱 자체(자릿수·범위 검증)는
+/// 공유하되, "자정 넘김을 어떻게 보정할지"는 호출부마다 다르다(elapsed_label은
+/// 항상 미래 방향이라 +24h 고정 보정이 안전하지만, A-3는 날짜가 있는 절대시각
+/// 비교라 이 값만으로 보정하면 안 된다 — games.rs 쪽 주석 참고). 파싱 실패는
+/// None(관용 — 표시 생략).
+pub(crate) fn parse_hms_secs(hms: &str) -> Option<i64> {
+    let mut it = hms.split(':');
+    let h: i64 = it.next()?.parse().ok()?;
+    let m: i64 = it.next()?.parse().ok()?;
+    let s: i64 = it.next().unwrap_or("0").parse().ok()?;
+    ((0..24).contains(&h) && (0..60).contains(&m) && (0..60).contains(&s))
+        .then_some(h * 3600 + m * 60 + s)
+}
+
 /// 경기 시작("....THH:MM:SS")과 투구 시각("HH:MM:SS")의 차 → "(+H:MM)".
 /// 자정 넘김(투구 < 시작)은 +24h 보정. 파싱 실패는 None(관용 — 표시 생략).
 fn elapsed_label(game_start: &str, pitch_hms: &str) -> Option<String> {
-    fn secs(hms: &str) -> Option<i64> {
-        let mut it = hms.split(':');
-        let h: i64 = it.next()?.parse().ok()?;
-        let m: i64 = it.next()?.parse().ok()?;
-        let s: i64 = it.next().unwrap_or("0").parse().ok()?;
-        ((0..24).contains(&h) && (0..60).contains(&m) && (0..60).contains(&s))
-            .then_some(h * 3600 + m * 60 + s)
-    }
-    let start = secs(game_start.split('T').nth(1)?)?;
-    let pitch = secs(pitch_hms)?;
+    let start = parse_hms_secs(game_start.split('T').nth(1)?)?;
+    let pitch = parse_hms_secs(pitch_hms)?;
     let mut d = pitch - start;
     if d < 0 {
         d += 24 * 3600;

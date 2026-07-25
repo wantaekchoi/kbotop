@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-25
+
+### Added
+- 지금 보고 있는 화면이 실시간인지 알 수 있게 시간 정보를 추가했습니다 — 헤더에 현재 시각(KST)과 데이터를 마지막으로 받은 지 얼마나 됐는지("12초 전"), 경기 목록의 예정 경기에는 시작까지 남은 시간("1시간 20분 후").
+
+### Fixed
+- 기사 오버레이의 스크롤 범위가 실제 줄바꿈과 정확히 맞아떨어집니다. 이전에는 빈 곳까지 스크롤되거나, 좁은 터미널에서는 반대로 마지막 줄에 닿지 못하는 경우가 있었습니다.
+
 ## [0.14.0] - 2026-07-25
 
 ### Fixed
@@ -140,7 +148,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/wantaekchoi/kbotop/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/wantaekchoi/kbotop/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/wantaekchoi/kbotop/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/wantaekchoi/kbotop/compare/v0.11.0...v0.12.0

@@ -148,6 +148,11 @@ pub struct App {
     /// UTC epoch 초(main.rs가 tick마다 갱신). 초보용 팁 회전(tips::current)의
     /// 입력으로만 쓰인다 — 실제 벽시계와 무관하게 결정적으로 테스트 가능하다.
     pub now_secs: u64,
+    /// 마지막 "성공" 갱신(Games/Standings/Live 반영) 시각의 now_secs 스냅샷
+    /// (v0.15 A-2). None = 아직 한 번도 성공한 적 없음. `stale`(이진값)과 달리
+    /// "몇 초 전"까지 보여주기 위한 값 — apply()가 Error/Fetching에서는
+    /// 갱신하지 않는다(660행 근처 주석과 같은 철학: 시도 신호일 뿐 회복이 아니다).
+    pub last_update_secs: Option<u64>,
     /// KBO 뉴스 헤드라인(부가 기능). 하단 티커가 짝수 분에 이 목록에서 순환
     /// 표시하고, 비어 있으면 항상 Tip으로 우아하게 저하한다.
     pub news: Vec<NewsItem>,
@@ -204,6 +209,7 @@ impl App {
             live_pitch_sel: None,
             fav_code: None,
             now_secs: 0,
+            last_update_secs: None,
             news: vec![],
             options: None,
             poll_choice: 5,
@@ -687,6 +693,10 @@ impl App {
         // 옛 에러가 영구히 남는 걸 막는다.
         if !matches!(up, Update::Error(_)) {
             self.last_error = None;
+            // A-2: 여기 도달했다는 것은 up이 Games/Standings/Live/Error 중 하나이고
+            // (Fetching/News/Tips는 위에서 이미 early return) 지금 Error가 아니라는
+            // 뜻이다 — 즉 실제 데이터가 반영되는 성공 갱신에서만 스냅샷을 찍는다.
+            self.last_update_secs = Some(self.now_secs);
         }
         match up {
             Update::Games(g) => {
@@ -1024,6 +1034,53 @@ mod tests {
         app.apply(crate::poller::Update::Fetching);
         assert!(app.stale);
         assert_eq!(app.last_error.as_deref(), Some("boom"));
+    }
+
+    /// A-2: 성공 갱신(Games)이 now_secs 스냅샷으로 last_update_secs를 채운다.
+    #[test]
+    fn successful_data_update_sets_last_update_secs_to_now() {
+        let mut app = App::new(Default::default());
+        app.now_secs = 1_800_000_000;
+        assert_eq!(app.last_update_secs, None);
+        app.apply(crate::poller::Update::Games(vec![game("a")]));
+        assert_eq!(app.last_update_secs, Some(1_800_000_000));
+    }
+
+    /// A-2: Error는 "시도"가 아니라 실패 신호지만, Games/Live처럼 실제 데이터를
+    /// 반영하는 게 아니므로 last_update_secs를 건드리면 안 된다(stale과 짝).
+    #[test]
+    fn error_update_does_not_set_last_update_secs() {
+        let mut app = App::new(Default::default());
+        app.now_secs = 1_800_000_000;
+        app.apply(crate::poller::Update::Error("boom".into()));
+        assert_eq!(app.last_update_secs, None);
+    }
+
+    /// A-2: Fetching은 "시도 신호일 뿐 회복이 아니다"(660행 근처 주석과 동일
+    /// 철학) — last_update_secs도 stale/last_error와 같은 생명주기를 따른다.
+    #[test]
+    fn fetching_update_does_not_set_last_update_secs() {
+        let mut app = App::new(Default::default());
+        app.now_secs = 1_800_000_000;
+        app.apply(crate::poller::Update::Fetching);
+        assert_eq!(app.last_update_secs, None);
+    }
+
+    /// 한 번 성공 갱신을 찍은 뒤 도착하는 Fetching 신호가 그 값을 지우거나
+    /// 건드리지 않아야 한다(다음 폴 사이클 진행 중에도 "마지막 성공"은 유지).
+    #[test]
+    fn last_update_secs_survives_a_later_fetching_signal() {
+        let mut app = App::new(Default::default());
+        app.now_secs = 1_800_000_000;
+        app.apply(crate::poller::Update::Games(vec![]));
+        assert_eq!(app.last_update_secs, Some(1_800_000_000));
+        app.now_secs = 1_800_000_100;
+        app.apply(crate::poller::Update::Fetching);
+        assert_eq!(
+            app.last_update_secs,
+            Some(1_800_000_000),
+            "Fetching must not touch last_update_secs"
+        );
     }
 
     #[test]

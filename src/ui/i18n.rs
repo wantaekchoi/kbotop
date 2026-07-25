@@ -110,6 +110,15 @@ pub struct Labels {
     pub date_days_fmt_minus: &'static str, // "-{n} days" / "-{n}일" 의 suffix: "days"/"일"
     pub team_none: &'static str,
     pub poll_suffix: &'static str, // "s live poll" / "초 폴링"
+    // 헤더 시간 신뢰도 3종(v0.15). A-2/A-3 둘 다 poll_suffix와 같은 관례로
+    // "{n}{suffix}" 융합 조립한다 — 언어별 공백 유무는 코드 분기가 아니라
+    // suffix 문자열 자체에 미리 넣어 둔다(예: en은 숫자 뒤 공백 있음, ko/ja는
+    // 없음). 시·분을 함께 쓸 때(remaining_*)는 "{h}{remaining_hour_suffix}{m}{remaining_min_suffix}"
+    // 순서로 이어붙인다.
+    pub updated_secs_suffix: &'static str, // "s ago" / "초 전" / "秒前" (A-2, 60초 미만)
+    pub updated_min_suffix: &'static str,  // "m ago" / "분 전" / "分前" (A-2, 60초 이상)
+    pub remaining_hour_suffix: &'static str, // "h " / "시간 " / "時間" (A-3, 시 단위 접미)
+    pub remaining_min_suffix: &'static str, // "m to go" / "분 후" / "分後" (A-3, 분 단위 접미 — "후"류 종결어 포함)
 }
 
 pub const EN: Labels = Labels {
@@ -208,6 +217,10 @@ pub const EN: Labels = Labels {
     date_days_fmt_minus: "days",
     team_none: "None (clear)",
     poll_suffix: "s live poll",
+    updated_secs_suffix: "s ago",
+    updated_min_suffix: "m ago",
+    remaining_hour_suffix: "h ",
+    remaining_min_suffix: "m to go",
 };
 
 pub const KO: Labels = Labels {
@@ -306,6 +319,10 @@ pub const KO: Labels = Labels {
     date_days_fmt_minus: "일",
     team_none: "해제 (없음)",
     poll_suffix: "초 폴링",
+    updated_secs_suffix: "초 전",
+    updated_min_suffix: "분 전",
+    remaining_hour_suffix: "시간 ",
+    remaining_min_suffix: "분 후",
 };
 
 pub const JA: Labels = Labels {
@@ -404,6 +421,10 @@ pub const JA: Labels = Labels {
     date_days_fmt_minus: "日",
     team_none: "解除 (なし)",
     poll_suffix: "秒更新",
+    updated_secs_suffix: "秒前",
+    updated_min_suffix: "分前",
+    remaining_hour_suffix: "時間",
+    remaining_min_suffix: "分後",
 };
 
 pub fn labels(lang: Lang) -> &'static Labels {
@@ -528,6 +549,10 @@ mod tests {
                 l.date_days_fmt_minus,
                 l.team_none,
                 l.poll_suffix,
+                l.updated_secs_suffix,
+                l.updated_min_suffix,
+                l.remaining_hour_suffix,
+                l.remaining_min_suffix,
             ] {
                 assert!(!s.trim().is_empty());
             }

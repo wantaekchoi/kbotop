@@ -10,6 +10,62 @@ use ratatui::{
     Frame,
 };
 
+/// KST(UTC+9) 고정 오프셋 — header.rs의 A-1 결정과 동일 근거·관례(새 크레이트
+/// 금지 + dateutil::kst_days와의 일관성). Game.start("YYYY-MM-DDTHH:MM:SS")도
+/// 이 프로젝트 관례상 KST 벽시계로 간주한다(main.rs/RSS 파서와 동일 가정).
+const KST_OFFSET_SECS: i64 = 9 * 3600;
+
+/// Scheduled 경기의 시작까지 남은 시간을 (시, 분)으로 계산한다(v0.15 A-3).
+/// `Game.start`는 날짜까지 포함하므로(live.rs::elapsed_label이 다루는 투구
+/// 시각과 달리) "시:분만 보고 자정이면 +24h"류 보정을 하지 않는다 — 그 보정은
+/// 날짜 정보가 없을 때만 안전한 휴리스틱이고, 여기서는 절대 UTC epoch로
+/// 정확히 변환해 직접 뺄셈하는 편이 더 정확하고 "이미 지난 시각은 표시하지
+/// 않는다"(설계 §2 A-3, 억지 음수 표기 금지) 요구도 자연스럽게 만족한다.
+/// 파싱 실패·과거 시각은 None(무패닉·표시 생략 — 기존 관용 원칙).
+fn scheduled_eta_hm(now_secs: u64, start: &str) -> Option<(i64, i64)> {
+    let (date, time) = start.split_once('T')?;
+    let mut d = date.splitn(3, '-');
+    let y: i64 = d.next()?.parse().ok()?;
+    let m: i64 = d.next()?.parse().ok()?;
+    let day: i64 = d.next()?.parse().ok()?;
+    // 연도까지 범위를 막는다 — 월·일만 검사하면 서버가 보낸 터무니없는 연도가
+    // 아래 `days * 86400`에서 오버플로한다(debug 빌드는 패닉, release는 wrap해
+    // 말도 안 되는 카운트다운). 렌더 경로엔 catch_unwind가 없으므로(app.rs 주석
+    // 참고) 여기서 걸러 표시를 생략하는 게 맞다.
+    if !(1970..=9999).contains(&y) || !(1..=12).contains(&m) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let days = crate::dateutil::days_from_civil(y, m, day);
+    // HH:MM:SS 파싱은 live.rs와 공유(같은 원문 포맷의 시:분:초 자릿수·범위 검증).
+    let time_of_day = super::live::parse_hms_secs(time)?;
+    let target_utc = days * 86400 + time_of_day - KST_OFFSET_SECS;
+    let remaining = target_utc - now_secs as i64;
+    if remaining <= 0 {
+        return None;
+    }
+    // 올림 — "0분 후"처럼 임박한 경기를 0으로 보여주는 대신 최소 1분으로 반올림.
+    // i64::div_ceil은 아직 unstable(int_roundings)이라 직접 계산한다(remaining
+    // > 0이 위에서 이미 보장돼 있어 이 식이 안전하다).
+    let total_min = (remaining + 59) / 60;
+    Some((total_min / 60, total_min % 60))
+}
+
+/// (시, 분) → "1시간 20분 후"류 완성형(i18n Labels 경유, poll_suffix와 동일한
+/// "{n}{suffix}" 융합 조립 — 언어별 공백 유무는 suffix 문자열 자체가 결정).
+fn scheduled_eta_label(l: &Labels, hours: i64, mins: i64) -> String {
+    if hours > 0 {
+        format!(
+            "{hours}{}{mins}{}",
+            l.remaining_hour_suffix, l.remaining_min_suffix
+        )
+    } else {
+        format!("{mins}{}", l.remaining_min_suffix)
+    }
+}
+
+/// Status 열의 폭(widths 배열과 A-3 ellipsize 예산이 공유하는 단일 진실).
+const STATUS_COL_WIDTH: usize = 14;
+
 fn status_tag(status: GameStatus, l: &Labels, preset: &str) -> (&'static str, Style) {
     match status {
         GameStatus::Live => (
@@ -65,6 +121,19 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
                 (Some(a), Some(h)) => format!("{a} : {h}"),
                 _ => "— : —".to_string(),
             };
+            // A-3: Scheduled 경기는 상태 칸에 "남은 시간"을 보여준다 — 서버가
+            // 주는 status_label은 경기 전엔 대개 정보가 없다(빈 값·일반 문구).
+            // 계산 실패(파싱 오류) 또는 이미 지난 시각(데이터 지연)이면 조용히
+            // 기존 status_label로 저하한다(무패닉·§15 오버플로 정책과 같은 관용).
+            let status_cell = if g.status == GameStatus::Scheduled {
+                scheduled_eta_hm(app.now_secs, &g.start)
+                    .map(|(h, m)| {
+                        super::text::ellipsize(&scheduled_eta_label(l, h, m), STATUS_COL_WIDTH)
+                    })
+                    .unwrap_or_else(|| g.status_label.clone())
+            } else {
+                g.status_label.clone()
+            };
             Row::new(vec![
                 Cell::from(Span::styled(tag, tag_style)),
                 Cell::from(Span::styled(
@@ -76,7 +145,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
                     g.home.name.as_str(),
                     team_badge_style(&g.home.code),
                 )),
-                Cell::from(g.status_label.as_str()),
+                Cell::from(status_cell),
             ])
         })
         .collect();
@@ -86,7 +155,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         Constraint::Min(10),
         Constraint::Length(9),
         Constraint::Min(10),
-        Constraint::Length(14),
+        Constraint::Length(STATUS_COL_WIDTH as u16),
     ];
 
     let highlight = match theme::accent_for(
@@ -296,5 +365,174 @@ mod tests {
         let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
         assert!(compact.contains("경기2026-05-29"));
         assert!(compact.contains("원정") && compact.contains("홈") && compact.contains("상태"));
+    }
+
+    // ---- A-3: 예정 경기 카운트다운 -------------------------------------
+
+    /// 2026-07-19T00:00:00 KST의 UTC epoch초. `dateutil::days_from_civil`은
+    /// 이미 알려진 경계값(윤년·연도 롤오버)으로 별도 검증돼 있으므로(dateutil.rs
+    /// 자체 테스트) 여기서는 그 결과를 그대로 재사용해 "KST 자정"이라는 기준
+    /// 시각을 만든다 — 매직 넘버를 하드코딩하지 않는다.
+    fn midnight_kst_utc(y: i64, m: i64, d: i64) -> i64 {
+        crate::dateutil::days_from_civil(y, m, d) * 86400 - KST_OFFSET_SECS
+    }
+
+    fn scheduled_game(id: &str, start: &str) -> crate::model::Game {
+        let mut g = game(id);
+        g.status = GameStatus::Scheduled;
+        g.start = start.into();
+        g.status_label = "".into();
+        g
+    }
+
+    /// 미래 시각(1시간 20분 후) → (1, 20).
+    #[test]
+    fn scheduled_eta_hm_future_time_returns_hours_and_minutes() {
+        let now = midnight_kst_utc(2026, 7, 19) as u64 + 18 * 3600; // 18:00 KST
+        let start = "2026-07-19T19:20:00"; // 19:20 KST = 1h20m 후
+        assert_eq!(scheduled_eta_hm(now, start), Some((1, 20)));
+    }
+
+    /// 60초 미만으로 임박해도 최소 1분으로 올림한다("0분 후" 금지).
+    #[test]
+    fn scheduled_eta_hm_rounds_up_to_at_least_one_minute() {
+        let now = midnight_kst_utc(2026, 7, 19) as u64 + 18 * 3600;
+        let start = "2026-07-19T18:00:30"; // 30초 후
+        assert_eq!(scheduled_eta_hm(now, start), Some((0, 1)));
+    }
+
+    /// 이미 지난 시각(Scheduled인데 시작이 과거) → None(억지 음수 표기 금지).
+    #[test]
+    fn scheduled_eta_hm_returns_none_for_a_past_start() {
+        let now = midnight_kst_utc(2026, 7, 19) as u64 + 18 * 3600;
+        let start = "2026-07-19T17:59:00"; // 1분 전(과거)
+        assert_eq!(scheduled_eta_hm(now, start), None);
+    }
+
+    /// 정각(0초 남음)도 "이미 지남" 취급 — 경계값.
+    #[test]
+    fn scheduled_eta_hm_returns_none_when_exactly_now() {
+        let now = midnight_kst_utc(2026, 7, 19) as u64 + 18 * 3600;
+        let start = "2026-07-19T18:00:00";
+        assert_eq!(scheduled_eta_hm(now, start), None);
+    }
+
+    /// 날짜가 다음날로 넘어가는 경우(심야 더블헤더 2차전 등)도 절대시각
+    /// 비교라 자연스럽게 맞는다 — live.rs식 "시:분만 보고 자정이면 +24h"
+    /// 보정 없이도 정확하다.
+    #[test]
+    fn scheduled_eta_hm_handles_a_start_after_midnight_the_next_day() {
+        let now = midnight_kst_utc(2026, 7, 19) as u64 + 23 * 3600 + 50 * 60; // 23:50 KST
+        let start = "2026-07-20T00:30:00"; // 다음날 00:30 KST = 40분 후
+        assert_eq!(scheduled_eta_hm(now, start), Some((0, 40)));
+    }
+
+    /// 파싱 실패(형식 오류·T 없음·월 범위 밖 등)는 패닉 없이 None.
+    #[test]
+    fn scheduled_eta_hm_parse_failures_do_not_panic() {
+        let now = midnight_kst_utc(2026, 7, 19) as u64;
+        for bad in ["garbage", "2026-07-19", "2026-13-40T18:00:00", ""] {
+            assert_eq!(scheduled_eta_hm(now, bad), None, "input: {bad}");
+        }
+    }
+
+    /// 연도는 서버가 보내는 값이라 터무니없이 클 수 있다. 범위를 안 막으면
+    /// `days * 86400`이 오버플로해 debug 빌드가 렌더 도중 패닉했다(최종 리뷰
+    /// 지적) — 렌더 경로엔 catch_unwind가 없으니 표시 생략으로 떨어져야 한다.
+    #[test]
+    fn scheduled_eta_hm_absurd_year_is_dropped_instead_of_overflowing() {
+        let now = midnight_kst_utc(2026, 7, 19) as u64;
+        for bad in [
+            "999999999999-01-01T00:00:00",
+            "92233720368547758-01-01T00:00:00",
+            "63113904-01-01T00:00:00",
+            "0000-01-01T00:00:00",
+            "-1-01-01T00:00:00",
+        ] {
+            assert_eq!(scheduled_eta_hm(now, bad), None, "input: {bad}");
+        }
+    }
+
+    /// (시,분) → 완성형 문자열: 설계 §2 A-3의 예시 "1시간 20분 후"와 정확히 일치.
+    #[test]
+    fn scheduled_eta_label_matches_the_design_example_in_korean() {
+        let l = crate::ui::i18n::labels(crate::ui::i18n::Lang::Ko);
+        assert_eq!(scheduled_eta_label(l, 1, 20), "1시간 20분 후");
+    }
+
+    /// 시가 0이면 분만 보여준다("20분 후", 시간 부분 생략).
+    #[test]
+    fn scheduled_eta_label_omits_hour_part_when_zero() {
+        let l = crate::ui::i18n::labels(crate::ui::i18n::Lang::Ko);
+        assert_eq!(scheduled_eta_label(l, 0, 20), "20분 후");
+    }
+
+    /// EN/JA도 각 언어 완성형으로 조립된다(i18n 경유 확인).
+    #[test]
+    fn scheduled_eta_label_renders_in_english_and_japanese() {
+        let en = crate::ui::i18n::labels(crate::ui::i18n::Lang::En);
+        assert_eq!(scheduled_eta_label(en, 1, 20), "1h 20m to go");
+        let ja = crate::ui::i18n::labels(crate::ui::i18n::Lang::Ja);
+        assert_eq!(scheduled_eta_label(ja, 1, 20), "1時間20分後");
+    }
+
+    /// 렌더 통합: Scheduled 경기 목록에 카운트다운 문자열이 실제로 나타난다.
+    #[test]
+    fn render_shows_countdown_for_a_scheduled_game() {
+        let mut app = App::new(Default::default());
+        app.now_secs = midnight_kst_utc(2026, 7, 19) as u64 + 18 * 3600;
+        app.apply(Update::Games(vec![scheduled_game(
+            "g",
+            "2026-07-19T19:20:00",
+        )]));
+        let text = render_to_string(&app);
+        assert!(
+            text.contains("1h 20m to go"),
+            "countdown missing from rendered table:\n{text}"
+        );
+    }
+
+    /// 렌더 통합: 이미 지난 시작 시각이면 카운트다운 대신 기존 status_label로
+    /// 조용히 저하한다(빈 문자열이어도 패닉 없음).
+    #[test]
+    fn render_falls_back_to_status_label_for_a_past_scheduled_start() {
+        let mut app = App::new(Default::default());
+        app.now_secs = midnight_kst_utc(2026, 7, 19) as u64 + 18 * 3600;
+        let mut g = scheduled_game("g", "2026-07-19T17:00:00"); // 1시간 전(과거)
+        g.status_label = "예정".into();
+        app.apply(Update::Games(vec![g]));
+        let text = render_to_string(&app);
+        assert!(
+            !text.contains("to go"),
+            "must not show a bogus countdown:\n{text}"
+        );
+        // ratatui는 전각(2-width) 문자 뒤에 placeholder 공백 셀을 채워 넣으므로
+        // (다른 games.rs 테스트와 동일 사유) 공백을 제거하고 검사한다.
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            compact.contains("예정"),
+            "must fall back to status_label:\n{text}"
+        );
+    }
+
+    /// 렌더 통합: start가 파싱 불가능해도 패닉하지 않고 status_label로 저하한다.
+    #[test]
+    fn render_does_not_panic_when_scheduled_start_is_unparseable() {
+        let mut app = App::new(Default::default());
+        let mut g = scheduled_game("g", "garbage");
+        g.status_label = "TBD".into();
+        app.apply(Update::Games(vec![g]));
+        let text = render_to_string(&app);
+        assert!(text.contains("TBD"));
+    }
+
+    /// 렌더 통합: Live 등 Scheduled가 아닌 경기는 기존처럼 status_label 그대로다
+    /// (카운트다운 로직이 다른 상태를 건드리지 않는다는 회귀 방지).
+    #[test]
+    fn render_leaves_non_scheduled_status_label_untouched() {
+        let mut app = App::new(Default::default());
+        app.apply(Update::Games(vec![game("g")])); // status: Live, status_label: ""
+        let text = render_to_string(&app);
+        assert!(!text.contains("to go"));
     }
 }
