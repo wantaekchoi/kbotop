@@ -55,3 +55,33 @@ jobs:
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # Verifies the `rust-version` declared in Cargo.toml actually builds. v0.11
+  # shipped with a declared MSRV (1.75) that didn't match the real lower
+  # bound (1.88) and it was only caught in release review — crates.io
+  # publishes this metadata immutably, so a miss means a patch release.
+  # Parses the version from Cargo.toml instead of hardcoding it here so the
+  # declaration and the check can never drift apart again. Only `cargo
+  # check` runs (no clippy/fmt/test): the MSRV toolchain may lack lints that
+  # stable has, and those are already covered by the `check` job above.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: read MSRV from Cargo.toml
+        id: msrv
+        run: |
+          version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/^rust-version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo check (MSRV)
+        # RUSTUP_TOOLCHAIN, not just the installed default: rust-toolchain.toml
+        # pins `channel = "stable"` and that file outranks `rustup default`, so
+        # without this override the job silently checks with stable and would
+        # stay green even if the declared MSRV were wrong again.
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
+        run: cargo check --locked --all-targets

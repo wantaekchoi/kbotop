@@ -5,6 +5,11 @@
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-25
+
+### Fixed
+- 설정 화면(`F9`)의 응원 팀이 `WO` 같은 내부 코드 대신 **팀 이름**으로 표시됩니다(`WO  키움 히어로즈`). 코드가 팀 이름과 다른 경우가 많아(키움=WO, KIA=HT, SSG=SK, 두산=OB) 무슨 팀인지 알아보기 어려웠습니다. 저장되는 설정 값은 그대로라 기존 `config.toml`은 영향받지 않습니다.
+
 ## [0.11.0] - 2026-07-25
 
 ### Changed
@@ -122,7 +127,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/wantaekchoi/kbotop/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/wantaekchoi/kbotop/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/wantaekchoi/kbotop/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/wantaekchoi/kbotop/compare/v0.8.0...v0.9.0

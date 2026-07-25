@@ -520,10 +520,17 @@ impl App {
     /// 설정 항목(종류, 라벨, 현재값 표시). E(언어)가 항목을 더 확장할 수 있다.
     pub fn settings_rows(&self) -> Vec<(SettingKind, &'static str, String)> {
         let l = self.labels();
-        let team = self
-            .fav_code
-            .clone()
-            .unwrap_or_else(|| l.team_none.to_string());
+        // team_items(options.rs)가 (라벨, 코드)의 단일 진실 — F2 픽커·change_setting과
+        // 같은 출처를 써서 화면마다 팀 표기가 갈리는 것을 막는다. 모르는 코드(구버전
+        // config 등)는 라벨을 못 찾으므로 코드 문자열 그대로 폴백한다(패닉·빈 값 금지).
+        let team = match &self.fav_code {
+            Some(code) => crate::ui::options::team_items(l)
+                .into_iter()
+                .find(|(_, c)| c.as_deref() == Some(code.as_str()))
+                .map(|(label, _)| label)
+                .unwrap_or_else(|| code.clone()),
+            None => l.team_none.to_string(),
+        };
         vec![
             (SettingKind::Team, l.set_team, team),
             (
@@ -1450,6 +1457,41 @@ mod tests {
         app.on_key(KeyCode::F(9)); // 커서 0 = 팀
         app.on_key(KeyCode::Right);
         assert!(app.fav_code.is_some(), "→ selects a team");
+    }
+
+    /// F9 Team 행 값은 KBO 코드가 아니라 team_items의 팀명 라벨을 보여준다
+    /// (순위표=`키움`, F2 픽커=`WO  키움 히어로즈`와 표기를 맞춘다).
+    #[test]
+    fn settings_rows_team_value_shows_team_name_not_just_code() {
+        let mut app = App::new(Default::default());
+        app.fav_code = Some("WO".to_string());
+        let rows = app.settings_rows();
+        assert!(matches!(rows[0].0, SettingKind::Team));
+        assert_ne!(rows[0].2, "WO", "code alone must not be the display value");
+        assert!(
+            rows[0].2.contains("키움"),
+            "team value must include the team name, got {:?}",
+            rows[0].2
+        );
+    }
+
+    /// team_items에 없는(구버전 config 등) 모르는 코드는 패닉 없이 코드
+    /// 문자열 그대로 폴백한다.
+    #[test]
+    fn settings_rows_team_value_falls_back_to_unknown_code() {
+        let mut app = App::new(Default::default());
+        app.fav_code = Some("XX".to_string());
+        let rows = app.settings_rows();
+        assert_eq!(rows[0].2, "XX");
+    }
+
+    /// fav_code가 None이면 기존대로 team_none 라벨을 보여준다.
+    #[test]
+    fn settings_rows_team_value_none_shows_team_none_label() {
+        let app = App::new(Default::default());
+        assert!(app.fav_code.is_none());
+        let rows = app.settings_rows();
+        assert_eq!(rows[0].2, app.labels().team_none);
     }
 
     /// 설정 항목에 테마 프리셋·액센트·언어 행이 추가돼 있다(팀·폴링 뒤 순서).
