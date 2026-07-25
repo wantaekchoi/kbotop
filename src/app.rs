@@ -743,6 +743,27 @@ impl App {
             None
         }
     }
+
+    /// "이번 프레임이 보여주는 화면이 무엇인가"를 식별하는 최소 키(screen, tab).
+    /// main.rs의 렌더 루프가 직전 프레임의 키와 비교해 값이 달라졌을 때만
+    /// `term.clear()`를 호출한다 — ratatui 0.30에서 화면 전환(Live↔List,
+    /// Games↔Standings) 시 내부 버퍼와 실제 터미널이 어긋나 이전 화면의 착색
+    /// 셀이 지워지지 않는 문제(ADR-0007)를 잡기 위함이다.
+    ///
+    /// 오버레이(help/settings/article/newslist/options/link_picker)는 이미 `Clear`
+    /// 위젯으로 정상 처리되므로 의도적으로 이 키에 포함하지 않는다 — 포함하면
+    /// 오버레이를 열고 닫을 때마다 불필요한 전체 화면 클리어(깜빡임)가 생긴다.
+    pub fn view_key(&self) -> (u8, u8) {
+        let screen = match self.screen {
+            Screen::List => 0,
+            Screen::Live { .. } => 1,
+        };
+        let tab = match self.tab {
+            Tab::Games => 0,
+            Tab::Standings => 1,
+        };
+        (screen, tab)
+    }
 }
 
 #[cfg(test)]
@@ -776,6 +797,62 @@ mod tests {
         assert_eq!(app.tab, Tab::Games);
         app.on_key(KeyCode::Tab);
         assert_eq!(app.tab, Tab::Standings);
+    }
+
+    /// view_key는 main.rs가 화면 전환 시에만 term.clear()를 부르기 위한
+    /// 최소 식별자다 — Tab으로 Games↔Standings를 오가면 값이 달라져야 한다.
+    #[test]
+    fn view_key_changes_when_tab_switches() {
+        let mut app = App::new(Default::default());
+        let before = app.view_key();
+        app.on_key(KeyCode::Tab);
+        let after = app.view_key();
+        assert_ne!(before, after);
+    }
+
+    /// List↔Live 전환도 view_key가 달라져야 한다(오늘 라이브 배지 잔상 버그의
+    /// 실제 전환 축).
+    #[test]
+    fn view_key_changes_when_entering_and_leaving_live() {
+        let mut app = App::new(Default::default());
+        app.apply(crate::poller::Update::Games(vec![game("a")]));
+        let list_key = app.view_key();
+        app.on_key(KeyCode::Enter);
+        assert!(matches!(app.screen, Screen::Live { .. }));
+        let live_key = app.view_key();
+        assert_ne!(list_key, live_key);
+
+        // Live 화면에서 Tab을 누르면 List로 나가면서 탭도 바뀐다(위 on_key 주석
+        // 참고) — view_key도 다시 달라져야 한다.
+        app.on_key(KeyCode::Tab);
+        assert!(matches!(app.screen, Screen::List));
+        let after_tab = app.view_key();
+        assert_ne!(live_key, after_tab);
+    }
+
+    /// 오버레이(help/options/link_picker/settings)는 Clear 위젯으로 이미 정상
+    /// 처리되므로 view_key에 포함되면 안 된다 — 포함되면 오버레이를 열고 닫을
+    /// 때마다 main.rs가 불필요하게 term.clear()를 호출해 깜빡임이 생긴다.
+    #[test]
+    fn view_key_is_unaffected_by_overlays() {
+        let mut app = App::new(Default::default());
+        let base = app.view_key();
+
+        app.on_key(KeyCode::Char('?')); // help
+        assert_eq!(app.view_key(), base);
+        app.on_key(KeyCode::Char('?')); // close(아무 키나 닫힘)
+
+        app.on_key(KeyCode::F(2)); // options
+        assert_eq!(app.view_key(), base);
+        app.on_key(KeyCode::F(2)); // close
+
+        app.on_key(KeyCode::Char('o')); // link_picker
+        assert_eq!(app.view_key(), base);
+        app.on_key(KeyCode::Esc); // close
+
+        app.on_key(KeyCode::F(9)); // settings
+        assert_eq!(app.view_key(), base);
+        app.on_key(KeyCode::F(9)); // close
     }
 
     #[test]

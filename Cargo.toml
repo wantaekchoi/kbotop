@@ -1,6 +1,6 @@
 [package]
 name = "kbotop"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Watch KBO baseball in your terminal, with strike-zone pitch tracking."
@@ -23,7 +23,7 @@ include = [
 ]
 
 [dependencies]
-ratatui = "0.29"
+ratatui = "0.30"
 crossterm = "0.29"
 ureq = { version = "2.10", features = ["json", "tls"] }
 serde = { version = "1", features = ["derive"] }

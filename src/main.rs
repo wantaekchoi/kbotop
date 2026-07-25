@@ -383,6 +383,13 @@ fn run(
         .and_then(team_code)
         .map(str::to_string);
 
+    // 직전 프레임의 화면 식별자(App::view_key). ratatui 0.30에서 화면 전환
+    // (Live↔List, Games↔Standings) 시 내부 버퍼와 실제 터미널 상태가 어긋나
+    // 이전 화면의 착색 셀이 지워지지 않는 문제(ADR-0007)가 있어, 이 값이
+    // 바뀐 프레임에서만 term.clear()를 호출한다. 매 프레임 clear하면 깜빡임이
+    // 생기므로 반드시 전환이 실제로 일어난 프레임에서만 불러야 한다.
+    let mut last_view_key = app.view_key();
+
     loop {
         // 외부 SIGTERM/SIGHUP 수신 시 q를 누른 것과 동일하게 정상 종료 경로로
         // 빠진다 — 기본 처리(즉시 프로세스 종료)에 맡기면 터미널 복구가 실행되지
@@ -468,6 +475,13 @@ fn run(
 
         // 동기화 출력(BSU/ESU): 미지원 터미널은 이스케이프를 무시하므로 안전.
         let _ = execute!(std::io::stdout(), BeginSynchronizedUpdate);
+        // 화면이 실제로 전환된 프레임에서만 clear한다(ADR-0007) — 매 프레임
+        // clear하면 깜빡임이 생기므로 직전 view_key와 다를 때만 호출한다.
+        let view_key = app.view_key();
+        if view_key != last_view_key {
+            term.clear()?;
+            last_view_key = view_key;
+        }
         term.draw(|f: &mut Frame| ui::draw(f, app))?;
         let _ = execute!(std::io::stdout(), EndSynchronizedUpdate);
 

@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-25
+
+### Fixed
+- 화면을 전환할 때(라이브 ↔ 경기 목록 ↔ 순위) 이전 화면의 색이 새 화면에 남아 팀 배지 색 조각이 엉뚱한 자리에 떠 보이던 문제를 고쳤습니다. 전환하는 순간에만 화면을 다시 그리므로 깜빡임은 없습니다.
+
+### Changed
+- 화면 렌더링에 쓰는 ratatui를 0.30으로 올렸습니다.
+
 ## [0.13.0] - 2026-07-25
 
 ### Changed
@@ -132,7 +140,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/wantaekchoi/kbotop/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/wantaekchoi/kbotop/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/wantaekchoi/kbotop/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/wantaekchoi/kbotop/compare/v0.10.0...v0.11.0
