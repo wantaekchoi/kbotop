@@ -2,6 +2,7 @@ pub mod app;
 pub mod config;
 pub mod dateutil;
 pub mod error;
+pub mod localtime;
 pub mod model;
 pub mod poller;
 pub mod source;

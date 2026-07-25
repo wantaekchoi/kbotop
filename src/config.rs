@@ -9,6 +9,9 @@ pub struct Config {
     pub favorite_team: Option<String>,
     pub poll_secs: u64,
     pub lang: Option<String>,
+    /// 표시 시간대: `auto`(기본) · `kst` · `+09:00` 류 오프셋. 자동 감지가 안
+    /// 되는 환경(Windows·컨테이너)에서 사용자가 직접 정하는 탈출구.
+    pub timezone: Option<String>,
     pub theme: ThemeConfig,
 }
 
@@ -18,6 +21,7 @@ impl Default for Config {
             favorite_team: None,
             poll_secs: 5,
             lang: None,
+            timezone: None,
             theme: ThemeConfig::default(),
         }
     }
@@ -97,6 +101,14 @@ fn merge_into_toml(existing: &str, cfg: &Config) -> Result<String, toml::de::Err
         }
         None => {
             table.remove("lang");
+        }
+    }
+    match &cfg.timezone {
+        Some(t) => {
+            table.insert("timezone".into(), toml::Value::String(t.clone()));
+        }
+        None => {
+            table.remove("timezone");
         }
     }
     // [theme] 테이블도 top-level과 동일한 원리로 다룬다: 통째로 재생성하지
@@ -273,6 +285,7 @@ mod tests {
             favorite_team: None,
             poll_secs: 1,
             lang: None,
+            timezone: None,
             theme: ThemeConfig::default(),
         };
         assert_eq!(c.effective_poll_secs(), 3);
@@ -301,6 +314,7 @@ mod tests {
             favorite_team: Some("LG".into()),
             poll_secs: 7,
             lang: Some("ko".into()),
+            timezone: None,
             theme: ThemeConfig::default(),
         };
         let out = merge_into_toml("", &cfg).unwrap();
@@ -318,6 +332,7 @@ mod tests {
             favorite_team: Some("LG".into()),
             poll_secs: 5,
             lang: None,
+            timezone: None,
             theme: ThemeConfig::default(),
         };
         let out = merge_into_toml(existing, &cfg).unwrap();
@@ -338,6 +353,7 @@ mod tests {
             favorite_team: None,
             poll_secs: 5,
             lang: None,
+            timezone: None,
             theme: ThemeConfig::default(),
         };
         let out = merge_into_toml("", &cfg).unwrap();
@@ -385,6 +401,7 @@ mod tests {
             favorite_team: None,
             poll_secs: 5,
             lang: None,
+            timezone: None,
             theme: ThemeConfig {
                 preset: "mono".into(),
                 accent: "cyan".into(),
@@ -438,6 +455,7 @@ mod tests {
             favorite_team: Some("LG".into()),
             poll_secs: 9,
             lang: None,
+            timezone: None,
             theme: ThemeConfig::default(),
         };
 

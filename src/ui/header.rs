@@ -10,24 +10,17 @@ use ratatui::{
     Frame,
 };
 
-/// KST(UTC+9) 고정 오프셋. std만으로는 로컬 타임존 오프셋을 이식성 있게 얻을
-/// 방법이 없다(`localtime`류는 unsafe FFI가 필요하고 플랫폼마다 동작이
-/// 다르며, `TZ` 환경변수도 IANA 이름("Asia/Seoul")이 흔해 오프셋 파싱이
-/// 신뢰할 수 없다) — `chrono`/`time` 크레이트 추가는 제약상 금지다. kbotop은
-/// KBO 전용 뷰어라 `dateutil::kst_days`가 이미 "오늘" 판단을 이 고정
-/// 오프셋으로 하고 있으므로(F2 날짜 피커, RSS 날짜 파싱 등), 시계 표시도 같은
-/// 관례를 따르고 "KST" 라벨로 명시해 로컬 시간대와 다를 수 있다는 오해를
-/// 막는다(v0.15 A-1 결정 — 실측: std 로컬 오프셋 API 없음 확인, TZ 파싱은
-/// 시도하지 않음 — 이미 확립된 KST 고정 관례와의 일관성이 더 안전).
-const KST_OFFSET_SECS: u64 = 9 * 3600;
-
-/// UTC epoch 초 → "HH:MM KST". now_secs는 항상 SystemTime 기반 유효값이라
-/// 파싱 실패 개념이 없다 — 순수 산술이라 항상 성공한다(패닉 불가).
-fn current_time_label(now_secs: u64) -> String {
-    let secs_of_day = now_secs.wrapping_add(KST_OFFSET_SECS) % 86400;
+/// UTC epoch 초 → "HH:MM ABBR"(예 `18:26 KST`, `05:26 EDT`). 시간대는
+/// `localtime::resolve`가 프로세스 시작 시 한 번 정한 값을 받는다 — 보는
+/// 사람이 서울에 있든 뉴욕에 있든 **자기 시계와 맞는 시각**을 봐야 한다
+/// (v0.16). 경기일 판단(`dateutil::kst_days`)은 KST 고정이라 별개다.
+/// 순수 산술이라 패닉 불가(음수 오프셋은 rem_euclid로 흡수).
+fn current_time_label(now_secs: u64, tz: &crate::localtime::TimeZone) -> String {
+    let local = (now_secs as i64).wrapping_add(tz.offset_secs as i64);
+    let secs_of_day = local.rem_euclid(86400);
     let h = secs_of_day / 3600;
     let m = (secs_of_day % 3600) / 60;
-    format!("{h:02}:{m:02} KST")
+    format!("{h:02}:{m:02} {}", tz.abbrev)
 }
 
 /// 마지막 성공 갱신(app.last_update_secs) 이후 경과 → "12초 전"/"1분 전"류
@@ -109,7 +102,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     // 시간 정보부터 조용히 빠진다(기존 counts/배지는 절대 안 건드림, §2 폭 예산).
     let inner_width = area.width.saturating_sub(2) as usize;
     const CLOCK_GAP: usize = 2;
-    let clock = current_time_label(app.now_secs);
+    let clock = current_time_label(app.now_secs, &app.tz);
     let clock_w = super::text::display_width(&clock);
     let counts_w = spans_width(&counts_spans);
     if inner_width >= counts_w + CLOCK_GAP + clock_w {

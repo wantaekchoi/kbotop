@@ -44,6 +44,13 @@ struct Cli {
     /// UI language: ko | en | ja (default: auto by locale)
     #[arg(long)]
     lang: Option<String>,
+    /// Display time zone: auto | kst | +09:00 | -04:00 (default: auto —
+    /// detects the system zone; game dates stay on KST since that is when
+    /// KBO plays)
+    // allow_hyphen_values: 서쪽 시간대는 값이 `-04:00`처럼 하이픈으로 시작해
+    // clap이 플래그로 오인한다(미주 전체가 여기 해당) — 실사용 검증에서 잡힘.
+    #[arg(long, allow_hyphen_values = true)]
+    tz: Option<String>,
 }
 
 /// 언어 결정: CLI > config > env(LC_ALL→LANG, "ko"/"ja" 접두) > En.
@@ -222,6 +229,14 @@ fn restore_terminal(term: &mut Tui) -> Result<()> {
 /// 프로세스 기본 동작을 그대로 트리거한다. signal_hook::consts::TERM_SIGNALS
 /// (크레이트 자체가 정의하는 "종료 요청" 표준 그룹)가 정확히
 /// `[SIGTERM, SIGQUIT, SIGINT]`이므로 SIGQUIT도 동일하게 등록해야 한다.
+///
+/// Windows에는 SIGTERM/SIGHUP/SIGQUIT 등가물이 없어 signal-hook 자체가
+/// 지원하지 않는다(크레이트도 Cargo.toml에서 `cfg(unix)` 전용 의존성으로
+/// 옮겨져 있다). crossterm이 raw mode에서 Ctrl+C를 일반 키 이벤트로 넘겨주므로
+/// 기존 `q`/키 종료 경로가 그대로 동작한다 — 이 플래그는 항상 false로 유지되고
+/// run()의 term_signal 체크가 두 플랫폼에서 동일한 타입으로 컴파일되게 하는
+/// 용도로만 존재한다.
+#[cfg(unix)]
 fn install_term_signal_handler() -> Result<Arc<AtomicBool>> {
     let flag = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&flag))?;
@@ -229,6 +244,13 @@ fn install_term_signal_handler() -> Result<Arc<AtomicBool>> {
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&flag))?;
     signal_hook::flag::register(signal_hook::consts::SIGQUIT, Arc::clone(&flag))?;
     Ok(flag)
+}
+
+/// Windows: 위 문서 주석 참고 — 등록할 시그널이 없으므로 항상 false인 플래그만
+/// 반환한다.
+#[cfg(not(unix))]
+fn install_term_signal_handler() -> Result<Arc<AtomicBool>> {
+    Ok(Arc::new(AtomicBool::new(false)))
 }
 
 fn main() -> Result<()> {
@@ -304,6 +326,15 @@ fn main() -> Result<()> {
     );
 
     let mut app = App::new(cfg);
+    // 표시 시간대는 프로세스 시작 시 1회만 정한다(매 프레임 파일 I/O 금지).
+    // CLI > config > TZ > /etc/localtime > KST 순서는 localtime::resolve가 담당.
+    app.tz = kbotop::localtime::resolve(
+        cli.tz.as_deref().or(app.config.timezone.as_deref()),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    );
     app.date = date_for_app.clone();
     app.poll_choice = live_poll_secs;
     app.lang = lang;

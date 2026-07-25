@@ -84,7 +84,17 @@ pub fn open_url(url: &str) {
     let _ = std::process::Command::new("open").arg(&enc).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
     let _ = std::process::Command::new("xdg-open").arg(&enc).spawn();
-    #[cfg(not(unix))]
+    // `cmd /c start "" <url>` 표준 방식. 첫 빈 인자 `""`는 start의 창 제목
+    // 자리라 생략할 수 없다(생략하면 URL이 제목으로 오인돼, URL에 따옴표가
+    // 필요한 문자가 있으면 깨진다). 각 인자를 std::process::Command에 개별
+    // 전달해 cmd가 셸 메타문자(`&` 등, encode_url이 건드리지 않는 ASCII
+    // 예약문자)로 URL을 잘라먹지 않게 한다 — 셸 문자열로 합쳐서 넘기면 `&`가
+    // 명령 구분자로 해석되어 뒷부분이 별도 명령으로 실행된다.
+    #[cfg(windows)]
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", "start", "", &enc])
+        .spawn();
+    #[cfg(not(any(unix, windows)))]
     let _ = &enc; // 미지원 플랫폼: no-op
 }
 

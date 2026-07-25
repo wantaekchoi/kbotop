@@ -1,0 +1,19 @@
+# 서드파티 라이선스 고지
+
+kbotop 바이너리에는 아래 오픈소스가 정적으로 링크되어 있습니다. 각 저작권자와
+라이선스 전문을 그대로 싣습니다. kbotop 자체의 라이선스는 `LICENSE`를 보세요.
+
+이 파일은 `scripts/third-party.sh`로 생성합니다(의존성이 바뀌면 재생성).
+
+{{#each licenses}}
+## {{name}}
+
+{{#each used_by}}
+- {{#if crate.repository}}[{{crate.name}} {{crate.version}}]({{crate.repository}}){{else}}{{crate.name}} {{crate.version}}{{/if}}
+{{/each}}
+
+```
+{{text}}
+```
+
+{{/each}}

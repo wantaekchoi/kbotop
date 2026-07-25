@@ -153,6 +153,9 @@ pub struct App {
     /// "몇 초 전"까지 보여주기 위한 값 — apply()가 Error/Fetching에서는
     /// 갱신하지 않는다(660행 근처 주석과 같은 철학: 시도 신호일 뿐 회복이 아니다).
     pub last_update_secs: Option<u64>,
+    /// 표시용 시간대(프로세스 시작 시 1회 결정 — `localtime::resolve`).
+    /// 경기일 판단(`dateutil::kst_days`)은 여전히 KST 고정이라 별개다.
+    pub tz: crate::localtime::TimeZone,
     /// KBO 뉴스 헤드라인(부가 기능). 하단 티커가 짝수 분에 이 목록에서 순환
     /// 표시하고, 비어 있으면 항상 Tip으로 우아하게 저하한다.
     pub news: Vec<NewsItem>,
@@ -210,6 +213,7 @@ impl App {
             fav_code: None,
             now_secs: 0,
             last_update_secs: None,
+            tz: crate::localtime::TimeZone::kst(),
             news: vec![],
             options: None,
             poll_choice: 5,
@@ -569,6 +573,9 @@ impl App {
             favorite_team: self.fav_code.clone(),
             poll_secs: self.poll_choice,
             lang: Some(crate::ui::i18n::lang_code(self.lang).to_string()),
+            // config의 원본을 그대로 되쓴다 — F9에서 다른 설정을 바꿔도
+            // 사용자의 시간대 설정이 지워지면 안 된다(설정 손실 방지).
+            timezone: self.config.timezone.clone(),
             theme: crate::config::ThemeConfig {
                 preset: self.theme_preset.clone(),
                 accent: self.theme_accent.clone(),

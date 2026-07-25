@@ -26,6 +26,23 @@ jobs:
       - name: test
         run: cargo test --all-features
 
+  # v0.16 added a Windows dist target (x86_64/aarch64-pc-windows-msvc) but
+  # local cross-compilation from macOS is blocked (ring's build script wants
+  # a host MSVC toolchain), so this job is the only real gate on Windows
+  # actually building: it runs on a native windows-latest (MSVC) runner and
+  # exercises the #[cfg(windows)] branches directly (open_url's `cmd /c
+  # start`, the no-op signal-flag path) instead of just type-checking them.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-all-crates: true
+      - name: test
+        run: cargo test --all-features
+
   # NOTE: the codecov badge in README.md / README.en.md only fills in once a
   # human links this repo on codecov.io and adds a CODECOV_TOKEN secret in
   # this repo's GitHub settings (Settings > Secrets and variables > Actions).

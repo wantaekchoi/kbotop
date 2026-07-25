@@ -22,6 +22,11 @@ fn is_wrap_whitespace(ch: char) -> bool {
     ch == ZWSP || (ch.is_whitespace() && ch != NBSP)
 }
 
+/// `Wrap`을 안전하게 쓸 수 있는 최소 폭. 이 미만에서는 ratatui `WordWrapper`가
+/// 폭보다 넓은 행을 만들어 렌더 시 패닉한다(위 `render()` 주석 참고 — 폭 2
+/// 이하에서만 발생함을 전수 스윕으로 실측).
+const MIN_WRAP_WIDTH: u16 = 3;
+
 /// 문자 1개의 터미널 셀 폭. 새 unicode-width 의존성을 추가하지 않고
 /// `Span::width()`(ratatui 경유)로 잰다. `WordWrapper`가 실제로 렌더에 쓰는
 /// `CellWidth::cell_width()`(`ratatui-widgets-0.3.2/src/buffer/cell_width.rs`)
@@ -239,9 +244,27 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let max_scroll = total.saturating_sub(inner.height);
     let scroll = view.scroll.min(max_scroll);
 
-    let paragraph = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .scroll((scroll, 0));
+    // 폭이 MIN_WRAP_WIDTH 미만이면 `Wrap`을 쓰지 않는다. ratatui-widgets의
+    // `WordWrapper`는 강제 분할 시 `max_line_width`보다 넓은 행을 만들 수 있고
+    // (전각 문자가 남은 한 칸에 안 들어가는데도 커밋되는 경우), 그 행을
+    // 렌더하면 `Buffer::index_mut`가 "index outside of buffer"로 패닉한다.
+    // 전수 스윕(단일폭/이중폭 이진 패턴 길이 2~6 × 폭 1~10)으로 **폭 2 이하
+    // 에서만** 패닉함을 실측했다 — 폭 3부터는 안전하다. 무패닉이 이 프로젝트의
+    // 하드 제약이라(렌더 경로엔 catch_unwind가 없다) 그 구간은 wrap 없이
+    // 줄당 한 줄씩 말줄임해 그린다. 오버레이를 아예 안 여는 건 UX 후퇴라 피한다.
+    let paragraph = if inner.width >= MIN_WRAP_WIDTH {
+        Paragraph::new(lines).wrap(Wrap { trim: false })
+    } else {
+        let clipped: Vec<Line> = lines
+            .iter()
+            .map(|ln| {
+                let text: String = ln.spans.iter().map(|s| s.content.as_ref()).collect();
+                Line::from(super::text::ellipsize(&text, inner.width as usize))
+            })
+            .collect();
+        Paragraph::new(clipped)
+    }
+    .scroll((scroll, 0));
 
     f.render_widget(block, rect);
     f.render_widget(paragraph, inner);
@@ -647,6 +670,35 @@ mod tests {
             "line_rows underestimated actual rendered rows for whitespace-heavy content:\n{}",
             violations.join("\n")
         );
+    }
+
+    /// 무패닉(v0.16): ratatui `WordWrapper`는 강제 분할 시 폭보다 넓은 행을
+    /// 만들 수 있고, 그걸 렌더하면 `Buffer::index_mut`가 패닉한다(전수 스윕
+    /// 결과 폭 2 이하). `render()`가 `MIN_WRAP_WIDTH` 미만에서 wrap을 안 쓰게
+    /// 막았으므로, 그 조합들을 **`catch_unwind` 없이** 그려도 죽지 않아야 한다.
+    /// 단일폭/이중폭을 섞은 "공백 없는 한 단어"가 이 버그의 트리거다.
+    #[test]
+    fn narrow_terminal_renders_without_panicking_on_mixed_width_text() {
+        for body in [
+            "a안b녕c",
+            "안a녕b다c",
+            "가1나2다3라4마",
+            "안녕하세요반갑습니다",
+        ] {
+            let mut app = App::new(Default::default());
+            let mut item = sample();
+            item.summary = body.to_string();
+            item.title = body.to_string();
+            app.article_view = Some(ArticleView {
+                item,
+                scroll: u16::MAX,
+            });
+            for width in 1u16..=8 {
+                let mut term = Terminal::new(TestBackend::new(width, 8)).unwrap();
+                // 패닉하면 여기서 테스트가 죽는다 — 그게 이 테스트의 요지다.
+                term.draw(|f| render(f, f.area(), &app)).unwrap();
+            }
+        }
     }
 
     /// fix 2-4: 하단 힌트(title_bottom)는 title 영역 폭(테두리 2칸 제외)을

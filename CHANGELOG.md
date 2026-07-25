@@ -5,6 +5,18 @@
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-07-25
+
+### Added
+- **Windows 지원** — GitHub Release에 Windows 바이너리(x86_64·arm64)가 함께 올라갑니다. KBO를 보고 싶은 사람이 어떤 OS를 쓰든 상관없도록.
+- **시각을 보는 사람이 있는 곳 기준으로 표시** — 서울에 있든 뉴욕에 있든 헤더 시계가 자기 시계와 맞습니다. 시스템 시간대를 자동으로 읽고, 원하면 `--tz`나 설정 파일의 `timezone`으로 직접 정할 수 있습니다(`auto`/`kst`/`+09:00`/`-04:00`). **경기 날짜는 한국 기준 그대로**입니다 — 해외에서도 "KBO의 오늘 경기"를 보는 게 맞으니까요.
+
+### Fixed
+- 터미널을 극단적으로 좁혔을 때 뉴스 기사 오버레이가 앱을 죽이던 문제를 고쳤습니다.
+
+### Changed
+- 라이선스를 **Unlicense 또는 MIT** 듀얼로 바꿨습니다. 조건 없이 쓸 수 있게 하되, 퍼블릭 도메인 헌정을 받아들이지 못하는 조직을 위해 MIT도 남깁니다. 바이너리에 링크된 오픈소스 라이선스 고지를 `THIRD-PARTY.md`로 함께 배포합니다.
+
 ## [0.15.0] - 2026-07-25
 
 ### Added
@@ -148,7 +160,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/wantaekchoi/kbotop/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/wantaekchoi/kbotop/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/wantaekchoi/kbotop/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/wantaekchoi/kbotop/compare/v0.12.0...v0.13.0
