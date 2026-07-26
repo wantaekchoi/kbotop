@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-07-26
+
+### Fixed
+- `kbotop --date -1`처럼 하이픈으로 시작하는 날짜 값이 인식되지 않던 문제를 고쳤습니다. `--help`가 안내하는 `-N`(N일 전) 형식이 이제 그대로 동작합니다(`--date=-1`만 되던 것).
+- 기사 오버레이의 스크롤 범위가 이모지·특수문자가 섞인 본문에서도 실제 줄바꿈과 정확히 맞습니다.
+
+### Changed
+- 뉴스 피드와 진입점 로직에 테스트를 채웠습니다(피드 하나가 죽어도 나머지로 계속되는지, 전부 실패하면 화면의 기존 뉴스를 지우지 않는지 등). 화면과 동작은 그대로입니다.
+
 ## [0.16.0] - 2026-07-25
 
 ### Added
@@ -160,7 +169,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/wantaekchoi/kbotop/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/wantaekchoi/kbotop/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/wantaekchoi/kbotop/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/wantaekchoi/kbotop/compare/v0.13.0...v0.14.0

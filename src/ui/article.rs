@@ -3,6 +3,7 @@
 //! 비동기 fetch·loading 상태가 없다.
 use crate::app::App;
 use ratatui::{
+    buffer::CellWidth,
     layout::{Margin, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
@@ -11,47 +12,17 @@ use ratatui::{
 };
 use std::collections::VecDeque;
 
-/// ZWSP(zero-width space, U+200B)·NBSP(non-breaking space, U+00A0)까지 포함해
-/// ratatui `StyledGrapheme::is_whitespace()`와 같은 줄바꿈 경계 판정을 문자
-/// 단위로 재현한다(`ratatui-core-0.1.2/src/text/grapheme.rs`). NBSP는 시각적
-/// 으로 공백이어도 단어 경계로 취급하지 않고(두 단어를 하나로 묶어 안
-/// 끊는다), ZWSP는 폭이 0인데도 끊어도 되는 지점으로 취급한다.
-fn is_wrap_whitespace(ch: char) -> bool {
-    const ZWSP: char = '\u{200B}';
-    const NBSP: char = '\u{00A0}';
-    ch == ZWSP || (ch.is_whitespace() && ch != NBSP)
-}
-
 /// `Wrap`을 안전하게 쓸 수 있는 최소 폭. 이 미만에서는 ratatui `WordWrapper`가
 /// 폭보다 넓은 행을 만들어 렌더 시 패닉한다(위 `render()` 주석 참고 — 폭 2
 /// 이하에서만 발생함을 전수 스윕으로 실측).
 const MIN_WRAP_WIDTH: u16 = 3;
 
-/// 문자 1개의 터미널 셀 폭. 새 unicode-width 의존성을 추가하지 않고
-/// `Span::width()`(ratatui 경유)로 잰다. `WordWrapper`가 실제로 렌더에 쓰는
-/// `CellWidth::cell_width()`(`ratatui-widgets-0.3.2/src/buffer/cell_width.rs`)
-/// 와 달리 `Span::width()`는 순정 unicode-width라 반각 카타카나 탁점/반탁점
-/// (U+FF9E/U+FF9F)의 터미널 호환 보정(+1칸)이 빠져 있다 — 그대로 두면 그
-/// 두 문자에 한해 실제보다 좁게 재 **과소추정 위험**이 생기므로 같은 보정을
-/// 여기서도 더한다(불변식 유지가 우선이라 사소해 보여도 닫는다).
-fn wrap_char_width(ch: char) -> u16 {
-    const HALFWIDTH_DAKUTEN: char = '\u{FF9E}';
-    const HALFWIDTH_HANDAKUTEN: char = '\u{FF9F}';
-    let mut buf = [0u8; 4];
-    let s: &str = ch.encode_utf8(&mut buf);
-    let w = Span::raw(s).width() as u16;
-    if ch == HALFWIDTH_DAKUTEN || ch == HALFWIDTH_HANDAKUTEN {
-        w.saturating_add(1)
-    } else {
-        w
-    }
-}
-
 /// 한 `Line`이 폭 `cols`에서 차지하는 **실제 렌더 행 수**. `render()`가 실제로
 /// 쓰는 `Wrap { trim: false }`(ratatui-widgets 0.3.2 `WordWrapper::process_input`,
-/// `reflow.rs`)와 **같은 규칙**으로 행 수를 센다 — char-wrap 폭 나눗셈이
-/// 아니라, 공백 경계에서 단어를 커밋하고 대기 중인 단어+공백이 폭을 넘기는
-/// 순간 새 행으로 넘기며, 한 단어가 폭보다 길면 그 단어 안에서도 강제로
+/// `reflow.rs`)와 **같은 규칙, 같은 단위**로 행 수를 센다 — char-wrap 폭
+/// 나눗셈이 아니라, `Span::styled_graphemes()`가 내놓는 **그래핌** 스트림
+/// 위에서 공백 경계마다 단어를 커밋하고 대기 중인 단어+공백이 폭을 넘기는
+/// 순간 새 행으로 넘기며, 한 그래핌이 폭보다 길면 그 단어 안에서도 강제로
 /// 쪼갠다(`reflow.rs`의 `word_found` / `untrimmed_overflow` /
 /// `pending_word_overflow` 세 조건과 "줄이 꺾이는 순간 대기 중인 공백 중
 /// 남은 폭만큼만 버린다"는 후처리를 그대로 옮겼다). `render()`는 항상
@@ -68,11 +39,24 @@ fn wrap_char_width(ch: char) -> u16 {
 ///   게 "안전마진"이었을 뿐, 진짜 word-wrap 인식은 아니었다(당시 백로그로
 ///   남김).
 /// - v0.15: 그 백로그를 해소 — char-wrap 나눗셈을 버리고 `WordWrapper` 상태
-///   기계 자체를 폭 계산 목적으로 재구현했다(이 함수). 더 이상 "우연한
-///   과다계산"에 기대지 않는다: slack이 있으면 있는 만큼만 정확히 잡고,
-///   없으면 실제 렌더 행 수와 정확히 일치한다. 유일하게 남은 안전마진은
-///   `wrap_char_width`의 반각 탁점 보정(위 문서 참고) 뿐이며, 그것도
-///   "필요해서"가 아니라 실제 `cell_width()`와 정확히 맞추기 위함이다.
+///   기계 자체를 폭 계산 목적으로 재구현했다. 다만 그 재구현은 **문자**
+///   (`chars()`) 단위로 돌아, ratatui 자신이 쓰는 **그래핌** 단위와 어긋나는
+///   새 한계(ZWJ·지역표시자 이모지 오분할, 제어문자 미필터, 반각 탁점 폭
+///   불일치)를 남겼다(당시 백로그로 남김).
+/// - v0.17: 그 백로그도 해소 — 직접 재구현한 문자 단위 헬퍼
+///   (`is_wrap_whitespace`/`wrap_char_width`)를 버리고, ratatui-core 0.1.2의
+///   **공개 API** `Span::styled_graphemes()`(`text/span.rs` —
+///   `.graphemes(true).filter(|g| !g.contains(char::is_control))`로 이미
+///   그래핌 단위로 나누고 제어문자를 걸러낸 채로 내놓는다) 위에서 직접 순회
+///   한다. 공백 판정은 `StyledGrapheme::is_whitespace()`(ZWSP=공백,
+///   NBSP=비공백 예외 포함, `text/grapheme.rs`)를, 폭 계산은
+///   `CellWidth::cell_width()`(`buffer/cell_width.rs` — 그래핌 전체 문자열
+///   기준으로 반각 탁점/반탁점 U+FF9E·U+FF9F 개수를 세어 +1 보정까지 이미
+///   포함)를 그대로 쓴다. 둘 다 `ratatui::{buffer::CellWidth, text::Span}`로
+///   재노출돼 있어 새 크레이트 없이(ratatui 경유만으로) 쓸 수 있다. 이제
+///   ratatui가 실제로 보는 것과 **정확히 같은 단위·같은 폭 규칙**으로
+///   순회하므로, 예전에 문자 단위 헬퍼가 따로 하던 탁점 보정은 `cell_width()`
+///   시맨틱에 이미 포함돼 중복 적용할 필요가 없다.
 ///
 /// **목표 불변식(증명이 아니라 테스트된 성질)**: 반환값은 실제 렌더 행 수
 /// 이상이어야 한다(과소추정=
@@ -80,33 +64,36 @@ fn wrap_char_width(ch: char) -> u16 {
 /// 스크롤되는 무해한 코스메틱). 아래 `line_rows_matches_or_exceeds_actual_*`
 /// 테스트들이 `TestBackend`로 실제 `Paragraph::wrap()` 렌더 행 수와 비교해
 /// 폭·콘텐츠 조합별로 이를 봉인하고, `extreme_scroll_with_accented_summary_
-/// still_reaches_cta_line`이 v0.9 회귀를 다시 봉인한다.
+/// still_reaches_cta_line`이 v0.9 회귀를 다시 봉인하며,
+/// `grapheme_cluster_edge_cases_never_underestimate`가 v0.15 퍼징이 찾은
+/// 그래핌 한계(탭·제어문자·ZWJ 이모지·지역표시자 국기·반각 탁점·결합문자·
+/// ZWSP·NBSP)에서 과소추정 0을 봉인한다.
 ///
-/// **알려진 한계**(v0.15 최종 리뷰의 퍼징이 찾음): 이 함수는 **문자** 단위로
-/// 도는데 `WordWrapper`는 **그래핌** 단위로 돌고 `CellWidth::cell_width()`를
-/// 쓴다. 그래서 ① 그래핌 클러스터를 쪼갤 수 있다고 잘못 보고(ZWJ·지역표시자
-/// 이모지) ② 제어문자를 ratatui는 아예 버리는데(`styled_graphemes()`가 필터)
-/// 여기선 남기며 ③ 반각 탁점 조합에서 폭이 어긋나, 그런 입력에선 **한 행 적게
-/// 셀 수 있다**. 실제 도달 가능성은 사실상 없다 — `line_rows`에 오는 뉴스
-/// 텍스트는 전부 `source::text::normalize_whitespace`(`split_whitespace`)를
-/// 거쳐 탭·NBSP·수직탭이 제거되고, CTA 줄은 i18n 상수다. 증상도 "마지막 줄이
-/// 한 행 안 잡힘"이라 패닉이 아니라 코스메틱이다. 근본 해결(그래핌 순회 +
-/// cell_width + 제어문자 필터)은 백로그.
+/// **알려진 한계**: 없음. v0.15 최종 리뷰의 퍼징이 찾은 세 가지(그래핌
+/// 클러스터 오분할, 제어문자 미필터, 반각 탁점 폭 불일치)는 전부 ratatui
+/// 자신의 그래핌·공백·폭 규칙을 직접 위임하는 것으로 닫혔다.
 fn line_rows(line: &Line, cols: usize) -> u16 {
     let max_w: u16 = cols.max(1).min(u16::MAX as usize) as u16;
 
     let mut rows: u16 = 0;
     let mut line_width: u16 = 0; // 현재 행에 이미 커밋된 폭
     let mut word_width: u16 = 0; // 대기 중인 단어 폭
-    let mut word_present = false; // 대기 중인 단어가 있는지(폭0 문자 대비 별도 추적)
+    let mut word_present = false; // 대기 중인 단어가 있는지(폭0 그래핌 대비 별도 추적)
     let mut whitespace_width: u16 = 0; // 대기 중인 공백 런의 총 폭
-    let mut pending_whitespace: VecDeque<u16> = VecDeque::new(); // 개별 공백 문자 폭(줄 꺾일 때 뒤쪽만 버려야 해서 개별 보관)
+    let mut pending_whitespace: VecDeque<u16> = VecDeque::new(); // 개별 공백 그래핌 폭(줄 꺾일 때 뒤쪽만 버려야 해서 개별 보관)
     let mut line_has_content = false; // 현재 행에 뭔가(공백이라도) 커밋됐는지
     let mut non_whitespace_previous = false;
 
-    for ch in line.spans.iter().flat_map(|s| s.content.chars()) {
-        let is_ws = is_wrap_whitespace(ch);
-        let symbol_width = wrap_char_width(ch);
+    // `Span::styled_graphemes()`가 ratatui `WordWrapper`(reflow.rs)와 똑같이
+    // 그래핌 단위로 쪼개고 제어문자를 걸러낸 스트림을 내놓는다 — render()가
+    // 실제로 렌더에 쓰는 것과 동일한 입력.
+    for grapheme in line
+        .spans
+        .iter()
+        .flat_map(|s| s.styled_graphemes(Style::default()))
+    {
+        let is_ws = grapheme.is_whitespace();
+        let symbol_width = grapheme.symbol.cell_width();
 
         // ratatui: 폭 자체보다 넓은 심볼은 통째로 무시(스킵)한다.
         if symbol_width > max_w {
@@ -318,8 +305,8 @@ mod tests {
     /// 리뷰 지적: 예전 구현은 높이 1짜리 뷰포트를 scroll 0부터 늘려가며 렌더해
     /// "뷰포트가 완전히 빈칸(모든 셀이 `" "`)이 되는 첫 scroll"을 실제 행 수로
     /// 삼았다. 그런데 `Wrap { trim: false }`는 공백이 길게 이어지면 **공백만
-    /// 으로 이루어진 정상 행**을 커밋한다(`is_wrap_whitespace`/`line_rows` 위
-    /// 문서, ratatui 자신의 `reflow.rs::line_composer_char_plus_lots_of_spaces`
+    /// 으로 이루어진 정상 행**을 커밋한다(`StyledGrapheme::is_whitespace()`/
+    /// `line_rows` 위 문서, ratatui 자신의 `reflow.rs::line_composer_char_plus_lots_of_spaces`
     /// 류 패턴). 그런 행은 화면상 "빈칸"과 셀 내용이 똑같아 예전 오라클이
     /// 실제보다 훨씬 적게 셌다(`"a"+공백20+"b"` @폭1 → 예전 1, 진짜 12).
     ///
@@ -715,6 +702,255 @@ mod tests {
                 });
             },
             render,
+        );
+    }
+
+    /// v0.17: v0.15 최종 리뷰의 퍼징이 찾은 그래핌 반례 문자군을 각각 단어
+    /// 사이에 섞어 넣은 고정 사례들. 탭·제어문자(BEL/ESC/NUL)는 ratatui가
+    /// 렌더에서 통째로 버리고, ZWJ 가족 이모지·지역표시자 국기는 여러
+    /// 코드포인트가 한 그래핌으로 묶여야 하고, 반각 탁점/반탁점은 조합에 따라
+    /// 폭이 바뀌고, `e` + 결합 악센트(U+0301)는 두 코드포인트가 한 그래핌
+    /// 이어야 한다. 각 사례를 4회 반복해 여러 폭에서 줄바꿈이 실제로 여러 번
+    /// 일어나게 만든다(한 줄짜리 사례는 slack 버그를 드러내지 못한다).
+    fn grapheme_edge_case_fixtures() -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "tabs_between_words",
+                "word1\tword2\tword3\tword4\tword5 word6\tword7".repeat(4),
+            ),
+            (
+                "control_chars_bel_esc_nul",
+                "a\u{7}bc\u{1B}de\u{0}fg hi\u{7}jk\u{1B}lm\u{0}no pqrs".repeat(4),
+            ),
+            ("zwj_family_emoji", "👨‍👩‍👧 word 👨‍👩‍👧‍👦 more 👨‍👩‍👧 text".repeat(4)),
+            (
+                "regional_indicator_flags",
+                "🇰🇷 word 🇺🇸 more 🇯🇵 text 🇰🇷🇺🇸".repeat(4),
+            ),
+            (
+                "halfwidth_dakuten_combos",
+                "ｶﾞｷﾞｸﾞｹﾞｺﾞ word ﾊﾟﾋﾟﾌﾟﾍﾟﾎﾟ standalone ﾞﾟ text".repeat(4),
+            ),
+            (
+                "combining_accent_e_acute",
+                "cafe\u{0301} re\u{0301}sume\u{0301} word naive\u{0301} text".repeat(4),
+            ),
+            (
+                "zwsp_word_join",
+                "word1\u{200B}word2\u{200B}word3 normal words here too".repeat(4),
+            ),
+            (
+                "nbsp_word_glue",
+                "word1\u{00A0}word2 word3\u{00A0}word4 plain text words".repeat(4),
+            ),
+            (
+                "mixed_all_edge_cases",
+                "tab\ta bel\u{7}b esc\u{1B}c nul\u{0}d 👨‍👩‍👧 flag🇰🇷 dak ｶﾞﾊﾟ \
+                 acc cafe\u{0301} zwsp\u{200B}x nbsp\u{00A0}y"
+                    .repeat(3),
+            ),
+        ]
+    }
+
+    /// v0.17 반례 문자군 봉인(수용 기준): v0.15 최종 리뷰의 퍼징이 찾은 세
+    /// 그래핌 한계(탭·제어문자, ZWJ·지역표시자 이모지, 반각 탁점) 및 추가
+    /// 반례(결합문자, ZWSP, NBSP)를 폭 3~74에서 `actual_rendered_rows`
+    /// 오라클과 비교해 **과소추정 0**을 단언한다.
+    ///
+    /// 폭 1~2는 오라클 비교에서 제외한다 — `actual_rendered_rows`가 타는
+    /// 실제 `Paragraph::wrap()` 렌더 경로 자체가 별개의 기존 ratatui 버그
+    /// (강제 분할 시 폭보다 넓은 행을 만들어 `Buffer::index_mut`가 패닉,
+    /// 전수 스윕상 폭 2 이하에서만 발생 — 위 `actual_rendered_rows`/
+    /// `MIN_WRAP_WIDTH` 문서 참고)와 맞물릴 수 있어 그 구간의 오라클 비교는
+    /// 무의미하다(작업 지시 명시). 대신 `line_rows` 자체(렌더를 타지 않는
+    /// 순수 계산이라 그 버그와 무관)는 폭 1~2에서도 패닉 없이 1행 이상을
+    /// 반환해야 함을 확인한다.
+    #[test]
+    fn grapheme_cluster_edge_cases_never_underestimate() {
+        let cases = grapheme_edge_case_fixtures();
+        let oracle_safe_widths: [u16; 11] = [3, 4, 5, 6, 7, 8, 9, 10, 20, 37, 74];
+
+        let mut table = String::from(
+            "case                                     cols  estimate  actual  verdict\n",
+        );
+        let mut violations: Vec<String> = Vec::new();
+        for (name, text) in &cases {
+            for &cols in &[1u16, 2u16] {
+                let line = Line::from(text.clone());
+                let estimate = line_rows(&line, cols as usize);
+                assert!(
+                    estimate >= 1,
+                    "{name} cols={cols}: line_rows must return at least 1 row without panicking"
+                );
+            }
+            for &cols in &oracle_safe_widths {
+                score_combo(name, text, cols, &mut table, &mut violations);
+            }
+        }
+        eprintln!("{table}");
+        assert!(
+            violations.is_empty(),
+            "line_rows underestimated actual rendered rows for grapheme edge cases:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    /// 결정적(seed 고정) SplitMix64 PRNG. 재현 가능한 퍼징을 위해 새 크레이트
+    /// (`rand` 등)를 추가하지 않고 표준 라이브러리만으로 구현한다(제약: 이
+    /// 파일만 변경, `Cargo.toml` 금지).
+    struct SplitMix64(u64);
+
+    impl SplitMix64 {
+        fn next_u64(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
+
+        /// `[0, n)` 범위의 인덱스(n=0이면 0 취급, 패닉 없음).
+        fn index(&mut self, n: usize) -> usize {
+            if n == 0 {
+                0
+            } else {
+                (self.next_u64() as usize) % n
+            }
+        }
+    }
+
+    /// 퍼징용 토큰 풀 — 평범한 ASCII/한글 단어·공백과 함께, 위 반례
+    /// 문자군(탭·제어문자·ZWJ 이모지·지역표시자 국기·반각 탁점·결합문자·
+    /// ZWSP·NBSP)을 그래핌 클러스터를 깨지 않는 통짜 토큰으로 섞는다.
+    const FUZZ_TOKENS: &[&str] = &[
+        "a",
+        "bb",
+        "ccc",
+        "word",
+        "longword",
+        " ",
+        "  ",
+        "\t",
+        "\u{7}",
+        "\u{1B}",
+        "\u{0}",
+        "한",
+        "글",
+        "테스트",
+        "야구",
+        "👨‍👩‍👧",
+        "👨‍👩‍👧‍👦",
+        "🇰🇷",
+        "🇺🇸",
+        "🇯🇵",
+        "ｶﾞ",
+        "ﾊﾟ",
+        "ﾞ",
+        "ﾟ",
+        "e\u{0301}",
+        "a\u{0301}",
+        "\u{200B}",
+        "\u{00A0}",
+    ];
+
+    /// v0.17 랜덤 퍼징(수용 기준): 반례 문자군 토큰을 섞은 수천 개의 무작위
+    /// 문자열 × 무작위 폭(3~74, `MIN_WRAP_WIDTH` 문서 기준 오라클 렌더 안전
+    /// 구간)에서 `line_rows` 추정치가 `actual_rendered_rows` 실제 렌더 행 수
+    /// 미만으로 떨어지는 조합이 하나도 없는지 확인한다. seed 고정이라 실패
+    /// 시 재현 가능하다.
+    ///
+    /// # 오라클 자체 패닉(이 함수가 만드는 버그 아님, 별도 기존 결함)
+    /// 이 퍼징으로 **`line_rows`와 무관한** 기존 ratatui 결함을 하나 더
+    /// 발견했다: `reflow.rs::process_input`의 `pending_word_overflow` 체크는
+    /// "현재 심볼을 더하기 **전** 상태"만 보고 줄바꿈 여부를 판단하고, 실제
+    /// 심볼 추가는 그 판단 다음에 일어난다. 그래서 그래핌 하나의 폭 자체가
+    /// 커서(반각 탁점이 임의 기반문자에 붙어 폭이 base+1이 되거나, ZWJ 이모지
+    /// 클러스터가 6~8칸이 되는 경우) 그 그래핌이 먼저 word_width에 조용히
+    /// 더해지고, **다음** 심볼에서야 뒤늦게 줄바꿈이 감지돼 이미 폭을 넘긴
+    /// 그래핌이 그대로 커밋된 행에 남는다 — 그 행을 렌더하면
+    /// `Buffer::index_mut`가 패닉한다. 최소 재현: `"야구\u{FF9E}b"` @폭3
+    /// ("구"+반각탁점이 한 그래핌·폭3으로 묶여 "야"(폭2) 뒤에 물리면 뒤늦게
+    /// 걸림). `MIN_WRAP_WIDTH`(위 문서)가 "폭 2 이하에서만 발생"이라 실측한
+    /// 전수 스윕은 심볼 폭 최대 2인 합성 패턴만 썼던 터라 이 조합(그래핌
+    /// 폭 ≥3)은 스윕 범위 밖이었다 — `render()`가 실제로 타는 것과 동일한
+    /// `Paragraph::wrap()` 호출이라 폭 3 이상에서도(이 함수가 정한 "안전
+    /// 구간") 재현되고, 폭에 무관하게 성립 가능한 구조적 결함으로 보인다.
+    ///
+    /// `line_rows` 자체는 렌더를 타지 않는 순수 계산이라 이 버그와 무관하며
+    /// (패닉 없이 항상 추정치를 낸다), 이 테스트도 그 사실을 그대로 반영한다
+    /// — 오라클 호출만 `catch_unwind`로 감싸 패닉한 샘플은 비교 대상에서
+    /// 제외하고 별도 카운트만 남긴다("추정치가 안전측인지"와 "오라클이 그
+    /// 폭에서 렌더 가능한지"는 서로 다른 질문이기 때문). 이 결함의 수정은
+    /// `render()`/`MIN_WRAP_WIDTH`의 몫이라 이 태스크(line_rows 그래핌
+    /// 정확화, article.rs 범위 내) 밖으로 보고서에 별도로 남긴다.
+    #[test]
+    fn line_rows_never_underestimates_random_fuzz_with_edge_case_tokens() {
+        let mut rng = SplitMix64(0x00C0_FFEE_1234_5678);
+        let sample_count = 4000;
+        let mut violations: Vec<String> = Vec::new();
+        let mut oracle_panics: Vec<String> = Vec::new();
+
+        let orig_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {})); // 패닉 백트레이스로 테스트 출력이 도배되지 않게.
+
+        for i in 0..sample_count {
+            let token_count = 1 + rng.index(24);
+            let mut text = String::new();
+            for _ in 0..token_count {
+                text.push_str(FUZZ_TOKENS[rng.index(FUZZ_TOKENS.len())]);
+            }
+            let cols: u16 = 3 + rng.index(72) as u16; // 3..=74
+
+            let line = Line::from(text.clone());
+            let estimate = line_rows(&line, cols as usize); // 순수 계산 — 패닉 없음.
+
+            match std::panic::catch_unwind(|| actual_rendered_rows(&text, cols)) {
+                Ok(actual) => {
+                    if estimate < actual {
+                        violations.push(format!(
+                            "sample={i} cols={cols} estimate={estimate} actual={actual} text={text:?}"
+                        ));
+                    }
+                }
+                Err(_) => {
+                    // 위 문서의 별개 오라클 결함 — 비교 불가로 건너뛴다.
+                    oracle_panics.push(format!("sample={i} cols={cols} text={text:?}"));
+                }
+            }
+        }
+
+        std::panic::set_hook(orig_hook);
+
+        eprintln!(
+            "fuzz: {sample_count} samples, {} oracle panics (skipped, unrelated pre-existing \
+             ratatui Wrap defect — see test doc), {} underestimation violations",
+            oracle_panics.len(),
+            violations.len()
+        );
+        if !oracle_panics.is_empty() {
+            eprintln!(
+                "oracle panic samples (up to 10 of {}):\n{}",
+                oracle_panics.len(),
+                oracle_panics
+                    .iter()
+                    .take(10)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+        }
+
+        assert!(
+            violations.is_empty(),
+            "line_rows underestimated actual rendered rows in random fuzz \
+             ({} of {sample_count} violated, showing up to 10):\n{}",
+            violations.len(),
+            violations
+                .iter()
+                .take(10)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 }

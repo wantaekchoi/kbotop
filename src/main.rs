@@ -39,7 +39,10 @@ struct Cli {
     #[arg(long)]
     team: Option<String>,
     /// Date: YYYY-MM-DD, YYYYMMDD, today, yesterday, tomorrow, +N, -N (default: today, KST)
-    #[arg(long)]
+    // allow_hyphen_values: `-N`(어제로 N일)은 값이 하이픈으로 시작해 clap이
+    // 플래그로 오인한다 — `--help`가 `-N`을 광고하는데 `--date -1`이 죽던
+    // 문제(v0.17 커버리지 작업 중 발견). `--tz`도 같은 이유로 붙어 있다.
+    #[arg(long, allow_hyphen_values = true)]
     date: Option<String>,
     /// UI language: ko | en | ja (default: auto by locale)
     #[arg(long)]
@@ -603,6 +606,26 @@ mod tests {
         assert_eq!(team_code("nope"), None);
     }
 
+    /// 위 테스트가 놓친 별칭들(kt/nc와 각 팀의 두 번째 별칭 kt/nc/lt/ss/hh/wo) —
+    /// 커버리지 실측에서 이 가지들만 미실행으로 나왔다.
+    #[test]
+    fn team_code_covers_remaining_aliases() {
+        assert_eq!(team_code("kt"), Some("KT"));
+        assert_eq!(team_code("KT"), Some("KT"));
+        assert_eq!(team_code("nc"), Some("NC"));
+        assert_eq!(team_code("NC"), Some("NC"));
+        assert_eq!(team_code("lotte"), Some("LT"));
+        assert_eq!(team_code("lt"), Some("LT"));
+        assert_eq!(team_code("samsung"), Some("SS"));
+        assert_eq!(team_code("ss"), Some("SS"));
+        assert_eq!(team_code("hanwha"), Some("HH"));
+        assert_eq!(team_code("hh"), Some("HH"));
+        assert_eq!(team_code("kiwoom"), Some("WO"));
+        assert_eq!(team_code("wo"), Some("WO"));
+        assert_eq!(team_code("ob"), Some("OB"));
+        assert_eq!(team_code(""), None);
+    }
+
     #[test]
     fn resolve_date_accepts_iso_compact_and_keywords() {
         // 2026-07-23 == days_from_civil(2026, 7, 23)
@@ -626,6 +649,33 @@ mod tests {
         assert!(resolve_date("05-29", today).is_err());
         assert!(resolve_date("nonsense", today).is_err());
         assert!(resolve_date("2026/05/29", today).is_err());
+    }
+
+    /// 커버리지 실측에서 안 덮인 두 가지: (1) `+`/`-` 뒤에 오는 오프셋 숫자가
+    /// i64 파싱 범위를 넘는 경우, (2) `+`/`-` 접두는 있지만 뒤가 비어있거나
+    /// 숫자가 아니어서 오프셋 분기를 통과하지 못하고 아래 날짜 형식 검사로
+    /// 떨어지는 경우(둘 다 최종적으로 길이 불일치라 일반 unsupported 에러로 종결).
+    #[test]
+    fn resolve_date_rejects_overflowing_and_malformed_offsets() {
+        let today = days_from_civil(2026, 7, 23);
+
+        let overflow = resolve_date("+99999999999999999999", today).unwrap_err();
+        assert!(
+            overflow.contains("day offset too large"),
+            "unexpected message: {overflow}"
+        );
+        let overflow_neg = resolve_date("-99999999999999999999", today).unwrap_err();
+        assert!(
+            overflow_neg.contains("day offset too large"),
+            "unexpected message: {overflow_neg}"
+        );
+
+        // 부호만 있고 숫자가 없음 — offset 분기를 통과하지 못하고 fall through.
+        assert!(resolve_date("+", today).is_err());
+        assert!(resolve_date("-", today).is_err());
+        // 부호 뒤에 숫자가 아닌 문자 — 마찬가지로 fall through.
+        assert!(resolve_date("+abc", today).is_err());
+        assert!(resolve_date("-abc", today).is_err());
     }
 
     #[test]
@@ -684,6 +734,54 @@ mod tests {
         assert_eq!(
             detect_lang(None, Some("garbage"), Some("ja_JP.UTF-8")).unwrap(),
             Lang::Ja
+        );
+    }
+
+    /// `--tz`는 `allow_hyphen_values = true`라 `-04:00`처럼 하이픈으로 시작하는
+    /// 값도 공백으로 분리된 형태(`--tz -04:00`)로 정상 파싱된다(필드 위 주석이
+    /// 설명하는 바로 그 이유).
+    #[test]
+    fn cli_parses_negative_tz_offset_as_space_separated_value() {
+        let cli = Cli::try_parse_from(["kbotop", "--tz", "-04:00"])
+            .expect("allow_hyphen_values should accept a hyphen-led tz value");
+        assert_eq!(cli.tz.as_deref(), Some("-04:00"));
+    }
+
+    /// 대조 사례: `--date`는 `allow_hyphen_values`가 없다. `resolve_date`는
+    /// "-N" 형태의 오프셋을 지원하지만(위 `resolve_date_accepts_iso_compact_and_keywords`
+    /// 참고), clap 파서 단계에서 공백으로 분리된 `--date -1`은 `-1`을 값이 아니라
+    /// 미지의 플래그로 오인해 파싱 자체가 실패한다. `--date=-1`(등호 결합형)은
+    /// 정상 동작한다. 이 비대칭은 기존 동작이며, 이 태스크는 main.rs 커버리지
+    /// 보강만 하므로 clap 속성을 바꾸지 않는다 — 발견한 그대로 회귀 테스트로
+    /// 문서화한다.
+    #[test]
+    fn cli_date_accepts_negative_offsets_in_both_forms() {
+        // --help가 `-N`(어제로 N일)을 광고하므로 둘 다 받아야 한다. 공백
+        // 구분 형태가 죽던 걸 v0.17에서 고쳤다(allow_hyphen_values) —
+        // --tz도 v0.16에서 같은 이유로 같은 처방을 받았다.
+        for args in [
+            vec!["kbotop", "--date", "-1"],
+            vec!["kbotop", "--date=-1"],
+            vec!["kbotop", "--date", "-30"],
+        ] {
+            let cli = Cli::try_parse_from(args.clone())
+                .unwrap_or_else(|e| panic!("{args:?} should parse: {e}"));
+            assert!(cli.date.as_deref().is_some_and(|d| d.starts_with('-')));
+        }
+        // 양수 오프셋·키워드는 그대로.
+        assert_eq!(
+            Cli::try_parse_from(["kbotop", "--date", "+2"])
+                .expect("positive offset")
+                .date
+                .as_deref(),
+            Some("+2")
+        );
+        assert_eq!(
+            Cli::try_parse_from(["kbotop", "--date", "today"])
+                .expect("keyword")
+                .date
+                .as_deref(),
+            Some("today")
         );
     }
 

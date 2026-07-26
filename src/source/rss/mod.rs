@@ -6,39 +6,46 @@ pub(crate) mod parse;
 use crate::error::{Error, Result};
 use crate::model::NewsItem;
 use crate::source::NewsSource;
+use std::borrow::Cow;
 use std::collections::HashSet;
 
 struct Feed {
-    url: &'static str,
+    /// `Cow`인 이유: 기본 피드는 `&'static str` 리터럴이지만, 테스트에서는
+    /// `with_feeds()`로 런타임에 바인딩된 로컬 서버 주소(owned `String`)를
+    /// 꽂아야 한다 — 새 타입/크레이트 없이 std `Cow`로 두 경우를 한 필드에서
+    /// 수용한다.
+    url: Cow<'static, str>,
     label: &'static str,
     /// 비면 전체 유지. 아니면 <category>가 이 중 하나인 항목만.
     categories: &'static [&'static str],
 }
 
-/// 2026-07-24 실측으로 살아있음을 확인한 피드. 1차 축은 서버측에서 이미 야구로
-/// 좁혀진 두 곳, 보강 둘은 category 필터로 야구만 남긴다.
-const FEEDS: &[Feed] = &[
-    Feed {
-        url: "https://www.sportschosun.com/rss/index_bs.htm",
-        label: "스포츠조선",
-        categories: &[],
-    },
-    Feed {
-        url: "https://www.spotvnews.co.kr/rss/S1N2.xml",
-        label: "스포티비뉴스",
-        categories: &[],
-    },
-    Feed {
-        url: "https://isplus.com/rss",
-        label: "일간스포츠",
-        categories: &["프로야구", "메이저리그"],
-    },
-    Feed {
-        url: "https://www.khan.co.kr/rss/rssdata/kh_sports.xml",
-        label: "스포츠경향",
-        categories: &["야구"],
-    },
-];
+/// 2026-07-24 실측으로 살아있음을 확인한 기본 피드. 1차 축은 서버측에서 이미
+/// 야구로 좁혀진 두 곳, 보강 둘은 category 필터로 야구만 남긴다.
+fn default_feeds() -> Vec<Feed> {
+    vec![
+        Feed {
+            url: Cow::Borrowed("https://www.sportschosun.com/rss/index_bs.htm"),
+            label: "스포츠조선",
+            categories: &[],
+        },
+        Feed {
+            url: Cow::Borrowed("https://www.spotvnews.co.kr/rss/S1N2.xml"),
+            label: "스포티비뉴스",
+            categories: &[],
+        },
+        Feed {
+            url: Cow::Borrowed("https://isplus.com/rss"),
+            label: "일간스포츠",
+            categories: &["프로야구", "메이저리그"],
+        },
+        Feed {
+            url: Cow::Borrowed("https://www.khan.co.kr/rss/rssdata/kh_sports.xml"),
+            label: "스포츠경향",
+            categories: &["야구"],
+        },
+    ]
+}
 
 /// 피드 하나당 ureq 타임아웃(초). `news()`가 FEEDS를 스레드로 동시 호출하므로
 /// 폴러가 한 번의 뉴스 폴에서 블로킹될 수 있는 최악 시간은 대략
@@ -54,10 +61,24 @@ const FEED_TIMEOUT_SECS: u64 = 5;
 pub struct RssSource {
     agent: ureq::Agent,
     user_agent: String,
+    feeds: Vec<Feed>,
 }
 
 impl RssSource {
     pub fn new() -> Self {
+        Self::build(default_feeds())
+    }
+
+    /// 테스트 전용 생성자: 기본 피드 목록 대신 주어진 목록을 쓴다(피드 URL을
+    /// 로컬 mock 서버로 돌려 실네트워크 없이 병렬 fetch·피드별 실패 격리·전체
+    /// 실패 Err 경로를 검증하기 위함). `new()`의 기본 동작·기본 피드 목록·
+    /// 공개 시그니처는 그대로다.
+    #[cfg(test)]
+    fn with_feeds(feeds: Vec<Feed>) -> Self {
+        Self::build(feeds)
+    }
+
+    fn build(feeds: Vec<Feed>) -> Self {
         Self {
             agent: ureq::AgentBuilder::new()
                 .timeout(std::time::Duration::from_secs(FEED_TIMEOUT_SECS))
@@ -66,6 +87,7 @@ impl RssSource {
                 "kbotop/{} (+https://github.com/wantaekchoi/kbotop; personal use)",
                 env!("CARGO_PKG_VERSION")
             ),
+            feeds,
         }
     }
 }
@@ -144,17 +166,18 @@ impl NewsSource for RssSource {
         // 피드를 동시에 받는다 — 순차면 최악 4×타임아웃(~20초)이 폴러를 막는다.
         // 각 스레드는 fetch+parse를 독립 수행하고, 실패한 피드는 결과에서 빠진다
         // (피드별 실패 격리). ureq::Agent는 Clone이 값싸다(Arc 내부).
-        let handles: Vec<_> = FEEDS
+        let handles: Vec<_> = self
+            .feeds
             .iter()
             .map(|f| {
                 let agent = self.agent.clone();
                 let ua = self.user_agent.clone();
-                let url = f.url;
+                let url = f.url.clone();
                 let label = f.label;
                 let cats = f.categories;
                 std::thread::spawn(move || {
                     let body = agent
-                        .get(url)
+                        .get(&url)
                         .set("User-Agent", &ua)
                         .call()
                         .map_err(Box::new)
@@ -316,5 +339,272 @@ mod tests {
         let result = finish(vec![vec![]]);
         let items = result.expect("a live feed with zero items must still be Ok");
         assert!(items.is_empty());
+    }
+
+    // ---- 이하는 `news()`의 실제 스레드+HTTP+파싱 경로를 로컬 서버로 검증한다.
+    // 패턴은 v0.13 `source/naver/mod.rs`의 `LocalServer`와 동일: 포트는
+    // `bind("127.0.0.1:0")`으로 OS가 할당(병렬 테스트 충돌 방지), accept
+    // 직후 `set_nonblocking(false)`로 macOS에서 accept된 소켓이 리스너의
+    // 논블로킹 플래그를 상속해 큰 응답이 잘리는 flake를 막는다. 새 크레이트
+    // 없이 std만 사용.
+
+    /// 테스트 전용 최소 HTTP 응답기. 요청을 최대 `max_requests`개 받아 각각
+    /// 고정 상태줄+본문을 순서대로 돌려주고 스레드를 끝낸다. accept·읽기에
+    /// 상한(5s)을 둬 클라이언트가 끝내 붙지 않아도 테스트가 무기한 블록되지
+    /// 않는다.
+    struct LocalServer {
+        addr: std::net::SocketAddr,
+        handle: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl LocalServer {
+        fn spawn(status_line: impl Into<String>, body: impl Into<String>) -> Self {
+            let status_line = status_line.into();
+            let body = body.into();
+            let listener =
+                std::net::TcpListener::bind("127.0.0.1:0").expect("bind local test listener");
+            listener
+                .set_nonblocking(true)
+                .expect("set listener nonblocking");
+            let addr = listener.local_addr().expect("read local_addr");
+            let handle = std::thread::spawn(move || {
+                use std::io::{Read, Write};
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                let mut accepted = None;
+                while std::time::Instant::now() < deadline {
+                    match listener.accept() {
+                        Ok((s, _)) => {
+                            accepted = Some(s);
+                            break;
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let Some(mut stream) = accepted else {
+                    return;
+                };
+                // macOS 등에서 accept된 소켓이 리스너의 nonblocking 플래그를
+                // 그대로 물려받는다 — 그대로 두면 write_all이 WouldBlock을
+                // 재시도 없이 에러로 반환해 응답이 잘려 전송되는 flaky 실패가
+                // 난다(v0.13에서 관측·수정). 이 연결은 명시적으로 블로킹으로
+                // 되돌린다.
+                stream.set_nonblocking(false).ok();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .ok();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    match stream.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            buf.extend_from_slice(&chunk[..n]);
+                            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let response = format!(
+                    "{status_line}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            });
+            LocalServer {
+                addr,
+                handle: Some(handle),
+            }
+        }
+
+        fn base_url(&self) -> String {
+            format!("http://{}", self.addr)
+        }
+    }
+
+    impl Drop for LocalServer {
+        fn drop(&mut self) {
+            // 스레드는 요청 1개 처리 후 스스로 끝나므로 보통 즉시 join된다.
+            // accept 타임아웃(5s) 경로로 빠졌더라도 여기서 마저 기다려 좀비
+            // 스레드를 남기지 않는다.
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
+    /// 테스트용 피드 하나. `with_feeds()`로 `RssSource`에 꽂아 실네트워크
+    /// 없이 `news()`의 스레드+HTTP+파싱 전 경로를 태운다.
+    fn feed(url: String, label: &'static str) -> Feed {
+        Feed {
+            url: Cow::Owned(url),
+            label,
+            categories: &[],
+        }
+    }
+
+    fn valid_feed_xml(title: &str, link: &str, pub_date: &str) -> String {
+        format!(
+            r#"<?xml version="1.0"?><rss><channel><item><title>{title}</title><link>{link}</link><pubDate>{pub_date}</pubDate><description>요약</description></item></channel></rss>"#
+        )
+    }
+
+    /// 피드 하나가 500을 반환해도 나머지 정상 피드의 결과는 살아남는다(피드별
+    /// 실패 격리 — v0.7 설계의 핵심).
+    #[test]
+    fn news_isolates_a_failed_feed_and_keeps_the_succeeding_one() {
+        let bad = LocalServer::spawn("HTTP/1.1 500 Internal Server Error", "boom");
+        let good = LocalServer::spawn(
+            "HTTP/1.1 200 OK",
+            valid_feed_xml(
+                "정상 기사",
+                "https://good.example/1",
+                "Fri, 24 Jul 2026 11:00:00 +0900",
+            ),
+        );
+        let src = RssSource::with_feeds(vec![
+            feed(bad.base_url(), "bad"),
+            feed(good.base_url(), "good"),
+        ]);
+        let items = src.news().expect("살아있는 피드가 있으면 Ok");
+        assert_eq!(
+            items.len(),
+            1,
+            "실패한 피드의 항목은 섞이면 안 된다: {items:?}"
+        );
+        assert_eq!(items[0].source, "good");
+    }
+
+    /// 전체 피드가 실패하면 `Err` — 폴러가 이를 걸러 이전 뉴스를 화면에 그대로
+    /// 남긴다(v0.7 회귀 방지 장치). `Ok(vec![])`가 나오면 실 서비스에서
+    /// 일시적 전체 장애 때 목록이 비어 화면의 기존 뉴스가 지워진다.
+    #[test]
+    fn news_errs_when_every_feed_fails_over_the_wire() {
+        let bad1 = LocalServer::spawn("HTTP/1.1 500 Internal Server Error", "boom");
+        let bad2 = LocalServer::spawn("HTTP/1.1 404 Not Found", "nope");
+        let src =
+            RssSource::with_feeds(vec![feed(bad1.base_url(), "a"), feed(bad2.base_url(), "b")]);
+        let result = src.news();
+        assert!(
+            result.is_err(),
+            "전체 실패는 Err여야 한다(Ok(빈 목록)이면 기존 뉴스가 지워짐): {result:?}"
+        );
+    }
+
+    /// 깨진 XML(잘린 태그)을 주는 피드는 그 피드만 실패하고 나머지 정상 피드는
+    /// 살아남는다. 패닉이 없어야 한다.
+    #[test]
+    fn news_isolates_a_feed_with_malformed_xml() {
+        let broken = LocalServer::spawn("HTTP/1.1 200 OK", "<rss><channel><item>");
+        let good = LocalServer::spawn(
+            "HTTP/1.1 200 OK",
+            valid_feed_xml(
+                "정상 기사",
+                "https://good.example/1",
+                "Fri, 24 Jul 2026 11:00:00 +0900",
+            ),
+        );
+        let src = RssSource::with_feeds(vec![
+            feed(broken.base_url(), "broken"),
+            feed(good.base_url(), "good"),
+        ]);
+        let items = src
+            .news()
+            .expect("깨진 XML 피드가 있어도 정상 피드는 살아남는다");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].source, "good");
+    }
+
+    /// 200이지만 본문이 완전히 빈 피드는 XML 파싱 실패로 격리되고, 나머지
+    /// 정상 피드 결과는 그대로 살아남는다.
+    #[test]
+    fn news_isolates_a_feed_with_empty_body() {
+        let empty = LocalServer::spawn("HTTP/1.1 200 OK", "");
+        let good = LocalServer::spawn(
+            "HTTP/1.1 200 OK",
+            valid_feed_xml(
+                "정상 기사",
+                "https://good.example/1",
+                "Fri, 24 Jul 2026 11:00:00 +0900",
+            ),
+        );
+        let src = RssSource::with_feeds(vec![
+            feed(empty.base_url(), "empty"),
+            feed(good.base_url(), "good"),
+        ]);
+        let items = src
+            .news()
+            .expect("빈 본문 피드가 있어도 정상 피드는 살아남는다");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].source, "good");
+    }
+
+    /// Content-Type이 XML과 무관해도(예: 바이너리로 흔히 쓰는
+    /// `application/octet-stream`) 본문이 유효한 RSS면 그대로 파싱된다 —
+    /// 프로덕션 코드가 Content-Type을 검사하지 않는다는 걸 명시적으로 고정.
+    #[test]
+    fn news_parses_body_regardless_of_content_type_header() {
+        let body = valid_feed_xml(
+            "기사",
+            "https://x.example/1",
+            "Fri, 24 Jul 2026 11:00:00 +0900",
+        );
+        let server = LocalServer::spawn(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream",
+            body,
+        );
+        let src = RssSource::with_feeds(vec![feed(server.base_url(), "x")]);
+        let items = src.news().expect("Content-Type과 무관하게 파싱되어야 한다");
+        assert_eq!(items.len(), 1);
+    }
+
+    /// `news()` 전체 경로(스레드 fetch + 파싱 + merge_feeds의 dedup·정렬)가
+    /// 실제 HTTP 라운드트립을 거쳐도 올바르게 동작한다. 두 피드가 같은
+    /// 기사를 겹쳐 주고, 시각 순서도 뒤섞여 있다.
+    #[test]
+    fn news_dedups_and_sorts_across_feeds_over_the_wire() {
+        let feed_a = LocalServer::spawn(
+            "HTTP/1.1 200 OK",
+            r#"<?xml version="1.0"?><rss><channel>
+                <item><title>오래된 기사</title><link>https://x.example/old</link><pubDate>Fri, 24 Jul 2026 08:00:00 +0900</pubDate><description>d</description></item>
+                <item><title>공통 기사</title><link>https://x.example/shared</link><pubDate>Fri, 24 Jul 2026 09:00:00 +0900</pubDate><description>d</description></item>
+                </channel></rss>"#,
+        );
+        let feed_b = LocalServer::spawn(
+            "HTTP/1.1 200 OK",
+            r#"<?xml version="1.0"?><rss><channel>
+                <item><title>공통 기사</title><link>https://x.example/shared</link><pubDate>Fri, 24 Jul 2026 09:00:00 +0900</pubDate><description>d</description></item>
+                <item><title>최신 기사</title><link>https://y.example/new</link><pubDate>Fri, 24 Jul 2026 10:00:00 +0900</pubDate><description>d</description></item>
+                </channel></rss>"#,
+        );
+        let src = RssSource::with_feeds(vec![
+            feed(feed_a.base_url(), "a"),
+            feed(feed_b.base_url(), "b"),
+        ]);
+        let items = src.news().expect("두 피드 모두 정상이면 Ok");
+        let titles: Vec<&str> = items.iter().map(|i| i.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            vec!["최신 기사", "공통 기사", "오래된 기사"],
+            "겹치는 기사는 한 번만 남고 최신순으로 정렬돼야 한다: {titles:?}"
+        );
+    }
+
+    /// 기본 생성자 `new()`는 여전히 내장 4개 피드로 동작한다(공개 시그니처·
+    /// 기본 피드 목록 호환 확인 — `with_feeds()` 도입이 기존 동작을 바꾸지
+    /// 않았는지에 대한 안전망).
+    #[test]
+    fn new_still_uses_the_builtin_four_feeds() {
+        let src = RssSource::new();
+        assert_eq!(src.feeds.len(), 4);
+        assert!(src.feeds.iter().any(|f| f.label == "스포츠조선"));
+        assert!(src.feeds.iter().any(|f| f.label == "스포티비뉴스"));
+        assert!(src.feeds.iter().any(|f| f.label == "일간스포츠"));
+        assert!(src.feeds.iter().any(|f| f.label == "스포츠경향"));
     }
 }
