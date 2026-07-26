@@ -141,7 +141,23 @@ pub struct App {
     /// 스피너 애니메이션 프레임 카운터(main.rs가 tick마다 증가).
     pub spinner_frame: u8,
     /// 라이브 화면에서 현재 타석 투구 중 짚어보고 있는 순번(None = 전체 보기).
+    /// v0.18부터 "현재 타석"은 live_atbat_sel이 가리키는 at-bat(과거일 수도
+    /// 있음)이다 — LiveState::active_pitches(live_atbat_sel)를 통해 그 타석의
+    /// 투구 목록을 얻은 뒤 이 인덱스로 짚는다.
     pub live_pitch_sel: Option<usize>,
+    /// 돌려보기(v0.18): 보고 있는 at-bat의 **시퀀스 번호**(AtBat::seq, 인덱스 아님).
+    /// None = 최신(라이브)을 계속 따라간다("라이브 추종") — 폴링으로 새 타석이
+    /// 추가돼도 튀지 않는다. Some(seq)는 특정 과거 타석에 고정된 상태로, `[`/`]`로만
+    /// 움직이고 Esc나 최신까지 `]`로 다시 따라잡으면 None으로 되돌아간다.
+    ///
+    /// 인덱스가 아니라 번호인 이유: 중계 응답은 현재 이닝만 담으므로 이닝이 넘어가면
+    /// at_bats가 통째로 갈린다. 인덱스로 들고 있으면 같은 자리가 다른 타석을 가리켜
+    /// 읽던 위치가 조용히 어긋난다(apply가 사라진 번호를 감지해 라이브로 되돌린다).
+    pub live_atbat_sel: Option<i64>,
+    /// 돌려보기 중 문자중계 줄 커서(None = 커서 없음, 기존처럼 최신 N줄만
+    /// 하이라이트 없이 보여준다). live_atbat_sel이 가리키는 at-bat 안에서만
+    /// 유효 — at-bat을 바꾸면(`[`/`]`) 함께 리셋된다.
+    pub live_relay_cursor: Option<usize>,
     /// 응원 팀 KBO 코드(main이 --team/config favorite_team 별칭을 해석해 주입).
     /// UI 테마 액센트와 헤더 응원 배지에 쓴다.
     pub fav_code: Option<String>,
@@ -210,6 +226,8 @@ impl App {
             fetching: false,
             spinner_frame: 0,
             live_pitch_sel: None,
+            live_atbat_sel: None,
+            live_relay_cursor: None,
             fav_code: None,
             now_secs: 0,
             last_update_secs: None,
@@ -391,6 +409,8 @@ impl App {
                 if matches!(self.screen, Screen::Live { .. }) {
                     self.screen = Screen::List;
                     self.live_pitch_sel = None;
+                    self.live_atbat_sel = None;
+                    self.live_relay_cursor = None;
                 }
                 self.tab = match self.tab {
                     Tab::Games => Tab::Standings,
@@ -400,23 +420,49 @@ impl App {
                 self.pending_g = false;
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                let len = self.current_len();
-                if len > 0 && self.selected + 1 < len {
-                    self.selected += 1;
+                // 라이브 화면에서는 문자중계 줄 커서(돌려보기, v0.18) — 목록의
+                // j/k(self.selected)와 같은 키를 겹쳐 쓰되 화면별로 의미가 다르다
+                // (Left/Right가 이미 이 패턴이다). 처음 누르면(None) 항상 맨
+                // 아래(최신 줄)에서 시작한다 — 무선택 뷰가 이미 최신 꼬리를
+                // 보여주므로 커서가 그 자리에서 자연스럽게 이어지도록.
+                if let Screen::Live { state: Some(s), .. } = &self.screen {
+                    let n = s.active_relay_lines(self.live_atbat_sel).len();
+                    if n > 0 {
+                        let last = n - 1;
+                        self.live_relay_cursor = Some(match self.live_relay_cursor {
+                            None => last,
+                            Some(i) => (i + 1).min(last),
+                        });
+                    }
+                } else {
+                    let len = self.current_len();
+                    if len > 0 && self.selected + 1 < len {
+                        self.selected += 1;
+                    }
                 }
                 self.pending_g = false;
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if self.selected > 0 {
+                if let Screen::Live { state: Some(s), .. } = &self.screen {
+                    let n = s.active_relay_lines(self.live_atbat_sel).len();
+                    if n > 0 {
+                        let last = n - 1;
+                        self.live_relay_cursor = Some(match self.live_relay_cursor {
+                            None => last,
+                            Some(i) => i.saturating_sub(1),
+                        });
+                    }
+                } else if self.selected > 0 {
                     self.selected -= 1;
                 }
                 self.pending_g = false;
             }
             KeyCode::Left | KeyCode::Right => {
-                // 라이브 화면에서 현 타석 투구를 하나씩 짚어본다(순환 없음).
-                // 선택 없음 = 전체 보기; Right는 처음부터, Left는 마지막부터 진입.
+                // 라이브 화면에서 보고 있는 타석(live_atbat_sel — 과거일 수도
+                // 있음)의 투구를 하나씩 짚어본다(순환 없음). 선택 없음 = 전체
+                // 보기; Right는 처음부터, Left는 마지막부터 진입.
                 if let Screen::Live { state: Some(s), .. } = &self.screen {
-                    let n = s.current_pitches.len();
+                    let n = s.active_pitches(self.live_atbat_sel).len();
                     if n > 0 {
                         self.live_pitch_sel = Some(match (self.live_pitch_sel, key) {
                             (None, KeyCode::Right) => 0,
@@ -424,6 +470,42 @@ impl App {
                             (Some(i), KeyCode::Right) => (i + 1).min(n - 1),
                             (Some(i), _) => i.saturating_sub(1),
                         });
+                    }
+                }
+                self.pending_g = false;
+            }
+            KeyCode::Char('[') | KeyCode::Char(']') => {
+                // 돌려보기(v0.18): 이전/다음 타석. `]`로 최신까지 다시 따라오면
+                // live_atbat_sel을 None으로 되돌려 "라이브 추종" 모드로 복귀한다
+                // (그래야 그 뒤 폴링에서 새 타석이 자동으로 따라와진다).
+                if let Screen::Live { state: Some(s), .. } = &self.screen {
+                    let len = s.at_bats.len();
+                    // M-2: `no`가 결측이면 seq가 전부 0(또는 다른 값)으로 뭉개져
+                    // 아래 position()이 항상 첫 일치 항목만 찾는다 — 그러면
+                    // 되감기가 그 자리에 갇히고 `]`로도 라이브 복귀가 불가능해진다
+                    // (실측). seq 유일성이 깨졌으면 잘못된 자리에 갇히는 것보다
+                    // 네비게이션 자체를 비활성화하는 편이 안전하다.
+                    if len > 0 && s.has_unique_at_bat_seqs() {
+                        let last = len - 1;
+                        // 선택은 번호로 들고 있으므로 이동할 때만 인덱스로 환산한다.
+                        // 번호가 응답에서 사라졌으면(이닝 전환) 최신에서 다시 시작.
+                        let cur = self
+                            .live_atbat_sel
+                            .and_then(|seq| s.at_bats.iter().position(|ab| ab.seq == seq))
+                            .unwrap_or(last);
+                        let next = if key == KeyCode::Char('[') {
+                            cur.saturating_sub(1)
+                        } else {
+                            (cur + 1).min(last)
+                        };
+                        self.live_atbat_sel = if next >= last {
+                            None
+                        } else {
+                            s.at_bats.get(next).map(|ab| ab.seq)
+                        };
+                        // 다른 타석의 투구/문자중계 커서는 의미가 다르므로 리셋.
+                        self.live_pitch_sel = None;
+                        self.live_relay_cursor = None;
                     }
                 }
                 self.pending_g = false;
@@ -445,21 +527,26 @@ impl App {
                 if self.tab == Tab::Games && matches!(self.screen, Screen::List) {
                     if let Some(g) = self.games.get(self.selected).cloned() {
                         if Self::can_enter_live(g.status) {
-                            self.screen = Screen::Live {
-                                game: g,
-                                state: None,
-                            };
-                            // 이전 게임에서 짚어보던 투구 선택이 새 게임으로 넘어오지 않도록.
-                            self.live_pitch_sel = None;
+                            // 이전 게임에서 짚어보던 투구/타석 선택이 새 게임으로
+                            // 넘어오지 않도록 세 선택을 함께 리셋하는 공통 경로
+                            // (리뷰 I-3) — main.rs의 --team 자동 진입과 공유한다.
+                            self.enter_live(g);
                         }
                     }
                 }
                 self.pending_g = false;
             }
             KeyCode::Esc => {
-                if self.live_pitch_sel.is_some() {
-                    // 1단계: 투구 선택 해제(전체 보기 복귀). 화면은 유지.
+                // v0.18 Esc 계단(3단): ①투구/문자중계 커서 해제 → ②과거 타석
+                // 보기 중이면 최신(라이브)로 복귀 → ③화면 자체를 나가 목록으로.
+                // 기존 2단(①·③)에 돌려보기 복귀(②)를 끼워 넣은 순서 — 세부
+                // 선택부터 지우고, 그다음 "어디를 보고 있는지", 마지막에
+                // "어느 화면인지" 순으로 넓어진다.
+                if self.live_pitch_sel.is_some() || self.live_relay_cursor.is_some() {
                     self.live_pitch_sel = None;
+                    self.live_relay_cursor = None;
+                } else if self.live_atbat_sel.is_some() {
+                    self.live_atbat_sel = None;
                 } else if matches!(self.screen, Screen::Live { .. }) {
                     self.screen = Screen::List;
                 }
@@ -495,6 +582,23 @@ impl App {
         !matches!(status, GameStatus::Canceled | GameStatus::Scheduled)
     }
 
+    /// Live 화면 진입 공통 경로(리뷰 I-3). Enter 키(on_key)와 `--team` 자동
+    /// 진입(main.rs) 두 곳이 각자 화면 전환을 조립하다가, 자동 진입 쪽이 세
+    /// 선택(live_pitch_sel/live_atbat_sel/live_relay_cursor) 리셋을 빠뜨린
+    /// 채 어긋난 적이 있다 — `can_enter_live`와 같은 이유로 한 곳에 모은다.
+    ///
+    /// 셋 다 반드시 리셋해야 하는 이유: `live_atbat_sel`(seq)은 경기별 번호라
+    /// 다른 경기와 번호 대역이 겹칠 수 있다 — 리셋하지 않으면 폴링 가드
+    /// (`!l.has_at_bat(seq)`)가 "우연히 같은 seq가 새 경기에도 있다"고
+    /// 오판해 걸러주지 못하고, 새 경기가 처음부터 엉뚱한 과거 타석에 고정된
+    /// 채(+그 타석 기준 투구 선택까지 살아남은 채) 열릴 수 있다.
+    pub fn enter_live(&mut self, game: Game) {
+        self.screen = Screen::Live { game, state: None };
+        self.live_pitch_sel = None;
+        self.live_atbat_sel = None;
+        self.live_relay_cursor = None;
+    }
+
     /// 옵션 픽커 Enter: 현재 pane·커서의 항목을 적용하고 닫는다.
     /// 폴러 통지는 run() 루프가 상태 변화 감지로 수행(App은 채널을 모른다 —
     /// watched_game과 동일 패턴).
@@ -514,6 +618,8 @@ impl App {
                 self.games.clear();
                 self.selected = 0;
                 self.live_pitch_sel = None;
+                self.live_atbat_sel = None;
+                self.live_relay_cursor = None;
                 // 다른 날짜의 라이브 화면은 무의미 — 목록으로 복귀.
                 self.screen = Screen::List;
             }
@@ -722,16 +828,52 @@ impl App {
                 // 게임의 라이브 상태를 덮어쓰지 않도록 game id를 확인한다.
                 if let Screen::Live { game, state } = &mut self.screen {
                     if game.id == id {
-                        // 새 타석(투구 수 감소)이면 선택 리셋; 같은 타석에 투구가
-                        // 추가된 경우는 선택 유지. 방어적으로 범위 밖 선택도 해제.
-                        if let Some(prev) = state {
-                            if l.current_pitches.len() < prev.current_pitches.len() {
+                        // 라이브 추종(v0.18 핵심): 과거 타석을 보는 중(live_atbat_sel
+                        // = Some)이면 이 폴링이 "현재(라이브) 타석"의 투구 수를
+                        // 바꿔도 사용자가 보고 있는 건 다른(이미 끝난) 타석이므로
+                        // 그 선택을 건드리지 않는다 — 선택이 튀지 않는다는 게 이
+                        // 기능의 핵심 UX. live_atbat_sel이 None(=최신을 보는 중)일
+                        // 때만 기존 규칙을 적용한다: 새 타석이면 선택 리셋; 같은
+                        // 타석에 투구가 추가된 경우는 선택 유지; 방어적으로 범위
+                        // 밖 선택도 해제.
+                        if let Some(seq) = self.live_atbat_sel {
+                            // 보던 타석이 이번 응답에 없다(응답은 현재 이닝만 담으므로
+                            // 이닝이 넘어가면 통째로 갈린다). 다른 타석을 그 자리인 척
+                            // 계속 보여주는 대신 라이브로 되돌린다 — 조용히 어긋나느니
+                            // 눈에 보이게 최신으로 돌아오는 편이 낫다.
+                            if !l.has_at_bat(seq) {
+                                self.live_atbat_sel = None;
+                                self.live_relay_cursor = None;
                                 self.live_pitch_sel = None;
                             }
-                        }
-                        if let Some(i) = self.live_pitch_sel {
-                            if i >= l.current_pitches.len() {
+                        } else {
+                            // "새 타석이 시작됐다"는 신호 둘을 OR로 합친다(리뷰 I-2):
+                            // ① at_bats.last().seq 변화 — 가장 정확한 신호(seq는
+                            // 경기 전체에 걸친 타석 번호라 같은 타석이면 절대 안
+                            // 바뀐다). ② current_pitches.len() 감소 — v0.17부터
+                            // 있던 기존 신호로, at_bats가 비어 있는(구버전 손 조립
+                            // 상태) 폴백 경로에서는 seq를 아예 볼 수 없으므로 여전히
+                            // 필요하다. 어느 한쪽만 있어도 새 타석으로 본다 — seq가
+                            // 바뀌었는데 마침 투구 수가 같은 경우(예: 둘 다 1구)를
+                            // ②만으로는 놓치기 때문이다(실측: live_relay_cursor가
+                            // 리셋되지 않고 다른 타자의 줄을 계속 가리켰다).
+                            let seq_changed = match (&state, l.at_bats.last()) {
+                                (Some(prev), Some(new_last)) => {
+                                    prev.at_bats.last().map(|ab| ab.seq) != Some(new_last.seq)
+                                }
+                                _ => false,
+                            };
+                            let fewer_pitches = state.as_ref().is_some_and(|prev| {
+                                l.current_pitches.len() < prev.current_pitches.len()
+                            });
+                            if seq_changed || fewer_pitches {
                                 self.live_pitch_sel = None;
+                                self.live_relay_cursor = None;
+                            }
+                            if let Some(i) = self.live_pitch_sel {
+                                if i >= l.current_pitches.len() {
+                                    self.live_pitch_sel = None;
+                                }
                             }
                         }
                         *state = Some(l);
@@ -1140,8 +1282,19 @@ mod tests {
             home_win_rate: None,
             away_win_rate: None,
             relay_log: vec![],
-            current_pitches: pitches,
+            current_pitches: pitches.clone(),
             next_batter_name: String::new(),
+            // 단일 at-bat으로 미러링해 active_pitches/active_relay_lines가
+            // current_pitches와 항상 같은 값을 내도록 한다(v0.18 이전
+            // 헬퍼가 이 필드를 몰라도 되는 폴백과 별개로, 새 네비 테스트가
+            // 이 상태를 재사용할 수 있게).
+            at_bats: vec![crate::model::AtBat {
+                seq: 1,
+                batter_name: String::new(),
+                inning_label: "T1".into(),
+                relay_lines: vec![],
+                pitches,
+            }],
         };
         app.screen = Screen::Live {
             game: game("g"),
@@ -1181,6 +1334,389 @@ mod tests {
         assert!(matches!(app.screen, Screen::Live { .. }));
         app.on_key(KeyCode::Esc); // 2단계: 목록 복귀
         assert!(matches!(app.screen, Screen::List));
+    }
+
+    /// v0.18 돌려보기 테스트용: n개의 at-bat을 오래된→최신 순으로 담은 App.
+    /// 각 at-bat은 batter_name("batter{i}")·inning_label·문자중계 2줄·투구
+    /// 1개로 서로 구분된다. 마지막(index n-1) at-bat이 "현재(라이브)"이므로
+    /// relay_log/current_pitches도 거기서 미러링해 둔다 — active_*()가 기대하는
+    /// "마지막 at-bat = 레거시 필드"라는 파서의 불변식을 테스트 상태에도 맞춘다.
+    fn live_app_with_at_bats(n: usize) -> App {
+        let mut app = App::new(Default::default());
+        let at_bats: Vec<crate::model::AtBat> = (0..n)
+            .map(|i| crate::model::AtBat {
+                // 실제 응답의 no처럼 오래된→최신으로 증가하는 번호. 0부터가 아니라
+                // 100부터 시작해 "인덱스와 번호가 우연히 같아 통과하는" 테스트를 막는다.
+                seq: 100 + i as i64,
+                batter_name: format!("batter{i}"),
+                inning_label: format!("T{}", i + 1),
+                relay_lines: vec![format!("line-{i}-a"), format!("line-{i}-b")],
+                pitches: vec![crate::model::Pitch {
+                    order: 1,
+                    ..Default::default()
+                }],
+            })
+            .collect();
+        let last = at_bats.last().expect("n > 0").clone();
+        let state = crate::model::LiveState {
+            inning_label: last.inning_label.clone(),
+            home: Team {
+                code: "LG".into(),
+                name: "LG".into(),
+            },
+            away: Team {
+                code: "KT".into(),
+                name: "KT".into(),
+            },
+            home_score: 0,
+            away_score: 0,
+            count: crate::model::Count {
+                ball: 0,
+                strike: 0,
+                out: 0,
+            },
+            bases: crate::model::BaseState {
+                first: false,
+                second: false,
+                third: false,
+            },
+            pitcher_name: String::new(),
+            batter_name: last.batter_name.clone(),
+            home_win_rate: None,
+            away_win_rate: None,
+            relay_log: last.relay_lines.clone(),
+            current_pitches: last.pitches.clone(),
+            next_batter_name: String::new(),
+            at_bats,
+        };
+        app.screen = Screen::Live {
+            game: game("g"),
+            state: Some(state),
+        };
+        app
+    }
+
+    /// `[`/`]`는 이전/다음 타석으로 움직이고 양끝에서 clamp된다. 최신까지
+    /// `]`로 다시 따라오면 live_atbat_sel이 None(라이브 추종)으로 되돌아간다.
+    #[test]
+    fn bracket_keys_navigate_between_at_bats_and_clamp_at_the_boundaries() {
+        let mut app = live_app_with_at_bats(3); // batter0(oldest) .. batter2(live)
+        assert_eq!(app.live_atbat_sel, None, "기본은 최신(라이브)을 본다");
+
+        app.on_key(KeyCode::Char('['));
+        assert_eq!(app.live_atbat_sel, Some(101));
+        app.on_key(KeyCode::Char('['));
+        assert_eq!(app.live_atbat_sel, Some(100), "가장 오래된 타석");
+        app.on_key(KeyCode::Char('[')); // 경계: 더 못 감
+        assert_eq!(app.live_atbat_sel, Some(100));
+
+        app.on_key(KeyCode::Char(']'));
+        assert_eq!(app.live_atbat_sel, Some(101));
+        app.on_key(KeyCode::Char(']')); // 최신에 도달 → 라이브 추종 재개
+        assert_eq!(app.live_atbat_sel, None);
+        app.on_key(KeyCode::Char(']')); // 이미 최신 — no-op
+        assert_eq!(app.live_atbat_sel, None);
+    }
+
+    /// at-bat이 하나뿐이면(돌려볼 과거가 없음) `[`/`]`는 무패닉 no-op이다.
+    #[test]
+    fn bracket_keys_are_noop_with_a_single_at_bat() {
+        let mut app = live_app_with_at_bats(1);
+        app.on_key(KeyCode::Char('['));
+        assert_eq!(app.live_atbat_sel, None);
+        app.on_key(KeyCode::Char(']'));
+        assert_eq!(app.live_atbat_sel, None);
+    }
+
+    /// M-2: `no`가 결측이면(lenient_int 관용 파싱) 여러 at-bat이 전부 seq==0
+    /// 으로 뭉개질 수 있다 — 그 상태에서 `[`/`]`를 쓰면 position()이 항상
+    /// 첫 일치 항목만 찾아 되감기가 그 자리에 갇히고, `]`를 아무리 눌러도
+    /// 라이브(None)로 복귀할 수 없다(실측 재현). seq 유일성이 깨지면 App은
+    /// 되감기 네비게이션 자체를 비활성화해 잘못된 자리에 갇히는 것보다
+    /// 안전한 쪽을 택한다.
+    #[test]
+    fn bracket_keys_are_disabled_when_at_bat_seqs_collide_due_to_a_missing_no() {
+        let mut app = live_app_with_at_bats(3);
+        if let Screen::Live { state: Some(s), .. } = &mut app.screen {
+            for ab in s.at_bats.iter_mut() {
+                ab.seq = 0; // "no" 결측 시뮬레이션 — 전 항목 충돌
+            }
+        }
+        app.on_key(KeyCode::Char('['));
+        assert_eq!(
+            app.live_atbat_sel, None,
+            "seq가 유일하지 않으면 되감기 네비게이션이 무동작이어야 한다"
+        );
+        app.on_key(KeyCode::Char(']'));
+        assert_eq!(app.live_atbat_sel, None);
+    }
+
+    /// List 화면에서는 `[`/`]`가 아무 것도 하지 않는다(패닉 없음).
+    #[test]
+    fn bracket_keys_are_noop_on_list_screen() {
+        let mut app = App::new(Default::default());
+        app.on_key(KeyCode::Char('['));
+        assert_eq!(app.live_atbat_sel, None);
+        app.on_key(KeyCode::Char(']'));
+        assert_eq!(app.live_atbat_sel, None);
+    }
+
+    /// 과거 타석을 보는 중에도 Left/Right로 그 타석의 투구를 하나씩 짚을 수
+    /// 있다 — live_pitch_sel과 live_atbat_sel은 독립적으로 조합된다.
+    #[test]
+    fn pitch_selection_combines_with_rewinding_to_a_past_at_bat() {
+        let mut app = live_app_with_at_bats(3);
+        app.on_key(KeyCode::Char('[')); // batter1(과거)로 이동
+        assert_eq!(app.live_atbat_sel, Some(101));
+        app.on_key(KeyCode::Right);
+        assert_eq!(
+            app.live_pitch_sel,
+            Some(0),
+            "과거 타석 안에서도 투구 선택이 동작해야 한다"
+        );
+    }
+
+    /// j/k(문자중계 줄 커서, v0.18): 처음 누르면 항상 맨 아래(최신 줄)에서
+    /// 시작하고, 그 뒤로는 방향대로 움직이며 양끝에서 clamp된다.
+    #[test]
+    fn j_k_move_the_relay_cursor_starting_from_the_bottom() {
+        let mut app = live_app_with_at_bats(1); // relay_lines: ["line-0-a", "line-0-b"]
+        assert_eq!(app.live_relay_cursor, None);
+        app.on_key(KeyCode::Char('k'));
+        assert_eq!(
+            app.live_relay_cursor,
+            Some(1),
+            "처음 누르면 맨 아래에서 시작"
+        );
+        app.on_key(KeyCode::Char('k'));
+        assert_eq!(app.live_relay_cursor, Some(0));
+        app.on_key(KeyCode::Char('k')); // 경계: 더 못 감
+        assert_eq!(app.live_relay_cursor, Some(0));
+        app.on_key(KeyCode::Char('j'));
+        assert_eq!(app.live_relay_cursor, Some(1));
+        app.on_key(KeyCode::Char('j')); // 경계: 이미 맨 아래
+        assert_eq!(app.live_relay_cursor, Some(1));
+    }
+
+    /// Esc 3단 계단(v0.18): ①투구/문자중계 커서 해제 → ②라이브 복귀 →
+    /// ③화면 이탈(목록으로). 기존 2단(①·③) 계단에 돌려보기 복귀(②)가 끼어든
+    /// 것이므로, 셋 다 한 번씩 확인해 순서가 뒤섞이지 않는지 고정한다.
+    #[test]
+    fn esc_staircase_clears_local_selection_then_rewind_then_leaves_live() {
+        let mut app = live_app_with_at_bats(3);
+        app.on_key(KeyCode::Char('['));
+        app.on_key(KeyCode::Right);
+        assert_eq!(app.live_pitch_sel, Some(0));
+        assert_eq!(app.live_atbat_sel, Some(101));
+
+        app.on_key(KeyCode::Esc); // 1단계: 투구 선택만 해제
+        assert_eq!(app.live_pitch_sel, None);
+        assert_eq!(app.live_atbat_sel, Some(101), "아직 과거 타석을 보는 중");
+        assert!(matches!(app.screen, Screen::Live { .. }));
+
+        app.on_key(KeyCode::Esc); // 2단계: 라이브로 복귀
+        assert_eq!(app.live_atbat_sel, None);
+        assert!(matches!(app.screen, Screen::Live { .. }), "화면은 유지");
+
+        app.on_key(KeyCode::Esc); // 3단계: 목록으로
+        assert!(matches!(app.screen, Screen::List));
+    }
+
+    /// Esc 1단계는 문자중계 커서(pitch 선택 없이 j/k만 쓴 경우)도 함께 해제한다.
+    #[test]
+    fn esc_first_step_also_clears_a_bare_relay_cursor() {
+        let mut app = live_app_with_at_bats(1);
+        app.on_key(KeyCode::Char('k'));
+        assert_eq!(app.live_relay_cursor, Some(1));
+        app.on_key(KeyCode::Esc);
+        assert_eq!(app.live_relay_cursor, None);
+        assert!(
+            matches!(app.screen, Screen::Live { .. }),
+            "1단계는 화면을 유지한다"
+        );
+    }
+
+    /// 라이브 추종의 핵심(v0.18): 과거 타석을 보며 투구까지 선택해 둔 상태에서
+    /// 새 폴링이 도착해 라이브 타석이 바뀌어도(기존 "투구 수 감소→선택 리셋"
+    /// 신호가 동시에 발생해도) 사용자가 보던 자리가 튀면 안 된다.
+    #[test]
+    fn rewinding_selection_survives_a_poll_that_advances_the_live_at_bat() {
+        let mut app = live_app_with_at_bats(3); // batter0, batter1, batter2(live)
+        app.on_key(KeyCode::Char('[')); // batter1로 이동
+        assert_eq!(app.live_atbat_sel, Some(101));
+        app.on_key(KeyCode::Right);
+        assert_eq!(app.live_pitch_sel, Some(0));
+
+        // 폴링으로 새 타석(batter3)이 시작됐다고 가정 — 새 타석은 아직
+        // 무투구라 기존 "투구 수 감소" 리셋 신호도 함께 발생시킨다(가드가
+        // 없었다면 이 신호가 live_pitch_sel을 지웠을 것).
+        let fresh = {
+            let Screen::Live {
+                state: Some(mut s), ..
+            } = live_app_with_at_bats(4).screen
+            else {
+                unreachable!()
+            };
+            s.current_pitches = vec![];
+            s
+        };
+        app.apply(crate::poller::Update::Live("g".into(), fresh));
+
+        assert_eq!(
+            app.live_atbat_sel,
+            Some(101),
+            "돌려보기 선택이 새 폴링에 튀면 안 된다"
+        );
+        assert_eq!(
+            app.live_pitch_sel,
+            Some(0),
+            "과거 타석 안의 투구 선택도 유지돼야 한다"
+        );
+        if let Screen::Live { state: Some(s), .. } = &app.screen {
+            assert_eq!(s.at_bats.len(), 4, "새 타석은 실제로 반영된다");
+            assert_eq!(
+                s.active_at_bat(app.live_atbat_sel).unwrap().batter_name,
+                "batter1",
+                "여전히 같은 과거 타석을 보고 있어야 한다"
+            );
+        } else {
+            panic!("expected Screen::Live");
+        }
+    }
+
+    /// 읽던 타석의 **자리(인덱스)가 밀려도** 같은 타석을 계속 봐야 한다. 중계 응답은
+    /// 현재 이닝만 담으므로 앞쪽 항목이 빠지고 뒤에 새 타석이 붙는 일이 실제로
+    /// 일어난다 — 선택을 인덱스로 들고 있으면 그때 같은 자리가 다른 타자를 가리켜
+    /// 사용자가 읽던 위치가 조용히 어긋난다(번호로 고정하는 이유).
+    #[test]
+    fn rewinding_selection_tracks_the_at_bat_even_when_its_index_shifts() {
+        let mut app = live_app_with_at_bats(3); // seq 100,101,102
+        app.on_key(KeyCode::Char('['));
+        assert_eq!(app.live_atbat_sel, Some(101));
+
+        // 같은 이닝이 이어지는 폴링: 가장 오래된 100이 응답에서 빠지고 103이 붙는다.
+        // 보고 있던 101은 인덱스 1 → 0으로 밀린다.
+        let shifted = {
+            let Screen::Live {
+                state: Some(mut s), ..
+            } = live_app_with_at_bats(4).screen
+            else {
+                unreachable!()
+            };
+            s.at_bats.remove(0);
+            s
+        };
+        app.apply(crate::poller::Update::Live("g".into(), shifted));
+
+        assert_eq!(app.live_atbat_sel, Some(101), "선택은 번호 그대로");
+        if let Screen::Live { state: Some(s), .. } = &app.screen {
+            assert_eq!(
+                s.at_bats.iter().position(|ab| ab.seq == 101),
+                Some(0),
+                "자리는 실제로 밀렸다(테스트 전제 확인)"
+            );
+            assert_eq!(
+                s.active_at_bat(app.live_atbat_sel).unwrap().batter_name,
+                "batter1",
+                "자리가 밀려도 읽던 타석 그대로여야 한다"
+            );
+        } else {
+            panic!("expected Screen::Live");
+        }
+    }
+
+    /// 이닝이 넘어가면 응답이 통째로 갈려 보던 타석이 사라진다. 그때는 다른 타석을
+    /// 그 자리인 척 보여주지 말고 라이브로 되돌린다 — 조용히 어긋나느니 눈에 보이게
+    /// 최신으로 돌아오는 편이 낫다.
+    #[test]
+    fn rewinding_returns_to_live_when_the_inning_rolls_over() {
+        let mut app = live_app_with_at_bats(3);
+        app.on_key(KeyCode::Char('['));
+        app.on_key(KeyCode::Right);
+        assert_eq!(app.live_atbat_sel, Some(101));
+        assert_eq!(app.live_pitch_sel, Some(0));
+
+        // 다음 이닝 응답: 번호대가 통째로 다르다(보던 101이 없다).
+        let next_inning = {
+            let Screen::Live {
+                state: Some(mut s), ..
+            } = live_app_with_at_bats(2).screen
+            else {
+                unreachable!()
+            };
+            for (i, ab) in s.at_bats.iter_mut().enumerate() {
+                ab.seq = 200 + i as i64;
+            }
+            s
+        };
+        app.apply(crate::poller::Update::Live("g".into(), next_inning));
+
+        assert_eq!(
+            app.live_atbat_sel, None,
+            "사라진 타석에 남아 있지 말고 라이브로 복귀"
+        );
+        assert_eq!(app.live_pitch_sel, None, "그 타석의 투구 선택도 함께 해제");
+        assert_eq!(app.live_relay_cursor, None, "문자중계 커서도 함께 해제");
+    }
+
+    /// live_atbat_sel이 None(라이브 추종)일 때는 기존 규칙이 그대로 적용돼야
+    /// 한다 — new_at_bat_with_fewer_pitches_resets_selection과 짝을 이루는
+    /// 무회귀 확인(가드 조건 자체를 고정).
+    #[test]
+    fn live_follow_mode_still_resets_pitch_selection_on_a_new_at_bat() {
+        let mut app = live_app_with_at_bats(3);
+        app.on_key(KeyCode::Right); // 라이브(batter2)에서 투구 선택
+        assert_eq!(app.live_pitch_sel, Some(0));
+        assert_eq!(app.live_atbat_sel, None);
+
+        let fresh = {
+            let Screen::Live {
+                state: Some(mut s), ..
+            } = live_app_with_at_bats(4).screen
+            else {
+                unreachable!()
+            };
+            s.current_pitches = vec![];
+            s
+        };
+        app.apply(crate::poller::Update::Live("g".into(), fresh));
+        assert_eq!(
+            app.live_pitch_sel, None,
+            "라이브 추종 중엔 새 타석에서 선택이 리셋돼야 한다(기존 동작)"
+        );
+    }
+
+    /// I-2: 라이브 추종 중 새 타석이 시작되면 문자중계 커서도 함께 리셋돼야
+    /// 한다 — 안 그러면 읽던 자리가 다른 타자의 줄로 조용히 옮겨간다(리뷰
+    /// 실측 재현). `live_app_with_at_bats`는 at-bat마다 투구를 정확히
+    /// 1개씩만 담으므로, n=3→4로 갈 때 seq는 102→103으로 바뀌지만
+    /// current_pitches 길이는 1→1로 그대로다 — "투구 수 감소"라는 기존
+    /// 신호로는 이 새 타석을 못 알아채는 경우를 일부러 재현해, seq 비교가
+    /// 실제로 필요하다는 것을 증명한다.
+    #[test]
+    fn live_follow_mode_resets_relay_cursor_on_a_new_at_bat_even_when_pitch_count_is_unchanged() {
+        let mut app = live_app_with_at_bats(3); // batter0, batter1, batter2(live, seq 102)
+        app.on_key(KeyCode::Char('k')); // 라이브 추종 중 문자중계 커서 시작
+        assert_eq!(app.live_relay_cursor, Some(1));
+
+        let fresh = {
+            let Screen::Live { state: Some(s), .. } = live_app_with_at_bats(4).screen
+            // batter3(live, seq 103), 투구는 여전히 1개
+            else {
+                unreachable!()
+            };
+            s
+        };
+        app.apply(crate::poller::Update::Live("g".into(), fresh));
+
+        assert_eq!(
+            app.live_relay_cursor, None,
+            "새 타석이 시작되면 이전 타석의 문자중계 커서 자리는 무의미해진다"
+        );
+        assert_eq!(
+            app.live_pitch_sel, None,
+            "같은 신호로 투구 선택도 함께 리셋돼야 한다"
+        );
     }
 
     #[test]
@@ -1224,6 +1760,31 @@ mod tests {
             "selection must not survive the exit"
         );
         assert_eq!(app.selected, 0);
+    }
+
+    /// I-3: `enter_live`(공유 헬퍼)는 이전 게임에서 짚어보던 투구/타석/문자중계
+    /// 선택을 셋 다 반드시 리셋한다 — Enter 키 진입(on_key)과 `--team` 자동
+    /// 진입(main.rs)이 각자 화면 전환을 들고 있다가 자동 진입 쪽만 리셋을
+    /// 빠뜨려, 다른 경기에서 되감기 중이던 선택이 새로 자동 진입한 경기에
+    /// 그대로 남는 결함이 있었다(리뷰 I-3). seq는 경기별 번호라 다른 경기와
+    /// 대역이 겹칠 수 있어, 리셋하지 않으면 폴링 가드(`!l.has_at_bat(seq)`)가
+    /// 걸러주지 못한다.
+    #[test]
+    fn enter_live_resets_all_three_selections_even_when_a_previous_game_left_them_set() {
+        let mut app = live_app_with_at_bats(3);
+        app.on_key(KeyCode::Char('[')); // 과거 타석으로 이동
+        app.on_key(KeyCode::Right); // 그 타석의 투구 선택
+        app.on_key(KeyCode::Char('k')); // 문자중계 커서까지
+        assert!(app.live_atbat_sel.is_some());
+        assert!(app.live_pitch_sel.is_some());
+        assert!(app.live_relay_cursor.is_some());
+
+        app.enter_live(game("other-game"));
+
+        assert!(matches!(app.screen, Screen::Live { .. }));
+        assert_eq!(app.live_atbat_sel, None);
+        assert_eq!(app.live_pitch_sel, None);
+        assert_eq!(app.live_relay_cursor, None);
     }
 
     /// News는 보조 기능 — 스피너(fetching) 상태에 관여하면 안 된다(v0.2 최종

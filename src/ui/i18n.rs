@@ -34,6 +34,15 @@ pub struct Labels {
     pub hint_all_pitches: &'static str, // "All pitches" / "전체보기"
     pub hint_pitch: &'static str,       // "Pitch" / "투구"
     pub hint_quit: &'static str,        // "Quit" / "종료"
+    pub hint_rewind: &'static str,      // "Rewind" / "돌려보기" ([ ]로 과거 타석 이동, v0.18)
+    pub hint_go_live: &'static str, // "Live" / "라이브로" (Esc: 과거 타석 보기 → 최신 복귀, v0.18)
+    /// "Relay" / "중계" (footer j/k 힌트, v0.18 리뷰 I-5 — 문자중계 줄 커서를
+    /// 발견할 방법이 어디에도 없었다).
+    pub hint_relay: &'static str,
+    /// "Latest" / "최신" (Esc: 문자중계 커서만 있을 때, v0.18 리뷰 M-5 — 이전엔
+    /// 이 상태에서도 투구 전용 문구인 hint_all_pitches를 재사용해 라벨이 실제
+    /// 상태와 안 맞았다).
+    pub hint_latest: &'static str,
     pub error_prefix: &'static str,
     // 블록 타이틀 조각
     pub title_games: &'static str,     // " {t} {date} " 조합
@@ -41,6 +50,9 @@ pub struct Labels {
     pub standings_current: &'static str,
     pub title_live: &'static str, // 완성형 " ... "
     pub title_relay: &'static str,
+    /// 돌려보기(v0.18) 중 라이브 타이틀 대신 쓰는 접두("Rewind"/"돌려보기") —
+    /// 과거 타석의 이닝·타자명과 함께 조합해 라이브와 헷갈리지 않게 한다.
+    pub rewind_label: &'static str,
     pub title_zone: &'static str,
     pub title_side: &'static str,
     pub title_help: &'static str,
@@ -97,11 +109,18 @@ pub struct Labels {
     pub pitch_word: &'static str,   // "Pitch" / "투구"
     pub pitches_word: &'static str, // "Pitches" / "투구"
     pub inspect_hint: &'static str, // "(Left/Right to inspect)" / "(좌우 키로 하나씩)"
+    // 경기 경과/소요(v0.18 B-3, live.rs::game_duration_label 전용)
+    pub lbl_elapsed: &'static str, // "Elapsed" / "경과" (진행 중 경기, 시작~지금)
+    pub lbl_duration: &'static str, // "Duration" / "소요" (종료/중단 경기, 시작~마지막 투구)
+    // 투구 간격(v0.18 B-2, live.rs::pitch_interval_label 전용). "{n}{suffix}"
+    // 조립 관례는 poll_suffix 등과 동일 — 60초 이상은 이 접미 없이 "+M:SS"로
+    // 표기한다(elapsed_label과 같은 표기 관례).
+    pub pitch_interval_secs_suffix: &'static str, // "초" / "s" / "秒"
     // 티커
     pub tip_label: &'static str,  // "Tip: " / "팁: "
     pub news_label: &'static str, // "News: " / "뉴스: "
-    // help 오버레이(순서 고정 9줄)
-    pub help_lines: [&'static str; 9],
+    // help 오버레이(순서 고정 11줄, v0.18에서 Rewind·Relay 두 줄 추가)
+    pub help_lines: [&'static str; 11],
     // F2 픽커
     pub pane_date: &'static str,
     pub date_today: &'static str,
@@ -119,6 +138,13 @@ pub struct Labels {
     pub updated_min_suffix: &'static str,  // "m ago" / "분 전" / "分前" (A-2, 60초 이상)
     pub remaining_hour_suffix: &'static str, // "h " / "시간 " / "時間" (A-3, 시 단위 접미)
     pub remaining_min_suffix: &'static str, // "m to go" / "분 후" / "分後" (A-3, 분 단위 접미 — "후"류 종결어 포함)
+    // 뉴스 발행 경과(v0.18 B-1, newslist.rs 전용). header의 A-2(초/분 2단계)와
+    // 달리 뉴스는 초 단위 정밀도가 필요 없어 "분 미만/분/시간/일" 4단계다 —
+    // "{n}{suffix}" 조립 관례(poll_suffix 등과 동일)는 그대로 유지.
+    pub news_age_now: &'static str, // "방금" / "Just now" / "たった今" (1분 미만 전부)
+    pub news_age_min_suffix: &'static str, // "분 전" / "m ago" / "分前" (1분~59분)
+    pub news_age_hour_suffix: &'static str, // "시간 전" / "h ago" / "時間前" (1시간~23시간)
+    pub news_age_day_suffix: &'static str, // "일 전" / "d ago" / "日前" (1일 이상)
 }
 
 pub const EN: Labels = Labels {
@@ -140,12 +166,17 @@ pub const EN: Labels = Labels {
     hint_all_pitches: "All pitches",
     hint_pitch: "Pitch",
     hint_quit: "Quit",
+    hint_rewind: "Rewind",
+    hint_go_live: "Live",
+    hint_relay: "Relay",
+    hint_latest: "Latest",
     error_prefix: " ERROR: ",
     title_games: "Games",
     title_standings: "Standings",
     standings_current: "(current)",
     title_live: " Live ",
     title_relay: " Play-by-play ",
+    rewind_label: "Rewind",
     title_zone: " Zone ",
     title_side: " Side ",
     title_help: " Help ",
@@ -197,6 +228,9 @@ pub const EN: Labels = Labels {
     pitch_word: "Pitch",
     pitches_word: "Pitches",
     inspect_hint: "(Left/Right to inspect)",
+    lbl_elapsed: "Elapsed",
+    lbl_duration: "Duration",
+    pitch_interval_secs_suffix: "s",
     tip_label: "Tip: ",
     news_label: "News: ",
     help_lines: [
@@ -206,6 +240,8 @@ pub const EN: Labels = Labels {
         "Back       Esc",
         "Switch tab Tab / F5",
         "Pitch      Left / Right (live view)",
+        "Rewind     [ / ] (live view)",
+        "Relay      j / k (live view)",
         "Options    F2 (date) / F9 (team/poll)",
         "Links/News o / n",
         "Quit       q / F10",
@@ -221,6 +257,10 @@ pub const EN: Labels = Labels {
     updated_min_suffix: "m ago",
     remaining_hour_suffix: "h ",
     remaining_min_suffix: "m to go",
+    news_age_now: "Just now",
+    news_age_min_suffix: "m ago",
+    news_age_hour_suffix: "h ago",
+    news_age_day_suffix: "d ago",
 };
 
 pub const KO: Labels = Labels {
@@ -242,12 +282,17 @@ pub const KO: Labels = Labels {
     hint_all_pitches: "전체보기",
     hint_pitch: "투구",
     hint_quit: "종료",
+    hint_rewind: "돌려보기",
+    hint_go_live: "라이브로",
+    hint_relay: "중계",
+    hint_latest: "최신",
     error_prefix: " 오류: ",
     title_games: "경기",
     title_standings: "순위",
     standings_current: "(현재)",
     title_live: " 중계 ",
     title_relay: " 문자중계 ",
+    rewind_label: "돌려보기",
     title_zone: " 존 ",
     title_side: " 측면 ",
     title_help: " 도움말 ",
@@ -299,6 +344,9 @@ pub const KO: Labels = Labels {
     pitch_word: "투구",
     pitches_word: "투구",
     inspect_hint: "(좌우 키로 하나씩)",
+    lbl_elapsed: "경과",
+    lbl_duration: "소요",
+    pitch_interval_secs_suffix: "초",
     tip_label: "팁: ",
     news_label: "뉴스: ",
     help_lines: [
@@ -308,6 +356,8 @@ pub const KO: Labels = Labels {
         "뒤로        Esc",
         "탭 전환     Tab / F5",
         "투구 보기   좌우 방향키 (중계 화면)",
+        "돌려보기    [ / ] (중계 화면)",
+        "중계 커서   j / k (중계 화면)",
         "옵션        F2 (날짜) / F9 (팀·주기)",
         "링크/뉴스   o / n",
         "종료        q / F10",
@@ -323,6 +373,10 @@ pub const KO: Labels = Labels {
     updated_min_suffix: "분 전",
     remaining_hour_suffix: "시간 ",
     remaining_min_suffix: "분 후",
+    news_age_now: "방금",
+    news_age_min_suffix: "분 전",
+    news_age_hour_suffix: "시간 전",
+    news_age_day_suffix: "일 전",
 };
 
 pub const JA: Labels = Labels {
@@ -344,12 +398,17 @@ pub const JA: Labels = Labels {
     hint_all_pitches: "全投球",
     hint_pitch: "投球",
     hint_quit: "終了",
+    hint_rewind: "巻き戻し",
+    hint_go_live: "ライブへ",
+    hint_relay: "実況",
+    hint_latest: "最新",
     error_prefix: " エラー: ",
     title_games: "試合",
     title_standings: "順位",
     standings_current: "(現在)",
     title_live: " 中継 ",
     title_relay: " 実況 ",
+    rewind_label: "巻き戻し",
     title_zone: " ゾーン ",
     title_side: " 側面 ",
     title_help: " ヘルプ ",
@@ -401,6 +460,9 @@ pub const JA: Labels = Labels {
     pitch_word: "投球",
     pitches_word: "投球",
     inspect_hint: "(左右キーで1球ずつ)",
+    lbl_elapsed: "経過",
+    lbl_duration: "所要時間",
+    pitch_interval_secs_suffix: "秒",
     tip_label: "ヒント: ",
     news_label: "ニュース: ",
     help_lines: [
@@ -410,6 +472,8 @@ pub const JA: Labels = Labels {
         "戻る        Esc",
         "タブ切替    Tab / F5",
         "投球確認    Left / Right (中継画面)",
+        "巻き戻し    [ / ] (中継画面)",
+        "実況        j / k (中継画面)",
         "オプション  F2 (日付) / F9 (チーム·間隔)",
         "リンク/ニュース  o / n",
         "終了        q / F10",
@@ -425,6 +489,10 @@ pub const JA: Labels = Labels {
     updated_min_suffix: "分前",
     remaining_hour_suffix: "時間",
     remaining_min_suffix: "分後",
+    news_age_now: "たった今",
+    news_age_min_suffix: "分前",
+    news_age_hour_suffix: "時間前",
+    news_age_day_suffix: "日前",
 };
 
 pub fn labels(lang: Lang) -> &'static Labels {
@@ -460,7 +528,7 @@ mod tests {
     use super::*;
     use crate::ui::text::display_width;
 
-    /// 완전성: 모든 언어(KO/EN/JA) 전 필드 비어있지 않음 + help 9줄 전부 존재.
+    /// 완전성: 모든 언어(KO/EN/JA) 전 필드 비어있지 않음 + help_lines 전 줄 존재.
     #[test]
     fn every_label_is_nonempty_in_all_languages() {
         for l in [&KO, &EN, &JA] {
@@ -540,6 +608,14 @@ mod tests {
                 l.pitch_word,
                 l.pitches_word,
                 l.inspect_hint,
+                l.lbl_elapsed,
+                l.lbl_duration,
+                l.pitch_interval_secs_suffix,
+                l.hint_rewind,
+                l.hint_go_live,
+                l.hint_relay,
+                l.hint_latest,
+                l.rewind_label,
                 l.tip_label,
                 l.news_label,
                 l.pane_date,
@@ -553,6 +629,10 @@ mod tests {
                 l.updated_min_suffix,
                 l.remaining_hour_suffix,
                 l.remaining_min_suffix,
+                l.news_age_now,
+                l.news_age_min_suffix,
+                l.news_age_hour_suffix,
+                l.news_age_day_suffix,
             ] {
                 assert!(!s.trim().is_empty());
             }

@@ -1,5 +1,5 @@
-# kbotop demo — v0.8: 인앱 설정(S)·테마 프리셋(mono=무채)·5개국어 즉시 전환,
-# 인앱 뉴스 목록 읽기(n), 라이브 투구 네비(측면/존), 브래킷 탭.
+# kbotop demo — v0.18: 돌려보기([ ] 타석·j/k 문자중계 커서), 라이브 투구 네비(측면/존),
+# 인앱 뉴스 목록 읽기(n), 인앱 설정(S)·테마 프리셋(mono=무채)·언어 전환, 브래킷 탭.
 # (2026-07-19 키움 9:9 한화, 마지막 타석 7구)
 # record with: vhs docs/demo.tape  (needs `kbotop` on PATH: cargo install --path .)
 # 설정 자동저장이 실제 config를 안 건드리도록 임시 HOME으로 격리해 실행한다
@@ -28,9 +28,28 @@ Sleep 5s
 Right@700ms 3
 Sleep 1500ms
 
-# Esc 1회: 전체보기 복귀, 2회: 목록
+# 돌려보기(v0.18): `[`로 지나간 타석을 되감는다 — 그 타석의 문자중계·존·측면이
+# 함께 따라온다. 중계에 이미 실려 오던 데이터인데 지금까진 그리지 않고 버렸다.
+Type "["
+Sleep 1600ms
+Type "["
+Sleep 1800ms
+
+# j/k: 문자중계를 한 줄씩 — 화면 밖으로 밀려난 줄도 되짚어 볼 수 있다
+Type "k"
+Sleep 600ms
+Type "k"
+Sleep 600ms
+Type "j"
+Sleep 1600ms
+
+# Esc 계단: 커서 해제 → 최신(라이브) 복귀
 Escape
-Sleep 700ms
+Sleep 800ms
+Escape
+Sleep 1400ms
+
+# Esc: 목록으로
 Escape
 Sleep 1200ms
 

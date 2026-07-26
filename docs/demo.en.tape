@@ -1,5 +1,5 @@
-# kbotop demo (English) — v0.8+: in-app settings (S), theme presets (mono = no color),
-# five languages switched live, in-app news list (n), live pitch nav (side/zone), tabs.
+# kbotop demo (English) — v0.18: rewind ([ ] at-bats, j/k play-by-play cursor),
+# live pitch nav (side/zone), in-app news list (n), settings (S), theme presets, tabs.
 # (2026-07-19 Kiwoom 9:9 Hanwha, last at-bat, 7 pitches)
 # record with: vhs docs/demo.en.tape  (needs `kbotop` on PATH: cargo install --path .)
 # Isolate config autosave from the real config via a temp HOME
@@ -28,9 +28,28 @@ Sleep 5s
 Right@700ms 3
 Sleep 1500ms
 
-# Esc once: back to all pitches, twice: back to the list
+# rewind (v0.18): `[` steps back through past at-bats — the play-by-play, zone and
+# side view follow. The relay response already carried this; we used to discard it.
+Type "["
+Sleep 1600ms
+Type "["
+Sleep 1800ms
+
+# j/k: move a cursor through the play-by-play — lines scrolled off screen come back
+Type "k"
+Sleep 600ms
+Type "k"
+Sleep 600ms
+Type "j"
+Sleep 1600ms
+
+# Esc staircase: clear the cursor, then return to live
 Escape
-Sleep 700ms
+Sleep 800ms
+Escape
+Sleep 1400ms
+
+# Esc: back to the list
 Escape
 Sleep 1200ms
 

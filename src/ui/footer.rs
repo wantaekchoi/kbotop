@@ -202,14 +202,23 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
                         core: true,
                     },
                 ],
-                (Screen::Live { .. }, _) => {
-                    // 선택 중: Esc 1회 = 전체보기 복귀임을 명시(직관성).
+                (Screen::Live { state, .. }, _) => {
+                    // v0.18 Esc 계단(app.rs와 순서를 맞춘다): ①투구 또는
+                    // 문자중계 커서가 있으면 그 커서 전용 복귀 라벨(가장 좁은
+                    // 단계 — 리뷰 M-5: 이전엔 이 둘을 하나로 묶어 문자중계
+                    // 커서만 있을 때도 투구 전용 문구("전체보기")가 떴다) →
+                    // ②과거 타석을 보는 중이면 "라이브로"(중간 단계) → ③그
+                    // 외엔 "뒤로"(화면 이탈, 가장 넓은 단계).
                     let back = if app.live_pitch_sel.is_some() {
                         l.hint_all_pitches
+                    } else if app.live_relay_cursor.is_some() {
+                        l.hint_latest
+                    } else if app.live_atbat_sel.is_some() {
+                        l.hint_go_live
                     } else {
                         l.hint_back
                     };
-                    vec![
+                    let mut items = vec![
                         HintItem {
                             key: "F1",
                             label: l.hint_help,
@@ -220,17 +229,40 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
                             label: back,
                             core: true,
                         },
-                        HintItem {
-                            key: "←→",
-                            label: l.hint_pitch,
+                    ];
+                    // 돌려볼 과거 타석이 있을 때만 광고한다(at_bats가 1개뿐이면
+                    // `[`/`]`가 아무 데도 못 가므로 힌트가 거짓 약속이 된다).
+                    if state.as_ref().is_some_and(|s| s.at_bats.len() > 1) {
+                        items.push(HintItem {
+                            key: "[ ]",
+                            label: l.hint_rewind,
                             core: false,
-                        },
-                        HintItem {
-                            key: "q",
-                            label: l.hint_quit,
-                            core: true,
-                        },
-                    ]
+                        });
+                    }
+                    items.push(HintItem {
+                        key: "←→",
+                        label: l.hint_pitch,
+                        core: false,
+                    });
+                    // 문자중계 줄 커서(j/k, v0.18)를 어디에도 안내하지 않아
+                    // 발견 불가능했다(리뷰 I-5) — 되감을 줄이 있을 때만
+                    // 광고한다(rewind 힌트와 같은 "거짓 약속 금지" 원칙).
+                    if state
+                        .as_ref()
+                        .is_some_and(|s| !s.active_relay_lines(app.live_atbat_sel).is_empty())
+                    {
+                        items.push(HintItem {
+                            key: "j/k",
+                            label: l.hint_relay,
+                            core: false,
+                        });
+                    }
+                    items.push(HintItem {
+                        key: "q",
+                        label: l.hint_quit,
+                        core: true,
+                    });
+                    items
                 }
             };
             (
@@ -550,6 +582,101 @@ mod tests {
         let selected = render_to_string(&app);
         assert!(selected.contains("Esc All pitches"));
         assert!(!selected.contains("Esc Back"));
+    }
+
+    fn live_screen_with_relay(lines: Vec<String>) -> Screen {
+        Screen::Live {
+            game: Game {
+                id: "g".into(),
+                start: "".into(),
+                status: GameStatus::Live,
+                status_label: "".into(),
+                home: Team {
+                    code: "LG".into(),
+                    name: "LG".into(),
+                },
+                away: Team {
+                    code: "KT".into(),
+                    name: "KT".into(),
+                },
+                home_score: None,
+                away_score: None,
+            },
+            state: Some(crate::model::LiveState {
+                inning_label: String::new(),
+                home: Team {
+                    code: "LG".into(),
+                    name: "LG".into(),
+                },
+                away: Team {
+                    code: "KT".into(),
+                    name: "KT".into(),
+                },
+                home_score: 0,
+                away_score: 0,
+                count: crate::model::Count {
+                    ball: 0,
+                    strike: 0,
+                    out: 0,
+                },
+                bases: crate::model::BaseState {
+                    first: false,
+                    second: false,
+                    third: false,
+                },
+                pitcher_name: String::new(),
+                batter_name: String::new(),
+                home_win_rate: None,
+                away_win_rate: None,
+                relay_log: lines,
+                current_pitches: vec![],
+                next_batter_name: String::new(),
+                at_bats: vec![],
+            }),
+        }
+    }
+
+    /// M-5: 문자중계 커서만 있고(투구 선택은 없이) 있을 때 Esc 라벨은 투구
+    /// 전용 문구("All pitches")가 아니라 그 상태에 맞는 라벨이어야 한다 —
+    /// 이전엔 pitch_sel과 relay_cursor를 하나로 묶어 커서만 있어도 투구
+    /// 문구("All pitches")가 떴다(실측 지적).
+    #[test]
+    fn live_hint_shows_a_relay_specific_label_when_only_the_relay_cursor_is_selected() {
+        let mut app = App::new(Default::default());
+        app.screen = live_screen_with_relay(vec!["line-a".into(), "line-b".into()]);
+        app.live_relay_cursor = Some(0);
+        let text = render_to_string(&app);
+        assert!(
+            !text.contains("All pitches"),
+            "relay-only cursor must not claim to be about pitches: {text}"
+        );
+        assert!(
+            text.contains("Esc Latest"),
+            "expected a relay-specific Esc label: {text}"
+        );
+    }
+
+    /// I-5: 문자중계 커서(j/k)가 footer 어디에도 안내되지 않아 발견 불가능한
+    /// 문제 — 되감을 줄이 있을 때는 힌트로 광고한다.
+    #[test]
+    fn live_hint_advertises_relay_cursor_when_there_are_lines_to_scroll() {
+        let mut app = App::new(Default::default());
+        app.screen = live_screen_with_relay(vec!["line-a".into()]);
+        let text = render_to_string(&app);
+        assert!(text.contains("j/k"), "expected the j/k relay hint: {text}");
+    }
+
+    /// rewind 힌트와 같은 원칙(거짓 약속 금지) — 되감을 줄이 하나도 없으면
+    /// j/k 힌트를 보여주지 않는다.
+    #[test]
+    fn live_hint_omits_relay_cursor_hint_when_there_is_nothing_to_scroll() {
+        let mut app = App::new(Default::default());
+        app.screen = live_screen_with_relay(vec![]);
+        let text = render_to_string(&app);
+        assert!(
+            !text.contains("j/k"),
+            "must not advertise j/k with no relay lines to scroll: {text}"
+        );
     }
 
     #[test]

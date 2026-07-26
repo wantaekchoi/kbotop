@@ -600,6 +600,7 @@ mod tests {
             relay_log: vec![],
             current_pitches: vec![],
             next_batter_name: String::new(),
+            at_bats: vec![],
         };
         let game = Game {
             id: "g".into(),
@@ -714,6 +715,7 @@ mod tests {
                 mk_pitch(4, PitchResult::InPlay),
             ],
             next_batter_name: String::new(),
+            at_bats: vec![],
         };
         let game = Game {
             id: "g".into(),
@@ -805,6 +807,7 @@ mod tests {
             relay_log: vec![],
             current_pitches: vec![pitch],
             next_batter_name: String::new(),
+            at_bats: vec![],
         };
         let game = Game {
             id: "g".into(),

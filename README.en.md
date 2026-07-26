@@ -59,6 +59,8 @@ Vim-style navigation; the in-app `?` help is the source of truth.
 - Team links (official site / goods shop): `o`
 - Open the news list: `n` (then `Enter` on an item to read it)
 - Inspect pitches: `Left` / `Right` (live view)
+- Rewind to a previous/next at-bat: `[` / `]` (live view)
+- Move the play-by-play cursor: `j` / `k` (live view)
 - Help: `?`
 - Quit: `q`
 

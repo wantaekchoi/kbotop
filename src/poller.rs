@@ -543,6 +543,7 @@ mod tests {
             relay_log: vec![],
             current_pitches: vec![],
             next_batter_name: String::new(),
+            at_bats: vec![],
         }
     }
 

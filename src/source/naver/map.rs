@@ -1,10 +1,10 @@
 use super::dto::{
     ApiEnvelope, Lineup, PtsOption, RelayResult, ScheduleGame, ScheduleResult, StandingsResult,
-    TextRelayData,
+    TextRelay, TextRelayData,
 };
 use crate::error::Result;
 use crate::model::{
-    BaseState, Count, Game, GameStatus, LiveState, Pitch, PitchResult, Standing, Team,
+    AtBat, BaseState, Count, Game, GameStatus, LiveState, Pitch, PitchResult, Standing, Team,
 };
 
 fn status_of(g: &ScheduleGame) -> GameStatus {
@@ -187,6 +187,104 @@ fn result_of(text: &str) -> PitchResult {
     }
 }
 
+/// "현재 타석"으로 볼 항목인지: (a) 투구 추적 데이터(ptsOptions)를 가졌거나,
+/// (b) 아직 투구는 없지만 타자 등장 안내(type==8)로 막 시작된 타석. 둘 다
+/// 아니면(승리투수 발표=99, 이닝 시작=0 같은 진행-외 문구) 타석으로 치지
+/// 않는다 — live_from_relay의 `current` 선택과 at_bats 구성이 이 판정을
+/// 공유한다(어긋나면 "현재 타석"과 "at_bats 마지막 항목"이 달라진다).
+const BATTER_ANNOUNCEMENT_TYPE: i32 = 8;
+
+fn is_at_bat_worthy(t: &TextRelay) -> bool {
+    !t.pts_options.is_empty()
+        || t.text_options
+            .iter()
+            .any(|o| o.r#type == BATTER_ANNOUNCEMENT_TYPE)
+}
+
+/// 앱이 직접 조립하는 UI chrome 텍스트(영어 라벨 하드 제약을 따른다 — 팀명/
+/// 중계 텍스트 같은 원문 그대로의 API 데이터와 달리 이건 소스 코드에 박힌
+/// 문자열이다). homeOrAway("0"=초/away 공격, "1"=말/home 공격)로 절반 이닝까지
+/// 표기한다. LiveState.inning_label과 AtBat.inning_label이 이 함수를 공유한다.
+fn inning_label_of(t: &TextRelay) -> String {
+    match t.home_or_away.as_str() {
+        "0" => format!("T{}", t.inn),
+        "1" => format!("B{}", t.inn),
+        _ => format!("Inn {}", t.inn),
+    }
+}
+
+/// 타석의 문자중계 줄(오래된→최신, 응답 원문 seqno 순서 그대로 — 한 항목 안의
+/// textOptions는 이미 오름차순이다). 빈 텍스트는 건너뛴다.
+fn relay_lines_of(t: &TextRelay) -> Vec<String> {
+    t.text_options
+        .iter()
+        .filter(|o| !o.text.trim().is_empty())
+        .map(|o| o.text.clone())
+        .collect()
+}
+
+/// 타석의 투구 목록(ptsOptions → Pitch). 같은 ballcount 순번의 텍스트를
+/// 매칭해 결과 분류·원문을 함께 싣는다(없으면 빈 문자열).
+fn pitches_of(t: &TextRelay) -> Vec<Pitch> {
+    t.pts_options
+        .iter()
+        .map(|p| {
+            let text = t
+                .text_options
+                .iter()
+                .find(|o| o.text.starts_with(&format!("{}구", p.ballcount)))
+                .map(|o| o.text.clone())
+                .unwrap_or_default();
+            Pitch {
+                order: p.ballcount,
+                plate_x: p.cross_plate_x,
+                plate_y: plate_height(p),
+                sz_top: p.top_sz,
+                sz_bottom: p.bottom_sz,
+                speed_kmh: speed_kmh(p),
+                result: result_of(&text),
+                text,
+                time_hms: time_from_pitch_id(&p.pitch_id),
+                plate_t: plate_cross_t(p).unwrap_or(0.0),
+                y0: p.y0,
+                vy0: p.vy0,
+                ay: p.ay,
+                z0: p.z0,
+                vz0: p.vz0,
+                az: p.az,
+            }
+        })
+        .collect()
+}
+
+/// 타자 등장 안내(type==8, "9번타자 천성호" 형식) 텍스트에서 이름만 뽑는다.
+/// 안내가 없으면 빈 문자열(관용 — pts만 있고 안내가 빠진 항목도 버리지 않고
+/// 표현하되, 이름 칸만 비운다). "번타자 " 구분자가 없는 낯선 형식이면 원문
+/// 전체를 폴백으로 돌려준다(정보를 아예 잃는 것보다 낫다).
+fn batter_name_of(t: &TextRelay) -> String {
+    let Some(o) = t
+        .text_options
+        .iter()
+        .find(|o| o.r#type == BATTER_ANNOUNCEMENT_TYPE)
+    else {
+        return String::new();
+    };
+    match o.text.split_once("번타자 ") {
+        Some((_, name)) => name.trim().to_string(),
+        None => o.text.clone(),
+    }
+}
+
+fn at_bat_of(t: &TextRelay) -> AtBat {
+    AtBat {
+        seq: t.no,
+        batter_name: batter_name_of(t),
+        inning_label: inning_label_of(t),
+        relay_lines: relay_lines_of(t),
+        pitches: pitches_of(t),
+    }
+}
+
 fn name_of(id: &str, home: &Option<Lineup>, away: &Option<Lineup>) -> String {
     // 빈 문자열은 "id 없음"(currentGameState.pitcher/batter가 null→"")과 "pcode
     // 없는 선수"(Player.pcode가 null→"")가 같은 null_as_default 정책으로 합쳐진
@@ -224,72 +322,37 @@ pub fn live_from_relay(json: &str, home: Team, away: Team) -> Result<LiveState> 
         third: base_on(&cgs.base3),
     };
 
-    // Naver 중계 응답은 textRelays를 최신 순(내림차순)으로 내려준다. 그중
-    // "현재 타석"으로 볼 항목은 (a) 투구 추적 데이터(ptsOptions)를 가진
-    // 항목이거나, (b) 아직 투구는 없지만 타자 등장 안내(type==8, 예:
-    // "9번타자 천성호")로 막 시작된 타석이다. type==8도 없고 ptsOptions도
-    // 없는 항목(승리투수 발표=99, 이닝 시작=0 같은 진행-외 문구)만 건너뛴다.
-    // 이걸 구분하지 않고 ptsOptions만 보면, 방금 시작해 아직 무투구인 새
-    // 타석을 건너뛰고 이전 타자의 문자중계/스트존을 현재처럼 잘못 보여준다.
-    const BATTER_ANNOUNCEMENT_TYPE: i32 = 8;
+    // Naver 중계 응답은 textRelays를 최신 순(내림차순)으로 내려준다. is_at_bat_worthy가
+    // "현재 타석"으로 볼 항목을 판정한다 — type==8도 없고 ptsOptions도 없는
+    // 항목(승리투수 발표=99, 이닝 시작=0 같은 진행-외 문구)만 건너뛴다. 이걸
+    // 구분하지 않고 ptsOptions만 보면, 방금 시작해 아직 무투구인 새 타석을
+    // 건너뛰고 이전 타자의 문자중계/스트존을 현재처럼 잘못 보여준다.
     let current = trd
         .text_relays
         .iter()
-        .find(|t| {
-            !t.pts_options.is_empty()
-                || t.text_options
-                    .iter()
-                    .any(|o| o.r#type == BATTER_ANNOUNCEMENT_TYPE)
-        })
+        .find(|t| is_at_bat_worthy(t))
         .or_else(|| trd.text_relays.first());
-    // 앱이 직접 조립하는 UI chrome 텍스트이므로 영어 라벨 하드 제약을 따른다
-    // (팀명/중계 텍스트 같은 원문 그대로의 API 데이터와 달리 이건 소스 코드에
-    // 박힌 문자열이다). homeOrAway("0"=초/away 공격, "1"=말/home 공격)로 절반
-    // 이닝까지 표기한다.
-    let inning_label = current
-        .map(|t| match t.home_or_away.as_str() {
-            "0" => format!("T{}", t.inn),
-            "1" => format!("B{}", t.inn),
-            _ => format!("Inn {}", t.inn),
-        })
-        .unwrap_or_default();
+    let inning_label = current.map(inning_label_of).unwrap_or_default();
 
-    let mut relay_log: Vec<String> = Vec::new();
-    let mut current_pitches: Vec<Pitch> = Vec::new();
-    if let Some(tr) = current {
-        for o in &tr.text_options {
-            if !o.text.trim().is_empty() {
-                relay_log.push(o.text.clone());
-            }
-        }
-        for p in &tr.pts_options {
-            // 같은 ballcount 순번의 텍스트를 매칭(없으면 빈 문자열).
-            let text = tr
-                .text_options
-                .iter()
-                .find(|t| t.text.starts_with(&format!("{}구", p.ballcount)))
-                .map(|t| t.text.clone())
-                .unwrap_or_default();
-            current_pitches.push(Pitch {
-                order: p.ballcount,
-                plate_x: p.cross_plate_x,
-                plate_y: plate_height(p),
-                sz_top: p.top_sz,
-                sz_bottom: p.bottom_sz,
-                speed_kmh: speed_kmh(p),
-                result: result_of(&text),
-                text,
-                time_hms: time_from_pitch_id(&p.pitch_id),
-                plate_t: plate_cross_t(p).unwrap_or(0.0),
-                y0: p.y0,
-                vy0: p.vy0,
-                ay: p.ay,
-                z0: p.z0,
-                vz0: p.vz0,
-                az: p.az,
-            });
-        }
-    }
+    let relay_log: Vec<String> = current.map(relay_lines_of).unwrap_or_default();
+    let current_pitches: Vec<Pitch> = current.map(pitches_of).unwrap_or_default();
+
+    // 과거 타석들(v0.18 "돌려보기"): is_at_bat_worthy를 만족하는 모든 항목을
+    // AtBat으로 만든다. 이 필터는 `current` 선택과 동일한 술어를 쓰므로,
+    // 최소 하나가 걸리는 정상 상황에서는 이 벡터의 마지막 항목이 항상
+    // `current`와 같은 textRelay에서 나온다(reverse 후 마지막 = 원본에서
+    // 가장 먼저 매칭된 항목 = `current`) — relay_log/current_pitches와
+    // 어긋나지 않는다. text_relays 전부가 진행-외 문구뿐이면(예: 이닝
+    // 시작 직후, 아직 첫 타자도 안내되지 않음) 여기는 비지만, 그 경우
+    // current_pitches도 항상 비어 있으므로(진행-외 항목은 pts_options가
+    // 없다) 서로 어긋나지 않는다.
+    let mut at_bats: Vec<AtBat> = trd
+        .text_relays
+        .iter()
+        .filter(|t| is_at_bat_worthy(t))
+        .map(at_bat_of)
+        .collect();
+    at_bats.reverse(); // 응답 원문(최신→오래된)을 오래된→최신으로.
 
     // 다음 타자: 공격 팀 라인업에서 현재 타자의 batOrder를 찾아 다음 타순
     // (9→1 순환)의 첫 항목을 고른다. 교체로 같은 batOrder가 여럿이면 첫
@@ -337,6 +400,7 @@ pub fn live_from_relay(json: &str, home: Team, away: Team) -> Result<LiveState> 
         relay_log,
         current_pitches,
         next_batter_name,
+        at_bats,
     })
 }
 
@@ -612,5 +676,151 @@ mod tests {
         // 9 % 9 + 1 = 1번 타순인 문성주가 다음 타자로 계산되어야 한다.
         assert_eq!(state.batter_name, "천성호");
         assert_eq!(state.next_batter_name, "문성주");
+    }
+
+    /// v0.18 "돌려보기": fixture 실측 — textRelays 13건 중 진행-외 문구뿐인
+    /// 3건(승리투수 발표 1건 + 이닝 시작 2건)을 제외한 10건이 실제 타석이다.
+    /// at_bats는 오래된→최신 순으로 서고, 마지막 항목이 곧 "현재 타석"
+    /// (relay_log/current_pitches)과 내용이 같아야 한다 — 파서가 둘 다 같은
+    /// 헬퍼(relay_lines_of/pitches_of)를 쓰기 때문.
+    #[test]
+    fn at_bats_are_ordered_oldest_to_newest_and_mirror_the_current_at_bat() {
+        let state = live_from_relay(
+            include_str!("../../../tests/fixtures/relay_20260719KTLG.json"),
+            Team {
+                code: "LG".into(),
+                name: "LG".into(),
+            },
+            Team {
+                code: "KT".into(),
+                name: "KT".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(state.at_bats.len(), 10, "10 real at-bats in the fixture");
+        // 가장 오래된 항목(1번타자 최원준, KT 공격 맨 처음)이 first().
+        assert_eq!(state.at_bats.first().unwrap().batter_name, "최원준");
+        // 가장 최신 항목(9번타자 천성호)이 last() = 현재 타석과 동일해야 한다.
+        let latest = state.at_bats.last().unwrap();
+        assert_eq!(latest.batter_name, "천성호");
+        assert_eq!(latest.pitches, state.current_pitches);
+        assert_eq!(latest.relay_lines, state.relay_log);
+
+        // seq는 응답의 textRelay `no` 원문이어야 한다(fixture 실측: 최원준 87 →
+        // 천성호 97, 진행-외 문구 3건을 걸러 10건). 돌려보기 선택이 이 번호로
+        // 고정되므로, 0부터의 인덱스로 채워 넣으면 이닝이 갈릴 때 조용히 어긋난다.
+        assert_eq!(state.at_bats.first().unwrap().seq, 87);
+        assert_eq!(latest.seq, 97);
+        let seqs: Vec<i64> = state.at_bats.iter().map(|ab| ab.seq).collect();
+        let mut sorted = seqs.clone();
+        sorted.sort_unstable();
+        assert_eq!(seqs, sorted, "seq는 오래된→최신으로 증가해야 한다");
+    }
+
+    /// 과거 타석(현재가 아닌 at-bat)도 자기 자신의 투구 데이터를 온전히
+    /// 담아야 한다 — 이게 이 태스크의 핵심("파서가 버리던 걸 살린다"). fixture
+    /// 실측: 가장 오래된 타석(1번타자 최원준)은 7구를 던졌다.
+    #[test]
+    fn a_past_at_bat_carries_its_own_full_pitch_history() {
+        let state = live_from_relay(
+            include_str!("../../../tests/fixtures/relay_20260719KTLG.json"),
+            Team {
+                code: "LG".into(),
+                name: "LG".into(),
+            },
+            Team {
+                code: "KT".into(),
+                name: "KT".into(),
+            },
+        )
+        .unwrap();
+        let oldest = &state.at_bats[0];
+        assert_eq!(oldest.pitches.len(), 7);
+        // 과거 타석의 투구도 현재 타석과 동일한 파이프라인(result_of 등)을
+        // 거쳐 분류된 결과를 담고 있어야 스트존/측면뷰가 재사용할 수 있다.
+        assert!(oldest
+            .pitches
+            .iter()
+            .any(|p| p.result != PitchResult::Unknown));
+        // 이 타석은 두 번째로 오래된 타석(2번타자 김현수)과 구분되는 자기만의
+        // 문자중계를 갖는다 — at_bats[1]과 섞여 있지 않은지 확인.
+        assert!(oldest.relay_lines.iter().any(|l| l.contains("최원준")));
+        assert!(!oldest.relay_lines.iter().any(|l| l.contains("김현수")));
+    }
+
+    /// 진행-외 문구뿐인 항목(승리투수 발표 type==99, 이닝 시작 type==0)은
+    /// at_bats에서 걸러진다 — `current` 선택과 동일한 관용 규칙을 공유한다는
+    /// 걸 손으로 만든 최소 fixture로 명시적으로 고정한다(실 fixture만으로는
+    /// "왜" 3건이 빠졌는지가 개수 비교로만 드러나 회귀를 놓치기 쉽다).
+    #[test]
+    fn at_bats_filters_out_progress_only_entries_between_real_at_bats() {
+        let json = r#"{"result":{"textRelayData":{
+            "currentGameState": {"ball":"0","strike":"0","out":"0","homeScore":"0","awayScore":"0"},
+            "textRelays": [
+                {"inn": 9, "homeOrAway": "1", "textOptions": [
+                    {"seqno": 3, "text": "=====", "type": 99},
+                    {"seqno": 4, "text": "승리투수: 고영표", "type": 99}
+                ], "ptsOptions": []},
+                {"inn": 9, "homeOrAway": "1", "textOptions": [
+                    {"seqno": 2, "text": "9번타자 천성호", "type": 8},
+                    {"seqno": 2, "text": "1구 파울", "type": 1}
+                ], "ptsOptions": [
+                    {"ballcount": 1, "crossPlateX": 0.1, "crossPlateY": 0.5, "topSz": 3.3, "bottomSz": 1.6, "vx0": 1.0, "vy0": 1.0, "vz0": 1.0, "stance": "R"}
+                ]},
+                {"inn": 9, "homeOrAway": "1", "textOptions": [
+                    {"seqno": 1, "text": "9회말 LG 공격", "type": 0}
+                ], "ptsOptions": []},
+                {"inn": 9, "homeOrAway": "0", "textOptions": [
+                    {"seqno": 0, "text": "8번타자 박동원", "type": 8}
+                ], "ptsOptions": []}
+            ],
+            "lastValidMetricOption": null
+        }}}"#;
+        let team = |c: &str| Team {
+            code: c.into(),
+            name: c.into(),
+        };
+        let live = live_from_relay(json, team("LG"), team("KT")).unwrap();
+        assert_eq!(live.at_bats.len(), 2, "only the two real at-bats survive");
+        // reverse 후 오래된→최신: 원문 마지막(가장 오래된) 박동원이 first.
+        assert_eq!(live.at_bats[0].batter_name, "박동원");
+        assert_eq!(live.at_bats[1].batter_name, "천성호");
+        assert!(!live
+            .at_bats
+            .iter()
+            .any(|ab| ab.relay_lines.iter().any(|l| l.contains("승리투수"))));
+        assert!(!live
+            .at_bats
+            .iter()
+            .any(|ab| ab.relay_lines.iter().any(|l| l.contains("9회말 LG 공격"))));
+    }
+
+    /// batter_name_of: "N번타자 이름" 형식에서 이름만 뽑는다. 안내 자체가 없는
+    /// 항목(pts만 있는 경우)은 빈 문자열로 관용 처리한다.
+    #[test]
+    fn at_bat_batter_name_extracts_the_name_after_the_batting_order_prefix() {
+        let json = r#"{"result":{"textRelayData":{
+            "currentGameState": {"ball":"0","strike":"0","out":"0","homeScore":"0","awayScore":"0"},
+            "textRelays": [
+                {"inn": 3, "homeOrAway": "0", "textOptions": [
+                    {"seqno": 1, "text": "1구 파울", "type": 1}
+                ], "ptsOptions": [
+                    {"ballcount": 1, "crossPlateX": 0.1, "crossPlateY": 0.5, "topSz": 3.3, "bottomSz": 1.6, "vx0": 1.0, "vy0": 1.0, "vz0": 1.0, "stance": "R"}
+                ]},
+                {"inn": 3, "homeOrAway": "0", "textOptions": [
+                    {"seqno": 0, "text": "3번타자 안현민", "type": 8}
+                ], "ptsOptions": []}
+            ],
+            "lastValidMetricOption": null
+        }}}"#;
+        let team = |c: &str| Team {
+            code: c.into(),
+            name: c.into(),
+        };
+        let live = live_from_relay(json, team("LG"), team("KT")).unwrap();
+        assert_eq!(live.at_bats.len(), 2);
+        assert_eq!(live.at_bats[0].batter_name, "안현민");
+        // 안내 없이 pts만 있는 항목은 이름을 알 수 없으므로 빈 문자열.
+        assert_eq!(live.at_bats[1].batter_name, "");
     }
 }

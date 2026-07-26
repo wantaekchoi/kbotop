@@ -16,7 +16,7 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Frame, Terminal};
 
-use kbotop::app::{App, Screen, Tab};
+use kbotop::app::{App, Tab};
 use kbotop::config;
 use kbotop::dateutil::{civil_from_days, days_from_civil, format_civil, kst_days};
 use kbotop::poller::{self, Command, Update};
@@ -449,10 +449,11 @@ fn run(
                         // 동일한 가드) — 취소가 아니라면 다음 Games 폴링(60s)에서 상태가
                         // 바뀌었을 때 재시도할 수 있도록 auto_team을 그대로 남겨둔다.
                         if App::can_enter_live(g.status) {
-                            app.screen = Screen::Live {
-                                game: g.clone(),
-                                state: None,
-                            };
+                            // App::on_key의 Enter 진입과 같은 공통 경로(리뷰 I-3) —
+                            // 이전에는 여기만 screen 대입 후 세 선택 리셋을 빠뜨려,
+                            // 다른 경기에서 되감기 중이던 선택이 자동 진입한 새
+                            // 경기에 그대로 남는 결함이 있었다.
+                            app.enter_live(g.clone());
                             let _ = tx_cmd.send(Command::WatchGame(g));
                             auto_team = None;
                         }

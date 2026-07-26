@@ -235,6 +235,12 @@ pub struct CurrentGameState {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextRelay {
+    /// 경기 전체에 걸친 타석 시퀀스 번호(실측: 9회 응답이 86~98, 다른 경기 112~121).
+    /// v0.18 돌려보기가 "사용자가 보던 타석"을 **인덱스가 아니라 이 번호로** 고정하는
+    /// 데 쓴다 — 응답은 현재 이닝만 담으므로(실측), 이닝이 넘어가면 배열이 통째로
+    /// 갈리고 같은 인덱스가 다른 타석을 가리키게 된다.
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub no: i64,
     #[serde(default, deserialize_with = "lenient_int")]
     pub inn: i32,
     /// "0" = 초(away 공격), "1" = 말(home 공격). map.rs가 inning_label(예: "T9"/"B9")을
