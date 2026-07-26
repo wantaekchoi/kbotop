@@ -1,64 +1,31 @@
+use super::live_vm::LiveVm;
 use super::strikezone;
-use super::theme::{self, team_badge_style};
+use super::theme::team_badge_style;
 use crate::app::{App, Screen};
-use crate::localtime::KST_OFFSET_SECS;
-use crate::model::{AtBat, Game, GameStatus, LiveState, Pitch};
-use crate::ui::i18n::Labels;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
-/// Live/Suspended/Final 외 상태(can_enter_live가 걸러내는 Canceled/Scheduled)는
-/// 이 화면에 들어오지 않으므로 배지가 필요 없다 — None을 반환해 그대로 숨긴다.
-/// 색은 games.rs의 status_tag와 맞춘다(같은 상태는 같은 색으로 보이도록).
-/// mono 프리셋은 theme::status_fg 게이트를 거쳐 색을 걷어낸다(header/games와
-/// 동일 패턴) — 리뷰 지적: 이전엔 Suspended가 게이트 없이 Magenta를 직접 써
-/// mono에서도 자홍색이 남았다.
-fn status_badge(
-    status: GameStatus,
-    l: &'static Labels,
-    preset: &str,
-) -> Option<(&'static str, Style)> {
-    match status {
-        GameStatus::Suspended => Some((
-            l.badge_suspended,
-            theme::status_fg(preset, Color::Magenta).add_modifier(Modifier::BOLD),
-        )),
-        GameStatus::Final => Some((
-            l.badge_final,
-            theme::status_fg(preset, Color::Gray).add_modifier(Modifier::BOLD),
-        )),
-        GameStatus::Live | GameStatus::Scheduled | GameStatus::Canceled => None,
-    }
-}
-
-/// 돌려보기(v0.18) 중 라이브 타이틀 대신 보여줄 문자열: "{Rewind} {inning}
-/// {batter}" — 타자명이 없으면(안내 유실 등) 이닝까지만. 라이브와 절대 헷갈리지
-/// 않게 title_live 대신 이 문자열을 블록 타이틀로 쓴다.
-fn rewind_title(l: &'static Labels, ab: &AtBat) -> String {
-    let mut t = format!(" {} {}", l.rewind_label, ab.inning_label);
-    if !ab.batter_name.is_empty() {
-        t.push(' ');
-        t.push_str(&ab.batter_name);
-    }
-    t.push(' ');
-    t
-}
-
 /// 라이브 뷰: 스코어라인(점수/카운트/주자/승률) + 문자중계(+ 폭 충분 시 스트라이크존).
-/// v0.18부터 `app.live_atbat_sel`이 가리키는 at-bat(과거일 수도 있음)을
-/// "활성" 데이터로 삼는다 — None(기본값)이면 최신(라이브)과 완전히 동일하게
-/// 그려져 기존 화면과 무회귀다.
+///
+/// **여기부터 아래는 그리기만 한다.** 무엇을 보여줄지(활성 at-bat 해석, 타이틀,
+/// 돌려보기 중 감출 필드, 라벨 문자열, 폭 예산 정책)는 전부
+/// [`super::live_vm::LiveVm`]이 정한다 — 이 파일은 그 결과를 위젯으로 옮길 뿐이라
+/// 새 규칙을 여기에 적어 넣을 자리가 없다(v0.18에 같은 규칙이 두 군데로 흩어진
+/// 사고의 재발 방지).
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
-    let l = app.labels();
-    let Screen::Live { game, state } = &app.screen else {
+    if !matches!(app.screen, Screen::Live { .. }) {
         return;
-    };
-    let Some(s) = state else {
+    }
+    // 표현 상태를 못 만드는 경우 = 아직 상태가 안 왔다(로딩) — vm이 없으므로
+    // 라벨은 이 경로에서만 직접 조회한다(M-7: 성공 경로는 아래 vm.labels를
+    // 재사용해 app.labels()를 두 번 안 부른다).
+    let Some(vm) = LiveVm::from_app(app) else {
+        let l = app.labels();
         f.render_widget(
             Paragraph::new(l.loading).block(Block::bordered().title(l.title_live)),
             area,
@@ -66,482 +33,112 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
-    // 활성 at-bat 해석: 고른 번호가 **실제로 응답에 있고** 최신이 아닐 때만 "과거를
-    // 보는 중"이다. 번호만 보고 판정하면, 응답에서 사라진 stale 번호(이닝 전환)에도
-    // Rewind 타이틀이 붙는데 내용은 active_at_bat이 낮춘 최신 타석이라 라벨과 내용이
-    // 어긋난다 — 없는 타석을 있는 척 보여주지 않는다는 게 이 기능의 계약이다.
-    let active = s.active_at_bat(app.live_atbat_sel);
-    let viewing_past = matches!(
-        (app.live_atbat_sel, active, s.at_bats.last()),
-        (Some(seq), Some(ab), Some(newest)) if ab.seq == seq && seq != newest.seq
-    );
-    let title = match (viewing_past, active) {
-        (true, Some(ab)) => rewind_title(l, ab),
-        _ => l.title_live.to_string(),
-    };
-    let pitches = s.active_pitches(app.live_atbat_sel);
-    let relay_lines = s.active_relay_lines(app.live_atbat_sel);
-
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(5), Constraint::Min(0)])
         .split(area);
 
-    render_scoreline(
-        f,
-        rows[0],
-        s,
-        game,
-        app.live_pitch_sel,
-        l,
-        &app.theme_preset,
-        &title,
-        pitches,
-        app.now_secs,
-        if viewing_past { active } else { None },
-    );
+    render_scoreline(f, rows[0], &vm);
 
     // 폭이 좁거나 아직 투구 데이터가 없으면 존을 숨기고 중계에 본문 전체를 준다(우아한 저하).
-    let wide = rows[1].width >= 70 && !pitches.is_empty();
-    if wide {
+    if vm.show_strike_zone(rows[1].width) {
         let cols = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(rows[1]);
-        render_relay(
-            f,
-            cols[0],
-            relay_lines,
-            app.live_relay_cursor,
-            l.title_relay,
-        );
+        render_relay(f, cols[0], &vm);
         strikezone::render(
             f,
             cols[1],
-            pitches,
-            app.live_pitch_sel,
-            l,
+            vm.pitches,
+            vm.selected_pitch,
+            vm.labels,
             &app.theme_preset,
         );
     } else {
-        render_relay(
-            f,
-            rows[1],
-            relay_lines,
-            app.live_relay_cursor,
-            l.title_relay,
-        );
+        render_relay(f, rows[1], &vm);
     }
 }
 
-fn win_pct(rate: Option<f32>) -> String {
-    rate.map(|r| format!("{:.0}%", r * 100.0))
-        .unwrap_or_else(|| "-".into())
-}
-
-/// 스코어라인 3번째 줄(디테일)의 "투수/타자(또는 되감기 중 타자만) + 시작
-/// 시각" 부분. 경기 경과/소요(B-3 addition, 폭 예산이 필요해 area.width가
-/// 있어야 하는 render_scoreline 쪽에서 별도로 붙인다)는 여기 포함하지 않는다
-/// — 순수 함수로 남겨야 render 없이 직접 단위 테스트할 수 있다.
-///
-/// 돌려보기 중이면 이 줄도 그 타석 것이어야 한다. 라이브 값을 그대로 두면
-/// 타이틀은 "Rewind B9 정은원"인데 바로 아랫줄이 "B: 한지윤"이라, 한 화면이
-/// 두 타자를 말한다(실행 확인에서 발견 — 타이틀·투구 수만 보던 테스트는
-/// 놓쳤다). 과거 타석에 대해 응답이 확실히 알려주는 건 타자뿐이므로,
-/// 투수·다음타자는 라이브 값으로 채우지 않고 비운다.
-fn detail_prefix(
-    l: &'static Labels,
-    s: &LiveState,
-    past_at_bat: Option<&AtBat>,
-    start_hhmm: &str,
-) -> String {
-    let mut detail = match past_at_bat {
-        Some(ab) if !ab.batter_name.is_empty() => {
-            format!("{}: {}", l.lbl_batter, ab.batter_name)
-        }
-        Some(_) => String::new(),
-        None => {
-            let mut d = format!(
-                "{}: {}   {}: {}",
-                l.lbl_pitcher, s.pitcher_name, l.lbl_batter, s.batter_name
-            );
-            if !s.next_batter_name.is_empty() {
-                d.push_str(&format!("   {}: {}", l.lbl_next, s.next_batter_name));
-            }
-            d
-        }
-    };
-    if !start_hhmm.is_empty() {
-        // M-3: detail이 비어 있을 때(타자명 없는 과거 타석) 구분자를 무조건
-        // 붙이면 "   Start 18:30"처럼 공백 3칸으로 줄이 시작한다 — 구분자는
-        // 이미 내용이 있을 때만 필요하다.
-        if !detail.is_empty() {
-            detail.push_str("   ");
-        }
-        detail.push_str(&format!("{} {start_hhmm}", l.lbl_start));
-    }
-    detail
-}
-
-#[allow(clippy::too_many_arguments)]
-fn render_scoreline(
-    f: &mut Frame,
-    area: Rect,
-    s: &LiveState,
-    game: &Game,
-    sel: Option<usize>,
-    l: &'static Labels,
-    preset: &str,
-    title: &str,
-    pitches: &[Pitch],
-    now_secs: u64,
-    // 돌려보기 중이면 그 과거 타석, 라이브를 보는 중이면 None.
-    past_at_bat: Option<&AtBat>,
-) {
-    let status = game.status;
-    // 3슬롯 ASCII 주자 표시: [3루 2루 1루], 빈 베이스는 '-' — 폭 고정.
-    let bases = format!(
-        "[{} {} {}]",
-        if s.bases.third { "3" } else { "-" },
-        if s.bases.second { "2" } else { "-" },
-        if s.bases.first { "1" } else { "-" },
-    );
-
-    // 되감기 중엔 이닝도 활성 at-bat(과거) 것으로 바꾼다 — 안 바꾸면 타이틀은
-    // rewind_title이 만든 과거 이닝(예: T9)을, 바로 이 줄은 라이브 이닝(B9)을
-    // 말해 한 화면이 두 이닝을 동시에 말한다(4912944가 타자에 대해 고친
-    // 것과 정확히 같은 결함이 이닝 축에 남아 있었다 — 리뷰 I-1). 이닝은
-    // AtBat.inning_label로 확실히 아는 값이라 바꿀 수 있다.
-    let inning_label: &str = match past_at_bat {
-        Some(ab) => &ab.inning_label,
-        None => &s.inning_label,
-    };
+/// 스코어라인 3줄(점수·상태배지·지금-이-순간 값 / 상세 / 투구줄)을 그린다.
+/// 폭은 이 함수만 아는 사실이므로 VM의 폭 인자 메서드에 그대로 넘긴다.
+fn render_scoreline(f: &mut Frame, area: Rect, vm: &LiveVm) {
     let bold = Style::default().add_modifier(Modifier::BOLD);
     let mut spans = vec![
-        Span::styled(s.away.name.as_str(), team_badge_style(&s.away.code)),
+        Span::styled(vm.away.name.as_str(), team_badge_style(&vm.away.code)),
         Span::raw(" "),
-        Span::styled(s.away_score.to_string(), bold),
+        Span::styled(vm.away_score.to_string(), bold),
         Span::raw(" : "),
-        Span::styled(s.home_score.to_string(), bold),
+        Span::styled(vm.home_score.to_string(), bold),
         Span::raw(" "),
-        Span::styled(s.home.name.as_str(), team_badge_style(&s.home.code)),
+        Span::styled(vm.home.name.as_str(), team_badge_style(&vm.home.code)),
         Span::raw("   "),
-        Span::raw(inning_label),
+        Span::raw(vm.inning_label),
     ];
     // 서스펜디드/종료 경기는 스코어라인만 봐서는 진행 중인 경기와 구분이
     // 안 된다 — inning_label 옆에 배지를 붙여 우아하게 저하시킨다.
-    if let Some((label, style)) = status_badge(status, l, preset) {
+    if let Some((label, style)) = vm.status_badge {
         spans.push(Span::raw(" "));
         spans.push(Span::styled(label, style));
     }
-    // B/S/O·주자·WP는 "지금 이 순간"의 값이라, 과거 타석을 보는 중에 그대로
-    // 두면 그 타석의 카운트인 것처럼 오해된다(4912944가 P:/Next:를 비운 것과
-    // 같은 원칙 — 과거 타석에 대해 확실히 아는 것만 보여주고 모르는 건
-    // 비운다). 이닝은 아는 값이라 위에서 이미 바꿨지만, 이 셋은 응답이
-    // 과거 타석 기준으로 알려주지 않으므로 되감기 중엔 통째로 생략한다.
-    if past_at_bat.is_none() {
+    // None이면 돌려보기 중이라 "지금 이 순간" 값들이 통째로 빠진 것이다(판단은 VM).
+    if let Some(now) = &vm.now_fields {
         spans.extend([
             Span::raw("   "),
-            Span::raw(format!(
-                "B{} S{} O{}",
-                s.count.ball, s.count.strike, s.count.out
-            )),
+            Span::raw(now.count.as_str()),
             Span::raw("   "),
-            Span::raw(bases),
+            Span::raw(now.bases.as_str()),
             Span::raw("   "),
-            Span::raw(format!(
-                "WP {}/{}",
-                win_pct(s.away_win_rate),
-                win_pct(s.home_win_rate)
-            )),
+            Span::raw(now.win_pct.as_str()),
         ]);
     }
-    let score_line = Line::from(spans);
 
-    // "HH:MM" 경기 시작 시각("....THH:MM:SS"에서 추출, 실패 시 생략).
-    let start_hhmm = game
-        .start
-        .split('T')
-        .nth(1)
-        .and_then(|t| t.get(0..5))
-        .unwrap_or("");
-    let mut detail = detail_prefix(l, s, past_at_bat, start_hhmm);
-    // B-2/B-3(v0.18): 경기 경과/소요. Live는 "시작~지금", Final/Suspended는
-    // "시작~데이터 안의 마지막 투구 시각"(§2 B-3, ★핵심) — Suspended를 Final과
-    // 묶은 이유: "지금"을 쓰면 서스펜디드 상태로 며칠 방치된 경기를 열 때도
-    // Final과 똑같이 비현실적인 값(수십 시간)이 나오기 때문이다. 이 화면엔
-    // Scheduled/Canceled가 들어오지 않으므로(can_enter_live) 그 두 경우는 값이
-    // 없다.
-    //
-    // 폭 예산은 header.rs A-1/A-2(v0.15)와 같은 방식으로 처리한다: 문자열을
-    // 만들고 나서 ellipsize로 뒤를 자르는 대신, **붙이기 전에** 남은 폭을
-    // 계산해 들어갈 때만 붙인다 — 그래야 좁은 터미널에서 시간 정보가 먼저
-    // 조용히 빠지고 투수/타자 같은 기존 정보는 절대 밀리지 않는다.
-    if let Some(dur) = game_duration_label(
-        status,
-        &game.start,
-        &now_kst_hms(now_secs),
-        latest_pitch_time(s),
-    ) {
-        let label = if status == GameStatus::Live {
-            l.lbl_elapsed
-        } else {
-            l.lbl_duration
-        };
-        let addition = format!("   {label} {dur}");
-        let inner_width = area.width.saturating_sub(2) as usize;
-        if inner_width
-            >= super::text::display_width(&detail) + super::text::display_width(&addition)
-        {
-            detail.push_str(&addition);
-        }
-    }
-    let detail_line = Line::from(detail);
-
-    // 셋째 줄: 선택된 투구 상세(시각·상대시간·결과 원문) 또는 네비 힌트.
-    // `pitches`는 활성 at-bat(라이브 또는 돌려보기 중인 과거 타석)의 투구다.
-    let pitch_line = match sel.and_then(|i| pitches.get(i).map(|p| (i, p))) {
-        Some((i, p)) => {
-            let speed = p
-                .speed_kmh
-                .map(|k| format!("{k}km"))
-                .unwrap_or_else(|| "-".into());
-            let time = p.time_hms.as_deref().unwrap_or("-");
-            let rel = p
-                .time_hms
-                .as_deref()
-                .and_then(|t| elapsed_label(&game.start, t))
-                .unwrap_or_default();
-            // B-2(v0.18): 직전 투구 대비 경과("+18초"류) — 첫 투구(i==0)는 직전이
-            // 없으므로 생략, i.time_hms 결측·파싱 실패도 관용적으로 생략. 폭
-            // 예산은 이 줄 전체를 감싸는 아래 ellipsize 한 번으로 충분하다(B-2는
-            // 새 칸이 아니라 이미 있는 상세줄 안에 끼워 넣는 값이라 header.rs류
-            // 별도 폭 계산이 필요 없다) — i==0일 때 interval이 빈 문자열이라
-            // 기존 렌더와 완전히 동일해 무회귀도 자동으로 만족한다.
-            let interval = if i > 0 {
-                pitches[i - 1]
-                    .time_hms
-                    .as_deref()
-                    .zip(p.time_hms.as_deref())
-                    .and_then(|(prev, cur)| pitch_interval_label(l, prev, cur))
-                    .map(|s| format!(" {s}"))
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            };
-            // 결과 원문이 길면 좁은 터미널에서 조용히 잘린다 — 정직한 말줄임
-            // (테두리 2칸 제외한 내부 폭 기준, §15 오버플로 정책).
-            Line::from(super::text::ellipsize(
-                &format!(
-                    "{} {}/{}  {}  {} {}{interval}  {}",
-                    l.pitch_word,
-                    i + 1,
-                    pitches.len(),
-                    speed,
-                    time,
-                    rel,
-                    p.text
-                ),
-                area.width.saturating_sub(2) as usize,
-            ))
-        }
-        None if !pitches.is_empty() => Line::from(format!(
-            "{} {}  {}",
-            l.pitches_word,
-            pitches.len(),
-            l.inspect_hint
-        )),
-        None => Line::from(""),
-    };
-
+    let inner_width = area.width.saturating_sub(2) as usize;
     f.render_widget(
-        Paragraph::new(vec![score_line, detail_line, pitch_line])
-            .block(Block::bordered().title(title)),
+        Paragraph::new(vec![
+            Line::from(spans),
+            Line::from(vm.detail_line(inner_width)),
+            Line::from(vm.pitch_line.text(inner_width)),
+        ])
+        .block(Block::bordered().title(vm.title.as_str())),
         area,
     );
 }
 
-/// "HH:MM:SS" → 자정 기준 경과 초. 게임 시작 시각(elapsed_label)과 예정 경기
-/// 카운트다운(games.rs::scheduled_eta_hm, v0.15 A-3)이 공유하는 시:분:초 파서 —
-/// 두 곳 다 같은 "HH:MM:SS" 원문 포맷을 다루므로 파싱 자체(자릿수·범위 검증)는
-/// 공유하되, "자정 넘김을 어떻게 보정할지"는 호출부마다 다르다(elapsed_label은
-/// 항상 미래 방향이라 +24h 고정 보정이 안전하지만, A-3는 날짜가 있는 절대시각
-/// 비교라 이 값만으로 보정하면 안 된다 — games.rs 쪽 주석 참고). 파싱 실패는
-/// None(관용 — 표시 생략).
-pub(crate) fn parse_hms_secs(hms: &str) -> Option<i64> {
-    let mut it = hms.split(':');
-    let h: i64 = it.next()?.parse().ok()?;
-    let m: i64 = it.next()?.parse().ok()?;
-    let s: i64 = it.next().unwrap_or("0").parse().ok()?;
-    ((0..24).contains(&h) && (0..60).contains(&m) && (0..60).contains(&s))
-        .then_some(h * 3600 + m * 60 + s)
-}
-
-/// 경기 시작("....THH:MM:SS")과 어떤 시각("HH:MM:SS")의 차(초) — 자정 넘김
-/// (그 시각 < 시작)은 +24h 보정. elapsed_label(표시용 포맷)과
-/// game_duration_label(M-4 Live 상한 가드)이 공유한다. 파싱 실패는 None(관용).
-fn elapsed_secs(game_start: &str, hms: &str) -> Option<i64> {
-    let start = parse_hms_secs(game_start.split('T').nth(1)?)?;
-    let cur = parse_hms_secs(hms)?;
-    let mut d = cur - start;
-    if d < 0 {
-        d += 24 * 3600;
-    }
-    Some(d)
-}
-
-/// 경기 시작("....THH:MM:SS")과 투구 시각("HH:MM:SS")의 차 → "(+H:MM)".
-/// 자정 넘김(투구 < 시작)은 +24h 보정. 파싱 실패는 None(관용 — 표시 생략).
-fn elapsed_label(game_start: &str, pitch_hms: &str) -> Option<String> {
-    let d = elapsed_secs(game_start, pitch_hms)?;
-    Some(format!("(+{}:{:02})", d / 3600, (d % 3600) / 60))
-}
-
-/// 이 값(초) 이상의 투구 간격은 "직전 투구 대비"라는 의미를 잃었다고 보고
-/// 표시를 생략한다(B-2). 근거: `Pitch.time_hms`는 "HH:MM:SS"뿐 날짜가 없어
-/// 자정 넘김은 +24h 한 번만 보정할 수 있다 — 그런데 KBO 서스펜디드 경기는
-/// **같은 타석 도중에도** 중단→(다른 날) 재개가 가능해서, 재개 후 첫 투구와
-/// 중단 전 마지막 투구의 실제 간격은 몇 시간~며칠일 수 있는데 날짜가 없으니
-/// +24h 보정 하나로는 옳게 잡아낼 수 없다(오히려 그럴듯해 보이는 틀린 값을
-/// 만들 위험이 더 크다). 반면 피치클락 시대 정상 투구 간격은 수 초~1분,
-/// 마운드 방문·챌린지를 포함해도 30분을 넘기는 경우는 거의 없다 — 그 이상은
-/// "간격"이 아니라 "데이터가 못 담는 중단"으로 보고 조용히 생략한다(관용
-/// 원칙: 틀릴 수 있는 숫자를 보여주는 것보다 생략이 낫다).
-const IMPLAUSIBLE_PITCH_GAP_SECS: i64 = 30 * 60;
-
-/// 직전 투구 대비 경과 → "+18초"(60초 미만, 언어별 접미) 또는 "+3:05"(60초
-/// 이상, elapsed_label과 같은 자릿수 표기 관례). 자정 넘김은 elapsed_label과
-/// 동일한 +24h 보정(둘 다 "HH:MM:SS만 있고 날짜가 없다"는 같은 제약을 공유).
-/// 파싱 실패·[`IMPLAUSIBLE_PITCH_GAP_SECS`] 초과는 None(생략).
-fn pitch_interval_label(l: &Labels, prev_hms: &str, cur_hms: &str) -> Option<String> {
-    let prev = parse_hms_secs(prev_hms)?;
-    let cur = parse_hms_secs(cur_hms)?;
-    let mut d = cur - prev;
-    if d < 0 {
-        d += 24 * 3600;
-    }
-    if d > IMPLAUSIBLE_PITCH_GAP_SECS {
-        return None;
-    }
-    if d < 60 {
-        Some(format!("+{d}{}", l.pitch_interval_secs_suffix))
-    } else {
-        Some(format!("+{}:{:02}", d / 60, d % 60))
-    }
-}
-
-/// UTC epoch 초 → KST 기준 "HH:MM:SS". `game.start`·`Pitch.time_hms`는 항상
-/// KBO 데이터 자체의 시간대(KST)로 찍혀 있으므로, 진행 중 경기의 "지금까지"를
-/// 재려면 **보는 사람의 표시 시간대(v0.16 `app.tz`)가 아니라 KST 고정
-/// 오프셋**을 써야 한다 — 뉴욕에서 보고 있어도 데이터의 시계 자체는 서울
-/// 시계이기 때문이다(경과는 차이값이라 표시 시간대와 무관, §2 B-3).
-fn now_kst_hms(now_secs: u64) -> String {
-    let secs_of_day = (now_secs as i64 + KST_OFFSET_SECS as i64).rem_euclid(86400);
-    format!(
-        "{:02}:{:02}:{:02}",
-        secs_of_day / 3600,
-        (secs_of_day % 3600) / 60,
-        secs_of_day % 60
-    )
-}
-
-/// 경기 데이터 안에서 확인 가능한 가장 최근 투구 시각(경기 전체 기준, 사용자가
-/// 지금 돌려보는 중인 과거 타석과 무관하다 — B-3의 종료 경기 끝점은 항상
-/// "최신" 타석에서 찾는다). `at_bats`를 최신 타석부터 거슬러 올라가며 각
-/// 타석의 마지막 투구부터 역순으로 훑어 처음 나오는 유효한 `time_hms`를
-/// 쓴다(마지막 투구의 시각이 결측이어도 관용적으로 그 앞을 본다).
-/// `at_bats`가 비어 있으면(구버전 손 조립 상태 등) current_pitches로 무회귀
-/// 폴백한다 — active_pitches/active_relay_lines와 같은 관례.
-fn latest_pitch_time(s: &LiveState) -> Option<&str> {
-    s.at_bats
-        .iter()
-        .rev()
-        .flat_map(|ab| ab.pitches.iter().rev())
-        .find_map(|p| p.time_hms.as_deref())
-        .or_else(|| {
-            s.current_pitches
-                .iter()
-                .rev()
-                .find_map(|p| p.time_hms.as_deref())
-        })
-}
-
-/// 경기 경과/소요(B-3) → elapsed_label과 같은 "(+H:MM)" 표기. `Live`는
-/// `now_hms`(호출부가 [`now_kst_hms`]로 만든 "지금")까지, `Final`·`Suspended`는
-/// `end_hms`(호출부가 [`latest_pitch_time`]으로 구한, 데이터 안의 마지막 투구
-/// 시각)까지 잰다.
-///
-/// ★ Final/Suspended에 `now_hms`를 쓰면 안 된다 — 어제 끝난 경기를 오늘 열면
-/// "지금까지"가 20시간으로 찍히는 버그가 된다(§2 B-3 핵심 요구). Suspended를
-/// Final과 묶은 이유도 같다: 서스펜디드 경기는 재개까지 며칠씩 걸릴 수 있어
-/// "지금"을 쓰면 똑같이 비현실적인 값이 나온다 — 이 화면엔 진행 중이거나(Live)
-/// 이미 멈춘(Final/Suspended) 경기만 들어오므로(can_enter_live가
-/// Scheduled/Canceled를 걸러낸다) 그 두 상태는 다루지 않는다.
-///
-/// `end_hms`가 None(경기 데이터에 투구 시각이 하나도 없음)이거나 파싱 실패면
-/// 생략(관용 원칙).
-///
-/// M-4: 진행 중(Live) 경기인데 `now`가 `start`보다 앞서면(상태가 시작 전에
-/// Live로 뒤집히거나 사용자 시계가 몇 분 느린 클록 스큐, 실측: 시작 10초
-/// 전) `elapsed_secs`의 +24h 자정 보정이 거의 24시간짜리 값("Elapsed
-/// (+23:59)")을 만든다 — 진행 중 경기가 그렇게 오래 걸릴 수는 없다(서스펜디드로
-/// 넘어가면 Final/Suspended 취급이라 애초에 이 분기에 오지 않는다). B-2가
-/// IMPLAUSIBLE_PITCH_GAP_SECS로 막은 것과 같은 위험이라 같은 원칙(생략)으로
-/// 막는다 — 상한은 [`IMPLAUSIBLE_LIVE_ELAPSED_SECS`].
-const IMPLAUSIBLE_LIVE_ELAPSED_SECS: i64 = 12 * 3600;
-
-fn game_duration_label(
-    status: GameStatus,
-    game_start: &str,
-    now_hms: &str,
-    end_hms: Option<&str>,
-) -> Option<String> {
-    let hms = match status {
-        GameStatus::Live => Some(now_hms),
-        GameStatus::Final | GameStatus::Suspended => end_hms,
-        GameStatus::Scheduled | GameStatus::Canceled => None,
-    };
-    let hms = hms?;
-    if status == GameStatus::Live && elapsed_secs(game_start, hms)? > IMPLAUSIBLE_LIVE_ELAPSED_SECS
-    {
-        return None;
-    }
-    elapsed_label(game_start, hms)
-}
-
-/// 문자중계 목록. `cursor`가 None이면(기본 상태, 기존 무회귀) 꼬리(N줄)만
+/// 문자중계 목록. 커서가 None이면(기본 상태, 기존 무회귀) 꼬리(N줄)만
 /// 하이라이트 없이 보여준다 — 오래된→최신 순 저장이라 이렇게 자르면 최신이
-/// 리스트 맨 아래에 온다. `cursor`가 Some(i)면(v0.18 돌려보기 j/k 커서)
-/// 전체 줄을 ListState 기반 스테이트풀 리스트로 그려 i번째를 반전 하이라이트
-/// 하고, ratatui가 그 줄이 보이도록 자동으로 스크롤한다(settings.rs·
-/// newslist.rs와 같은 ListState 관용).
-fn render_relay(
-    f: &mut Frame,
-    area: Rect,
-    lines: &[String],
-    cursor: Option<usize>,
-    title: &'static str,
-) {
-    match cursor {
+/// 리스트 맨 아래에 온다. Some(i)면(v0.18 돌려보기 j/k 커서) 전체 줄을
+/// ListState 기반 스테이트풀 리스트로 그려 i번째를 반전 하이라이트 하고,
+/// ratatui가 그 줄이 보이도록 자동으로 스크롤한다(settings.rs·newslist.rs와
+/// 같은 ListState 관용).
+///
+/// `vm.relay_rows`는 이미 화면에 낼 최종 문자열(불릿 포함)이고 `vm.relay_cursor`는
+/// 이미 범위 안으로 클램프돼 있다(v19a 리뷰 I-1) — 이 함수는 그 두 값을 그대로
+/// 옮길 뿐, 줄의 표현이나 범위 밖 커서에 대한 결정을 하지 않는다.
+///
+/// 꼬리 창(`area.height - 2`) 계산이 여기 남은 이유: 이건 "무엇을 보여줄까"가
+/// 아니라 커서 분기에서 ratatui ListState가 이미 해 주는 **뷰포트 산수**의
+/// 짝이다. VM으로 올리면 위젯이 내부적으로 하는 일을 밖에서 한 번 더 흉내 내는
+/// 중복이 된다.
+fn render_relay(f: &mut Frame, area: Rect, vm: &LiveVm) {
+    let (rows, title) = (&vm.relay_rows, vm.relay_title);
+    match vm.relay_cursor {
         Some(idx) => {
-            let items: Vec<ListItem> = lines
-                .iter()
-                .map(|entry| ListItem::new(format!("· {entry}")))
-                .collect();
+            let items: Vec<ListItem> = rows.iter().map(|row| ListItem::new(row.clone())).collect();
             let widget = List::new(items)
                 .block(Block::bordered().title(title))
                 .highlight_symbol("> ")
                 .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
             let mut state = ListState::default();
-            state.select(Some(idx.min(lines.len().saturating_sub(1))));
+            state.select(Some(idx));
             f.render_stateful_widget(widget, area, &mut state);
         }
         None => {
             let n = area.height.saturating_sub(2) as usize;
-            let start = lines.len().saturating_sub(n);
-            let items: Vec<ListItem> = lines[start..]
+            let start = rows.len().saturating_sub(n);
+            let items: Vec<ListItem> = rows[start..]
                 .iter()
-                .map(|entry| ListItem::new(format!("· {entry}")))
+                .map(|row| ListItem::new(row.clone()))
                 .collect();
             f.render_widget(List::new(items).block(Block::bordered().title(title)), area);
         }
@@ -551,7 +148,7 @@ fn render_relay(
 #[cfg(test)]
 mod tests {
     use crate::app::{App, Screen};
-    use crate::model::{AtBat, BaseState, Count, Game, GameStatus, LiveState, Pitch, Team};
+    use crate::model::{BaseState, Count, Game, GameStatus, LiveState, Pitch, Team};
     use ratatui::{backend::TestBackend, Terminal};
 
     const RELAY: &str = include_str!("../../tests/fixtures/relay_20260719KTLG.json");
@@ -633,36 +230,6 @@ mod tests {
         Screen::Live {
             game,
             state: Some(state),
-        }
-    }
-
-    /// `latest_pitch_time` 순수 함수 테스트 전용 최소 `LiveState` — 렌더와
-    /// 무관하므로 team/score 등은 아무 값이나 둔다.
-    fn bare_state() -> LiveState {
-        LiveState {
-            inning_label: String::new(),
-            home: team("LG", "LG"),
-            away: team("KT", "KT"),
-            home_score: 0,
-            away_score: 0,
-            count: Count {
-                ball: 0,
-                strike: 0,
-                out: 0,
-            },
-            bases: BaseState {
-                first: false,
-                second: false,
-                third: false,
-            },
-            pitcher_name: String::new(),
-            batter_name: String::new(),
-            home_win_rate: None,
-            away_win_rate: None,
-            relay_log: vec![],
-            current_pitches: vec![],
-            next_batter_name: String::new(),
-            at_bats: vec![],
         }
     }
 
@@ -819,51 +386,6 @@ mod tests {
             compact.contains("Next:홍창기"),
             "next batter missing:\n{text}"
         );
-    }
-
-    #[test]
-    fn elapsed_label_formats_and_handles_midnight_rollover() {
-        assert_eq!(
-            super::elapsed_label("2026-07-19T18:30:00", "20:56:14").as_deref(),
-            Some("(+2:26)")
-        );
-        assert_eq!(
-            super::elapsed_label("2026-07-19T23:30:00", "00:10:00").as_deref(),
-            Some("(+0:40)") // 자정 넘김 보정
-        );
-        assert_eq!(super::elapsed_label("garbage", "20:56:14"), None);
-    }
-
-    /// M-3: 타자명 없는 과거 타석(안내 유실 등)의 상세줄은 "Start 18:30"으로
-    /// 바로 시작해야 한다 — 구분자를 무조건 붙이면 detail이 비어 있을 때
-    /// "   Start 18:30"처럼 공백 3칸으로 시작한다(실측 버그).
-    #[test]
-    fn detail_prefix_has_no_leading_padding_when_the_past_at_bats_batter_name_is_missing() {
-        let s = bare_state();
-        let ab = AtBat {
-            seq: 1,
-            batter_name: String::new(),
-            inning_label: "T1".into(),
-            relay_lines: vec![],
-            pitches: vec![],
-        };
-        let got = super::detail_prefix(&crate::ui::i18n::EN, &s, Some(&ab), "18:30");
-        assert_eq!(got, "Start 18:30", "must not start with padding: {got:?}");
-    }
-
-    /// 대조군: 타자명이 있으면 기존처럼 구분자로 이어붙인다(무회귀).
-    #[test]
-    fn detail_prefix_still_separates_batter_and_start_time_when_batter_name_is_known() {
-        let s = bare_state();
-        let ab = AtBat {
-            seq: 1,
-            batter_name: "최원준".into(),
-            inning_label: "T1".into(),
-            relay_lines: vec![],
-            pitches: vec![],
-        };
-        let got = super::detail_prefix(&crate::ui::i18n::EN, &s, Some(&ab), "18:30");
-        assert_eq!(got, "B: 최원준   Start 18:30");
     }
 
     /// 긴 결과 원문은 상세줄에서 말줄임된다(§15 오버플로 정책).
@@ -1109,7 +631,10 @@ mod tests {
         // 긴 인위적인 relay_lines로 교체해 "꼬리만 보이는" 창을 만든다.
         let long_lines: Vec<String> = (0..30).map(|i| format!("line-{i}")).collect();
         if let Screen::Live { state: Some(s), .. } = &mut app.screen {
-            s.at_bats.last_mut().unwrap().relay_lines = long_lines;
+            s.at_bats.last_mut().unwrap().relay_lines = long_lines
+                .into_iter()
+                .map(crate::model::RelayLine::plain)
+                .collect();
         }
 
         let default_text = render_live_view_only(&app, 100, 30);
@@ -1162,67 +687,7 @@ mod tests {
         );
     }
 
-    // ---- B-2: 투구 간격 (pitch_interval_label 순수 함수) ----
-
-    /// 정상 케이스: 60초 미만은 언어별 접미가 붙은 초 단위("+18s").
-    #[test]
-    fn pitch_interval_label_formats_seconds_under_a_minute() {
-        assert_eq!(
-            super::pitch_interval_label(&crate::ui::i18n::EN, "20:56:14", "20:56:32"),
-            Some("+18s".to_string())
-        );
-        assert_eq!(
-            super::pitch_interval_label(&crate::ui::i18n::KO, "20:56:14", "20:56:32"),
-            Some("+18초".to_string())
-        );
-    }
-
-    /// 60초 이상은 elapsed_label과 같은 자릿수 표기("+M:SS", 언어 무관).
-    #[test]
-    fn pitch_interval_label_formats_minutes_and_seconds_at_or_above_a_minute() {
-        assert_eq!(
-            super::pitch_interval_label(&crate::ui::i18n::EN, "10:00:00", "10:01:45"),
-            Some("+1:45".to_string())
-        );
-    }
-
-    /// 자정 넘김("23:59:50" → "00:00:05")은 음수가 아니라 +24h 보정된 15초.
-    #[test]
-    fn pitch_interval_label_handles_midnight_rollover_without_going_negative() {
-        let got = super::pitch_interval_label(&crate::ui::i18n::EN, "23:59:50", "00:00:05");
-        assert_eq!(got, Some("+15s".to_string()));
-    }
-
-    /// time_hms 파싱 실패(형식 오류)는 관용적으로 생략(None), 무패닉.
-    #[test]
-    fn pitch_interval_label_omits_on_parse_failure() {
-        assert_eq!(
-            super::pitch_interval_label(&crate::ui::i18n::EN, "garbage", "20:56:32"),
-            None
-        );
-        assert_eq!(
-            super::pitch_interval_label(&crate::ui::i18n::EN, "20:56:14", "garbage"),
-            None
-        );
-    }
-
-    /// 비현실적으로 큰 간격(30분 초과 — IMPLAUSIBLE_PITCH_GAP_SECS)은 생략한다.
-    /// 근거는 함수 주석 참고: HH:MM:SS엔 날짜가 없어 서스펜디드 재개 같은
-    /// 다중 시간대 간격을 +24h 보정 하나로는 옳게 못 잡아낸다 — 틀릴 수 있는
-    /// 숫자를 보여주느니 생략한다.
-    #[test]
-    fn pitch_interval_label_omits_implausibly_large_gaps() {
-        // 31분 차 — 상한(30분) 초과.
-        assert_eq!(
-            super::pitch_interval_label(&crate::ui::i18n::EN, "10:00:00", "10:31:00"),
-            None
-        );
-        // 경계값: 정확히 30분은 아직 허용.
-        assert_eq!(
-            super::pitch_interval_label(&crate::ui::i18n::EN, "10:00:00", "10:30:00"),
-            Some("+30:00".to_string())
-        );
-    }
+    // ---- B-2: 투구 간격 (렌더 결합 — 순수 함수 검증은 live_vm.rs) ----
 
     /// 실제 fixture 간격(천성호 타석 1구→2구, 19초)이 화면에 "+19s"로 나온다.
     /// i>0(직전 투구가 있는 경우)만 간격을 붙인다는 계약의 통합 검증.
@@ -1266,177 +731,7 @@ mod tests {
         );
     }
 
-    // ---- B-3: 경기 소요/경과 ----
-
-    /// UTC epoch → KST "HH:MM:SS" 변환(표시 시간대 app.tz와 무관하게 항상 KST
-    /// 고정이어야 한다 — 데이터 자체의 시계가 서울 시계이므로).
-    #[test]
-    fn now_kst_hms_converts_utc_epoch_to_kst_wall_clock() {
-        // epoch 41400 = 1970-01-01T11:30:00Z → KST(UTC+9) 20:30:00.
-        assert_eq!(super::now_kst_hms(41400), "20:30:00");
-    }
-
-    /// 자정 부근 롤오버도 24시간 범위 안으로 정확히 접힌다(음수 없음).
-    #[test]
-    fn now_kst_hms_wraps_around_midnight() {
-        // epoch 0 = 1970-01-01T00:00:00Z → KST 09:00:00.
-        assert_eq!(super::now_kst_hms(0), "09:00:00");
-    }
-
-    /// 경기 데이터 안의 마지막 투구 시각 — 마지막 at-bat의 마지막 투구부터
-    /// 거슬러 올라간다.
-    #[test]
-    fn latest_pitch_time_finds_the_most_recent_pitch_across_at_bats() {
-        let mut s = bare_state();
-        s.at_bats = vec![
-            AtBat {
-                seq: 1,
-                batter_name: "a".into(),
-                inning_label: "T1".into(),
-                relay_lines: vec![],
-                pitches: vec![Pitch {
-                    time_hms: Some("18:35:00".into()),
-                    ..Default::default()
-                }],
-            },
-            AtBat {
-                seq: 2,
-                batter_name: "b".into(),
-                inning_label: "T2".into(),
-                relay_lines: vec![],
-                pitches: vec![
-                    Pitch {
-                        time_hms: Some("18:40:00".into()),
-                        ..Default::default()
-                    },
-                    Pitch {
-                        time_hms: Some("18:41:00".into()),
-                        ..Default::default()
-                    },
-                ],
-            },
-        ];
-        assert_eq!(super::latest_pitch_time(&s), Some("18:41:00"));
-    }
-
-    /// 마지막 투구의 time_hms가 결측이어도(관용 파싱) 그 앞의 유효한 값으로
-    /// 물러선다 — "없으면 생략"이 아니라 "찾을 수 있는 데까지 찾는다".
-    #[test]
-    fn latest_pitch_time_falls_back_past_a_missing_final_timestamp() {
-        let mut s = bare_state();
-        s.at_bats = vec![AtBat {
-            seq: 1,
-            batter_name: "a".into(),
-            inning_label: "T1".into(),
-            relay_lines: vec![],
-            pitches: vec![
-                Pitch {
-                    time_hms: Some("18:35:00".into()),
-                    ..Default::default()
-                },
-                Pitch {
-                    time_hms: None,
-                    ..Default::default()
-                },
-            ],
-        }];
-        assert_eq!(super::latest_pitch_time(&s), Some("18:35:00"));
-    }
-
-    /// at_bats가 비어 있으면(구버전 손 조립 상태) current_pitches로 무회귀
-    /// 폴백한다 — active_pitches/active_relay_lines와 같은 관례.
-    #[test]
-    fn latest_pitch_time_falls_back_to_current_pitches_when_at_bats_is_empty() {
-        let mut s = bare_state();
-        s.current_pitches = vec![Pitch {
-            time_hms: Some("19:00:00".into()),
-            ..Default::default()
-        }];
-        assert_eq!(super::latest_pitch_time(&s), Some("19:00:00"));
-    }
-
-    /// 진행 중(Live)은 "지금"(now_hms)까지의 경과를 쓴다.
-    #[test]
-    fn game_duration_label_uses_now_for_live_games() {
-        let got =
-            super::game_duration_label(GameStatus::Live, "2026-07-19T18:30:00", "20:30:00", None);
-        assert_eq!(got.as_deref(), Some("(+2:00)"));
-    }
-
-    /// ★핵심: 종료(Final) 경기는 "지금"이 아니라 데이터 안의 끝점(end_hms)을
-    /// 쓴다. 이 테스트는 "지금"이 실제 경기 시각과 무관하게 멀리 떨어진 값
-    /// (여기선 시작보다 이른 벽시계 시각이라 잘못 계산하면 자정 넘김 보정까지
-    /// 겹쳐 19시간 반짜리 값이 나온다)이어도 결과가 흔들리지 않는지 본다 —
-    /// "어제 경기를 오늘 열면 20시간이 나오는" 버그의 직접 재현·회귀 검증.
-    #[test]
-    fn game_duration_label_uses_the_data_endpoint_not_now_for_final_games() {
-        let bogus_now = "14:00:00"; // now가 이걸 썼다면 (+19:30)이 나왔을 것
-        let got = super::game_duration_label(
-            GameStatus::Final,
-            "2026-07-19T18:30:00",
-            bogus_now,
-            Some("21:07:06"),
-        );
-        assert_eq!(got.as_deref(), Some("(+2:37)"));
-        assert_ne!(got.as_deref(), Some("(+19:30)"));
-    }
-
-    /// Suspended도 Final과 같은 취급(끝점 기반) — "지금"을 쓰면 서스펜디드로
-    /// 며칠 방치된 경기를 열 때 똑같이 비현실적인 값이 나오기 때문이다.
-    #[test]
-    fn game_duration_label_uses_the_data_endpoint_for_suspended_games_too() {
-        let bogus_now = "14:00:00";
-        let got = super::game_duration_label(
-            GameStatus::Suspended,
-            "2026-07-19T18:30:00",
-            bogus_now,
-            Some("21:07:06"),
-        );
-        assert_eq!(got.as_deref(), Some("(+2:37)"));
-    }
-
-    /// 종료 경기인데 끝점을 하나도 못 찾으면(투구 데이터 전무) 생략한다.
-    #[test]
-    fn game_duration_label_omits_when_final_has_no_endpoint() {
-        let got =
-            super::game_duration_label(GameStatus::Final, "2026-07-19T18:30:00", "14:00:00", None);
-        assert_eq!(got, None);
-    }
-
-    /// 시작 시각 파싱 실패(빈 문자열 등)는 관용적으로 생략.
-    #[test]
-    fn game_duration_label_omits_when_start_is_unparseable() {
-        let got = super::game_duration_label(GameStatus::Live, "", "20:30:00", Some("21:07:06"));
-        assert_eq!(got, None);
-    }
-
-    /// M-4: 진행 중 경기인데 "지금"이 시작보다 살짝 앞서면(상태가 시작 전에
-    /// Live로 뒤집히거나 사용자 시계가 몇 분 느린 클록 스큐, 실측: 시작 10초
-    /// 전) +24h 자정 보정이 거의 24시간짜리 값을 만든다 — 진행 중 경기가
-    /// 그렇게 오래 걸릴 수는 없으므로(서스펜디드로 넘어가면 Final/Suspended
-    /// 취급이라 이 분기에 오지 않는다) 생략해야 한다.
-    #[test]
-    fn game_duration_label_omits_when_now_is_slightly_before_start_for_a_live_game() {
-        let got = super::game_duration_label(
-            GameStatus::Live,
-            "2026-07-19T18:30:00",
-            "18:29:50", // 시작 10초 전(실측 재현)
-            None,
-        );
-        assert_eq!(
-            got, None,
-            "must not show a near-24h elapsed for a live game"
-        );
-    }
-
-    /// 대조군: 상한(IMPLAUSIBLE_LIVE_ELAPSED_SECS=12h) 안쪽의 정상적인 진행
-    /// 중 경기는 여전히 값을 보여준다(무회귀).
-    #[test]
-    fn game_duration_label_still_shows_normal_elapsed_within_the_plausible_bound() {
-        let got =
-            super::game_duration_label(GameStatus::Live, "2026-07-19T18:30:00", "22:30:00", None);
-        assert_eq!(got.as_deref(), Some("(+4:00)"));
-    }
+    // ---- B-3: 경기 소요/경과 (렌더 결합 — 순수 함수 검증은 live_vm.rs) ----
 
     /// 진행 중 경기: 스코어라인에 "Elapsed (+H:MM)"이 실제로 그려진다.
     #[test]

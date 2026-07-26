@@ -422,18 +422,9 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => {
                 // 라이브 화면에서는 문자중계 줄 커서(돌려보기, v0.18) — 목록의
                 // j/k(self.selected)와 같은 키를 겹쳐 쓰되 화면별로 의미가 다르다
-                // (Left/Right가 이미 이 패턴이다). 처음 누르면(None) 항상 맨
-                // 아래(최신 줄)에서 시작한다 — 무선택 뷰가 이미 최신 꼬리를
-                // 보여주므로 커서가 그 자리에서 자연스럽게 이어지도록.
-                if let Screen::Live { state: Some(s), .. } = &self.screen {
-                    let n = s.active_relay_lines(self.live_atbat_sel).len();
-                    if n > 0 {
-                        let last = n - 1;
-                        self.live_relay_cursor = Some(match self.live_relay_cursor {
-                            None => last,
-                            Some(i) => (i + 1).min(last),
-                        });
-                    }
+                // (Left/Right가 이미 이 패턴이다).
+                if matches!(self.screen, Screen::Live { state: Some(_), .. }) {
+                    self.move_relay_cursor(true);
                 } else {
                     let len = self.current_len();
                     if len > 0 && self.selected + 1 < len {
@@ -443,35 +434,15 @@ impl App {
                 self.pending_g = false;
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if let Screen::Live { state: Some(s), .. } = &self.screen {
-                    let n = s.active_relay_lines(self.live_atbat_sel).len();
-                    if n > 0 {
-                        let last = n - 1;
-                        self.live_relay_cursor = Some(match self.live_relay_cursor {
-                            None => last,
-                            Some(i) => i.saturating_sub(1),
-                        });
-                    }
+                if matches!(self.screen, Screen::Live { state: Some(_), .. }) {
+                    self.move_relay_cursor(false);
                 } else if self.selected > 0 {
                     self.selected -= 1;
                 }
                 self.pending_g = false;
             }
             KeyCode::Left | KeyCode::Right => {
-                // 라이브 화면에서 보고 있는 타석(live_atbat_sel — 과거일 수도
-                // 있음)의 투구를 하나씩 짚어본다(순환 없음). 선택 없음 = 전체
-                // 보기; Right는 처음부터, Left는 마지막부터 진입.
-                if let Screen::Live { state: Some(s), .. } = &self.screen {
-                    let n = s.active_pitches(self.live_atbat_sel).len();
-                    if n > 0 {
-                        self.live_pitch_sel = Some(match (self.live_pitch_sel, key) {
-                            (None, KeyCode::Right) => 0,
-                            (None, _) => n - 1,
-                            (Some(i), KeyCode::Right) => (i + 1).min(n - 1),
-                            (Some(i), _) => i.saturating_sub(1),
-                        });
-                    }
-                }
+                self.move_pitch_sel(key == KeyCode::Right);
                 self.pending_g = false;
             }
             KeyCode::Char('[') | KeyCode::Char(']') => {
@@ -572,6 +543,74 @@ impl App {
             }
         }
         false
+    }
+
+    /// `j`/`k` — 문자중계 줄 커서를 한 칸 옮기고, **그 줄이 가리키는 투구를 함께
+    /// 고른다**(v0.19 연동). 처음 누르면(`None`) 항상 맨 아래(최신 줄)에서
+    /// 시작한다 — 무선택 뷰가 이미 최신 꼬리를 보여주므로 커서가 그 자리에서
+    /// 자연스럽게 이어지도록.
+    ///
+    /// 투구 선택은 커서에서 **유도**되므로(투구가 아닌 줄이면 위쪽 가장 가까운
+    /// 투구 — `LiveState::pitch_at_relay_line`) 두 필드가 어긋난 조합이 생기지
+    /// 않는다.
+    ///
+    /// **선택을 이동시키는 자리는 이 메서드와 [`App::move_pitch_sel`] 둘뿐이다**
+    /// (리뷰 M-2 — "유일한 자리"는 사실이 아니었다). 라이브 선택을 건드리는
+    /// 자리는 이 둘 말고도 Tab·`[`/`]`·Esc·`enter_live`·`apply_option`·폴링
+    /// 갱신까지 있지만, 그 자리들은 전부 두 필드를 **동시에 `None`으로
+    /// 리셋**할 뿐이라 모순 조합을 만들지 않는다(동시 해제는 항상 안전하다 —
+    /// `LiveVm`의 "커서가 이긴다" 규칙이 `None`/`None`을 그대로 선택 없음으로
+    /// 읽는다). 이동은 이 두 메서드에서만 일어난다.
+    fn move_relay_cursor(&mut self, down: bool) {
+        let Screen::Live { state: Some(s), .. } = &self.screen else {
+            return;
+        };
+        let Some(last) = s
+            .active_relay_lines(self.live_atbat_sel)
+            .len()
+            .checked_sub(1)
+        else {
+            return; // 줄이 하나도 없으면 커서를 세울 자리가 없다(무동작).
+        };
+        let idx = match (self.live_relay_cursor, down) {
+            (None, _) => last,
+            (Some(i), true) => (i + 1).min(last),
+            // M-3: 위쪽 이동도 범위 밖 커서(줄 수가 줄어든 뒤 남은 stale 값)를
+            // 잠가야 한다 — 안 그러면 saturating_sub(1)만으로는 여전히 범위
+            // 밖 값이 나온다. `.min(last)`을 뒤에 둬 아래쪽 분기((i+1).min(last))와
+            // 같은 모양으로 맞춘다: 범위 밖에서는 어느 방향이든 먼저 `last`로
+            // 스냅한다.
+            (Some(i), false) => i.saturating_sub(1).min(last),
+        };
+        let pitch = s.pitch_at_relay_line(self.live_atbat_sel, idx);
+        self.live_relay_cursor = Some(idx);
+        self.live_pitch_sel = pitch;
+    }
+
+    /// `←`/`→` — 보고 있는 타석(live_atbat_sel — 과거일 수도 있음)의 투구를
+    /// 하나씩 짚어보고, **그 투구의 문자중계 줄로 커서를 옮긴다**(v0.19 연동의
+    /// 반대 방향). 순환 없음; 선택 없음 = 전체 보기, `→`는 처음부터 `←`는
+    /// 마지막부터 진입.
+    ///
+    /// 짝이 되는 줄을 못 찾으면 커서를 **비운다**(옛 줄에 남겨 두지 않는다) —
+    /// 남겨 두면 커서와 투구 선택이 서로 다른 사건을 가리키는 모순 조합이 되고,
+    /// 커서를 우선하는 표현 규칙(`LiveVm`) 때문에 방금 고른 투구가 도로 밀려난다.
+    fn move_pitch_sel(&mut self, right: bool) {
+        let Screen::Live { state: Some(s), .. } = &self.screen else {
+            return;
+        };
+        let Some(last) = s.active_pitches(self.live_atbat_sel).len().checked_sub(1) else {
+            return;
+        };
+        let idx = match (self.live_pitch_sel, right) {
+            (None, true) => 0,
+            (None, false) => last,
+            (Some(i), true) => (i + 1).min(last),
+            (Some(i), false) => i.saturating_sub(1),
+        };
+        let line = s.relay_line_of_pitch(self.live_atbat_sel, idx);
+        self.live_pitch_sel = Some(idx);
+        self.live_relay_cursor = line;
     }
 
     /// Canceled/Scheduled 게임은 relay가 textRelayData를 절대 내려주지 않으므로
@@ -870,9 +909,36 @@ impl App {
                                 self.live_pitch_sel = None;
                                 self.live_relay_cursor = None;
                             }
+                            // I-3(v19a 리뷰): 이 클램프는 활성 배열
+                            // (`active_pitches(live_atbat_sel)`) 기준이어야
+                            // 옳다 — `current_pitches`는 우연히 그것과 같은
+                            // 값일 뿐이다. 지금 동작은 바뀌지 않는다: 이
+                            // else 분기는 `self.live_atbat_sel == None`일
+                            // 때만 실행되고, `active_pitches(None)`은
+                            // `at_bats.last().pitches`(비어 있으면
+                            // `current_pitches`로 폴백)인데 파서가 마지막
+                            // at-bat과 current_pitches를 항상 미러링해
+                            // 두므로(model.rs LiveState::at_bats 문서 참고)
+                            // 오늘은 두 축이 같은 값을 낸다. 축을 미리
+                            // 맞춰 두는 이유는 다음 작업(문자중계↔투구
+                            // 커서 병합)이 이 클램프를 되감기 중에도 타게
+                            // 만들 수 있는데, 그때 `current_pitches`를 쓰면
+                            // 과거 타석(짧은 배열)을 라이브 타석(계속 느는
+                            // 배열) 길이로 잘못 재는 축 어긋남이 생기기
+                            // 때문이다.
+                            //
+                            // 리뷰 M-2: 위 두 신호(seq_changed/fewer_pitches)에
+                            // 안 걸렸는데도 배열이 줄어 이 클램프가 단독으로
+                            // 걸리는 경우, live_pitch_sel만 비우고 커서는
+                            // 그대로 두면 두 필드가 어긋난다 — 화면은
+                            // "커서가 이긴다" 규칙 덕에 안 깨지지만, 다음
+                            // `←`/`→` 입력이 옛 커서 위치에서 다시 계산돼
+                            // 예상과 다른 자리로 튄다. 다른 모든 리셋 자리와
+                            // 규칙을 하나로 맞추기 위해 커서도 함께 비운다.
                             if let Some(i) = self.live_pitch_sel {
-                                if i >= l.current_pitches.len() {
+                                if i >= l.active_pitches(self.live_atbat_sel).len() {
                                     self.live_pitch_sel = None;
+                                    self.live_relay_cursor = None;
                                 }
                             }
                         }
@@ -1341,6 +1407,11 @@ mod tests {
     /// 1개로 서로 구분된다. 마지막(index n-1) at-bat이 "현재(라이브)"이므로
     /// relay_log/current_pitches도 거기서 미러링해 둔다 — active_*()가 기대하는
     /// "마지막 at-bat = 레거시 필드"라는 파서의 불변식을 테스트 상태에도 맞춘다.
+    ///
+    /// v0.19: 문자중계 두 줄 중 **아래(최신) 줄만** 그 타석의 유일한 투구와
+    /// 짝지어 둔다 — 실제 응답의 타석 모양(타자 등장 안내 → 투구 줄)을 최소로
+    /// 흉내 낸 것이라, 연동이 들어온 뒤에도 "투구 줄"과 "투구가 아닌 줄"이 둘 다
+    /// 테스트에 존재한다.
     fn live_app_with_at_bats(n: usize) -> App {
         let mut app = App::new(Default::default());
         let at_bats: Vec<crate::model::AtBat> = (0..n)
@@ -1350,7 +1421,14 @@ mod tests {
                 seq: 100 + i as i64,
                 batter_name: format!("batter{i}"),
                 inning_label: format!("T{}", i + 1),
-                relay_lines: vec![format!("line-{i}-a"), format!("line-{i}-b")],
+                relay_lines: vec![
+                    crate::model::RelayLine::plain(format!("line-{i}-a")),
+                    crate::model::RelayLine {
+                        text: format!("line-{i}-b"),
+                        pitch_idx: Some(0),
+                        is_pitch: true,
+                    },
+                ],
                 pitches: vec![crate::model::Pitch {
                     order: 1,
                     ..Default::default()
@@ -1496,6 +1574,56 @@ mod tests {
         assert_eq!(app.live_relay_cursor, Some(1));
         app.on_key(KeyCode::Char('j')); // 경계: 이미 맨 아래
         assert_eq!(app.live_relay_cursor, Some(1));
+    }
+
+    /// v0.19 연동 ①: `j`/`k`로 줄 커서를 옮기면 투구 선택이 따라온다. 헬퍼의
+    /// at-bat은 아래 줄만 투구와 짝지어져 있으므로(위 줄은 안내 흉내) 커서
+    /// 위치에 따라 선택이 붙었다 풀렸다 해야 한다 — v0.18에선 `j`/`k`가
+    /// live_pitch_sel을 아예 건드리지 않았다(커서는 반전 하이라이트뿐).
+    #[test]
+    fn moving_the_relay_cursor_selects_and_clears_the_linked_pitch() {
+        let mut app = live_app_with_at_bats(1);
+        assert_eq!(app.live_pitch_sel, None);
+
+        app.on_key(KeyCode::Char('k')); // 맨 아래(투구 줄)에서 시작
+        assert_eq!(app.live_relay_cursor, Some(1));
+        assert_eq!(
+            app.live_pitch_sel,
+            Some(0),
+            "투구 줄에 커서가 서면 그 투구가 선택돼야 한다"
+        );
+
+        app.on_key(KeyCode::Char('k')); // 위 줄(투구가 아닌 줄)로
+        assert_eq!(app.live_relay_cursor, Some(0));
+        assert_eq!(
+            app.live_pitch_sel, None,
+            "첫 투구보다 위로 올라가면 선택이 풀린다"
+        );
+    }
+
+    /// v0.19 연동 ②(반대 방향): `←`/`→`로 투구를 고르면 커서가 그 투구의
+    /// 문자중계 줄로 간다 — v0.18에선 커서가 None인 채였다(문자중계는 꼬리만).
+    #[test]
+    fn selecting_a_pitch_moves_the_relay_cursor_onto_its_line() {
+        let mut app = live_app_with_at_bats(1);
+        app.on_key(KeyCode::Right);
+        assert_eq!(app.live_pitch_sel, Some(0));
+        assert_eq!(
+            app.live_relay_cursor,
+            Some(1),
+            "그 투구를 서술하는 줄로 커서가 따라와야 한다"
+        );
+    }
+
+    /// 우아한 저하: 줄과 투구가 짝지어지지 않은 상태(외래키 없는 응답·손 조립)
+    /// 에서는 `←`/`→`가 v0.18처럼 투구만 고르고 커서는 세우지 않는다 —
+    /// 옛 줄에 커서를 남겨 두면 커서와 투구가 서로 다른 사건을 가리킨다.
+    #[test]
+    fn pitch_navigation_leaves_the_cursor_alone_when_the_lines_are_not_linked() {
+        let mut app = live_app_with_pitches(3); // relay_lines가 비어 있는 상태
+        app.on_key(KeyCode::Right);
+        assert_eq!(app.live_pitch_sel, Some(0));
+        assert_eq!(app.live_relay_cursor, None);
     }
 
     /// Esc 3단 계단(v0.18): ①투구/문자중계 커서 해제 → ②라이브 복귀 →
@@ -1772,9 +1900,11 @@ mod tests {
     #[test]
     fn enter_live_resets_all_three_selections_even_when_a_previous_game_left_them_set() {
         let mut app = live_app_with_at_bats(3);
-        app.on_key(KeyCode::Char('[')); // 과거 타석으로 이동
-        app.on_key(KeyCode::Right); // 그 타석의 투구 선택
-        app.on_key(KeyCode::Char('k')); // 문자중계 커서까지
+        // 과거 타석으로 이동한 뒤, 문자중계 커서를 세운다. v0.19 연동 덕에 그
+        // 줄(맨 아래 = 투구 줄)의 투구까지 함께 선택되므로, 세 선택이 동시에
+        // 살아 있는 상태가 이 두 키로 만들어진다.
+        app.on_key(KeyCode::Char('['));
+        app.on_key(KeyCode::Char('k'));
         assert!(app.live_atbat_sel.is_some());
         assert!(app.live_pitch_sel.is_some());
         assert!(app.live_relay_cursor.is_some());

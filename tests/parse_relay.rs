@@ -65,10 +65,10 @@ fn computed_plate_y_varies_across_pitches_and_is_mostly_in_a_plausible_height_ba
 #[test]
 fn builds_relay_log_lines() {
     let live = live_from_relay(RELAY, team("LG", "LG"), team("KT", "KT")).unwrap();
-    assert!(live
-        .relay_log
-        .iter()
-        .any(|l| l.contains("파울") || l.contains("헛스윙") || l.contains("볼")));
+    assert!(live.relay_log.iter().any(|l| {
+        let t = &l.text;
+        t.contains("파울") || t.contains("헛스윙") || t.contains("볼")
+    }));
 }
 
 #[test]

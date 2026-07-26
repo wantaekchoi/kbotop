@@ -1,4 +1,5 @@
-# kbotop demo (English) — v0.18: rewind ([ ] at-bats, j/k play-by-play cursor),
+# kbotop demo (English) — v0.19: play-by-play linked to the pitch view (j/k picks a
+# line, its pitch shows in the zone), rewind ([ ] at-bats),
 # live pitch nav (side/zone), in-app news list (n), settings (S), theme presets, tabs.
 # (2026-07-19 Kiwoom 9:9 Hanwha, last at-bat, 7 pitches)
 # record with: vhs docs/demo.en.tape  (needs `kbotop` on PATH: cargo install --path .)
@@ -35,7 +36,8 @@ Sleep 1600ms
 Type "["
 Sleep 1800ms
 
-# j/k: move a cursor through the play-by-play — lines scrolled off screen come back
+# j/k: stepping through the play-by-play shows that pitch in the zone/side view
+# — on a result line, the pitch that produced it stays on screen
 Type "k"
 Sleep 600ms
 Type "k"

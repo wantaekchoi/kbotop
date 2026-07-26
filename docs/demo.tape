@@ -1,4 +1,4 @@
-# kbotop demo — v0.18: 돌려보기([ ] 타석·j/k 문자중계 커서), 라이브 투구 네비(측면/존),
+# kbotop demo — v0.19: 문자중계↔투구 연동(j/k로 줄을 짚으면 그 공이 존에), 돌려보기([ ] 타석),
 # 인앱 뉴스 목록 읽기(n), 인앱 설정(S)·테마 프리셋(mono=무채)·언어 전환, 브래킷 탭.
 # (2026-07-19 키움 9:9 한화, 마지막 타석 7구)
 # record with: vhs docs/demo.tape  (needs `kbotop` on PATH: cargo install --path .)
@@ -35,7 +35,8 @@ Sleep 1600ms
 Type "["
 Sleep 1800ms
 
-# j/k: 문자중계를 한 줄씩 — 화면 밖으로 밀려난 줄도 되짚어 볼 수 있다
+# j/k: 문자중계를 한 줄씩 짚으면 그 공이 존·측면에 뜬다(v0.19 연동)
+# — 결과 줄에 커서를 두면 그 결과를 만든 공이 남는다
 Type "k"
 Sleep 600ms
 Type "k"

@@ -278,7 +278,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Game, GameStatus, Team};
+    use crate::model::{Game, GameStatus, RelayLine, Team};
     use ratatui::{backend::TestBackend, Terminal};
 
     fn items() -> Vec<HintItem> {
@@ -628,7 +628,7 @@ mod tests {
                 batter_name: String::new(),
                 home_win_rate: None,
                 away_win_rate: None,
-                relay_log: lines,
+                relay_log: lines.into_iter().map(RelayLine::plain).collect(),
                 current_pitches: vec![],
                 next_batter_name: String::new(),
                 at_bats: vec![],

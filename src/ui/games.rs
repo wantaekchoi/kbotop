@@ -36,8 +36,10 @@ fn scheduled_eta_hm(now_secs: u64, start: &str) -> Option<(i64, i64)> {
         return None;
     }
     let days = crate::dateutil::days_from_civil(y, m, day);
-    // HH:MM:SS 파싱은 live.rs와 공유(같은 원문 포맷의 시:분:초 자릿수·범위 검증).
-    let time_of_day = super::live::parse_hms_secs(time)?;
+    // HH:MM:SS 파싱은 라이브 화면의 계산부와 공유(같은 원문 포맷의 시:분:초
+    // 자릿수·범위 검증) — v19a 리뷰 M-1: 화면 표현과 무관한 범용 파서라
+    // dateutil로 옮겼다(v0.19에선 live.rs → live_vm.rs로만 옮겨져 있었다).
+    let time_of_day = crate::dateutil::parse_hms_secs(time)?;
     let target_utc = days * 86400 + time_of_day - KST_OFFSET_SECS;
     let remaining = target_utc - now_secs as i64;
     if remaining <= 0 {

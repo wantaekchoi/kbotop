@@ -84,6 +84,60 @@ pub struct Pitch {
     pub az: f32,
 }
 
+/// 문자중계 한 줄 + **그 줄이 가리키는 투구**(v0.19 연동). v0.18까지 문자중계는
+/// 순수 `String`이라 아무 식별자가 없었고, 그래서 `j`/`k` 줄 커서가 하는 일은
+/// 하이라이트 반전 하나뿐이었다 — 이 필드가 커서에 존재 이유를 준다.
+///
+/// # 왜 `pitch_idx`(인덱스)이고 `ballcount`(구 순번)가 아닌가
+/// 화면의 투구 선택(`App::live_pitch_sel`)·스트라이크존·측면 뷰는 전부
+/// `AtBat::pitches`의 **인덱스**로 말한다. 반면 응답의 `ballcount`는 타석 안의
+/// 구 순번이라 둘이 항상 같지는 않다 — 피치클락 위반이 한 카운트를 먹고 지나간
+/// 타석은 실제로 `ballcount`가 2부터 시작한다(실측 2026-07-25: KT-롯데 4회
+/// 김현수, LG-한화 3회 구본혁). 순번을 그대로 인덱스로 쓰면 그런 타석에서 전부
+/// 한 칸씩 어긋나므로, 여기엔 처음부터 인덱스를 담는다.
+///
+/// # 왜 seqno·type·시각을 안 담나
+/// - `seqno`·`type`: 매칭이 응답의 명시적 외래키(`ptsPitchId`)로 끝나므로 줄
+///   전체를 분류할 필요는 없다. 다만 "투구 줄인가"와 "매칭된 투구가 있는가"는
+///   서로 다른 질문이다(아래 `is_pitch` 참고) — 그래서 `type` 전체가 아니라
+///   그 구분 한 비트만 남긴다.
+/// - 시각: 투구 줄의 시각은 이미 짝지어진 [`Pitch::time_hms`]에 있고(중복 보관은
+///   두 값이 어긋날 자리를 만든다), 투구가 아닌 줄에는 응답에 시각 자체가 없다.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RelayLine {
+    /// 화면에 낼 원문(응답 textOption.text 그대로 — 앱이 조립한 chrome이 아니다).
+    pub text: String,
+    /// 같은 at-bat `pitches` 안에서 이 줄이 서술하는 투구의 인덱스.
+    /// `None` = 매칭된 투구가 없다 — 이유가 둘이다: 애초에 투구 줄이 아니거나
+    /// (`is_pitch == false`), 투구 줄인데 짝을 못 찾았거나(`is_pitch == true`,
+    /// 아래 참고). 두 경우를 구분하지 않으면 후자에서 carry-down이 거짓말을
+    /// 한다(리뷰 v19b I-1).
+    pub pitch_idx: Option<usize>,
+    /// 응답이 이 줄을 투구 줄이라고 말했는가(`textOption.ptsPitchId`가 비어
+    /// 있지 않다 — 값 자체가 매칭됐는지와는 별개다).
+    ///
+    /// `is_pitch && pitch_idx.is_none()`은 **추적 데이터 없는 진짜 투구**다
+    /// (`ptsPitchId == "-1"` 센티널, 실측 2026-07-25~07 5일치 7,476줄 중 2건).
+    /// 이 상태에서 위 투구를 carry-down으로 물려받으면 "8구 타격" 줄인데
+    /// 화면은 "7구 파울"을 보여주는 식으로 줄과 화면이 다른 사건을 가리키게
+    /// 된다 — [`LiveState::pitch_at_relay_line`]이 이 비트로 그 상황을 막는다.
+    /// 투구가 아닌 줄(결과 요약 등)의 carry-down은 이 필드와 무관하게 그대로
+    /// 유지된다(의도된 동작).
+    pub is_pitch: bool,
+}
+
+impl RelayLine {
+    /// 투구와 짝이 없는 줄(손으로 조립하는 테스트 상태·레거시 경로용).
+    /// `is_pitch: false` — 애초에 투구 줄이 아닌 경우의 기본값이다.
+    pub fn plain(text: impl Into<String>) -> Self {
+        RelayLine {
+            text: text.into(),
+            pitch_idx: None,
+            is_pitch: false,
+        }
+    }
+}
+
 /// 한 타석의 문자중계·투구 기록(v0.18 "돌려보기"). Naver 응답은 textRelays를
 /// 최신 순(내림차순)으로 내려주지만, `LiveState.at_bats`에 담기는 시점엔 이미
 /// source::naver::map::live_from_relay가 오래된→최신으로 뒤집어 놓는다.
@@ -94,7 +148,7 @@ pub struct AtBat {
     pub seq: i64,
     pub batter_name: String, // 타자 등장 안내(type==8)에서 추출, 없으면 빈 문자열
     pub inning_label: String, // 그 타석이 속한 이닝("T9"/"B9" 등, LiveState.inning_label과 동일 규칙)
-    pub relay_lines: Vec<String>, // 그 타석의 문자중계(오래된→최신)
+    pub relay_lines: Vec<RelayLine>, // 그 타석의 문자중계(오래된→최신)
     pub pitches: Vec<Pitch>,  // 그 타석의 투구(ptsOptions)
 }
 
@@ -111,7 +165,7 @@ pub struct LiveState {
     pub batter_name: String,
     pub home_win_rate: Option<f32>,
     pub away_win_rate: Option<f32>,
-    pub relay_log: Vec<String>,      // 최근 문자중계 텍스트 (오래된→최신)
+    pub relay_log: Vec<RelayLine>,   // 최근 문자중계 (오래된→최신)
     pub current_pitches: Vec<Pitch>, // 현재 타석 투구들
     /// 다음 타순의 타자 이름(라인업 batOrder 기반, 미상이면 빈 문자열 — 표시 생략).
     pub next_batter_name: String,
@@ -163,10 +217,59 @@ impl LiveState {
 
     /// 화면에 그릴 활성 문자중계 줄. at_bats가 있으면 그 타석 것, 없으면
     /// relay_log로 무회귀 폴백.
-    pub fn active_relay_lines(&self, sel: Option<i64>) -> &[String] {
+    pub fn active_relay_lines(&self, sel: Option<i64>) -> &[RelayLine] {
         self.active_at_bat(sel)
             .map(|ab| ab.relay_lines.as_slice())
             .unwrap_or(&self.relay_log)
+    }
+
+    /// **문자중계 줄 → 투구**(v0.19 연동의 절반). `line`번째 줄을 보고 있을 때
+    /// 존·측면에 띄울 투구의 인덱스.
+    ///
+    /// # 투구가 아닌 줄에 커서가 가면 (설계 판단)
+    /// 그 줄 **위쪽(더 오래된 쪽)에서 가장 가까운 투구 줄**의 투구를 물려받는다
+    /// ("이 사건이 벌어졌을 때 마운드에 있던 공"). 근거:
+    /// - 결과 요약("박동원 : 좌익수 뒤 홈런")·주자 진루("2루주자 : 홈인")·
+    ///   피치클락 위반은 **직전 투구가 만든 결과**다. 그 공을 그대로 띄우는 게
+    ///   줄이 말하는 내용과 정확히 일치한다 — 홈런 줄에 커서를 두면 얻어맞은
+    ///   그 공이 존에 남는다.
+    /// - 타석 첫 투구보다 위에 있는 줄(타자 등장 안내·투수 교체)은 아직 아무
+    ///   공도 던지지 않았으므로 `None` = 선택 해제 → 존이 그 타석 **전체**를
+    ///   보여주는 개요 상태로 돌아간다.
+    /// - "직전 선택을 유지"(대안)를 택하지 않은 이유: 같은 줄에 커서가 있어도
+    ///   **어느 방향으로 왔는지**에 따라 다른 공이 뜬다 — 화면이 커서 위치만으로
+    ///   설명되지 않는 숨은 상태를 갖게 된다. 이 규칙은 커서 위치의 순수 함수다.
+    ///
+    /// # 추적 없는 투구 줄에서는 carry-down을 정지한다(리뷰 v19b I-1)
+    /// 커서가 **바로 그 줄**(`is_pitch == true && pitch_idx.is_none()` —
+    /// `ptsPitchId == "-1"` 센티널, 추적 데이터가 없는 진짜 투구)에 있으면
+    /// 위 투구를 물려받지 않고 선택을 해제한다. 물려받으면 "8구 타격" 줄에
+    /// "7구"가 뜨는 식으로 줄과 화면이 다른 사건을 가리키게 된다 — 이 릴리스가
+    /// 없애려던 바로 그 상태다. 커서가 **그다음** 줄(결과 요약 등, 투구 줄이
+    /// 아님)로 넘어가면 이 가드는 걸리지 않고 평소처럼 더 위의 마지막 실제
+    /// 투구까지 계속 물려받는다 — 그건 의도된 동작이다.
+    ///
+    /// 범위 밖 `line`은 마지막 줄로 낮춘다(무패닉). 줄이 하나도 없으면 `None`.
+    pub fn pitch_at_relay_line(&self, sel: Option<i64>, line: usize) -> Option<usize> {
+        let lines = self.active_relay_lines(sel);
+        let last = lines.len().checked_sub(1)?;
+        let slice = &lines[..=line.min(last)];
+        if slice
+            .last()
+            .is_some_and(|l| l.is_pitch && l.pitch_idx.is_none())
+        {
+            return None; // 추적 없는 투구 줄 — 다른 공을 이 줄의 공인 척 보여주지 않는다
+        }
+        slice.iter().rev().find_map(|l| l.pitch_idx)
+    }
+
+    /// **투구 → 문자중계 줄**(연동의 나머지 절반). `pitch`번째 투구를 서술하는
+    /// 줄의 인덱스. 짝이 없으면(연동 불가 응답·손 조립 상태) `None` — 호출부는
+    /// 커서를 세우지 않고 v0.18과 똑같이 꼬리 뷰로 남는다(우아한 저하).
+    pub fn relay_line_of_pitch(&self, sel: Option<i64>, pitch: usize) -> Option<usize> {
+        self.active_relay_lines(sel)
+            .iter()
+            .position(|l| l.pitch_idx == Some(pitch))
     }
 
     /// `at_bats`의 seq가 실제로 전부 유일한지(리뷰 M-2). 응답의 textRelay
@@ -278,7 +381,7 @@ mod tests {
     #[test]
     fn active_helpers_fall_back_to_legacy_fields_when_at_bats_is_empty() {
         let mut s = bare_live_state();
-        s.relay_log = vec!["레거시 문자중계".into()];
+        s.relay_log = vec![RelayLine::plain("레거시 문자중계")];
         s.current_pitches = vec![pitch(1), pitch(2)];
         assert!(s.active_at_bat(None).is_none());
         assert_eq!(s.active_pitches(None), s.current_pitches.as_slice());
@@ -297,20 +400,20 @@ mod tests {
                 seq: 10,
                 batter_name: "old".into(),
                 inning_label: "T1".into(),
-                relay_lines: vec!["old line".into()],
+                relay_lines: vec![RelayLine::plain("old line")],
                 pitches: vec![pitch(1)],
             },
             AtBat {
                 seq: 11,
                 batter_name: "new".into(),
                 inning_label: "T2".into(),
-                relay_lines: vec!["new line".into()],
+                relay_lines: vec![RelayLine::plain("new line")],
                 pitches: vec![pitch(1), pitch(2)],
             },
         ];
         assert_eq!(s.active_at_bat(None).unwrap().batter_name, "new");
         assert_eq!(s.active_pitches(None).len(), 2);
-        assert_eq!(s.active_relay_lines(None), ["new line".to_string()]);
+        assert_eq!(s.active_relay_lines(None), [RelayLine::plain("new line")]);
     }
 
     /// sel=Some(seq)는 그 번호의 과거 타석을 가리킨다 — 자리(인덱스)가 아니라
@@ -358,6 +461,109 @@ mod tests {
         assert_eq!(s.active_at_bat(Some(99)).unwrap().batter_name, "only");
         assert!(!s.has_at_bat(99));
         assert!(s.has_at_bat(7));
+    }
+
+    // ---- v0.19: 문자중계 줄 ↔ 투구 (양방향 조회) ----
+
+    /// 실제 타석 모양: 안내 → 1구 → 2구 → 결과 요약 → 주자 진루.
+    fn linked_at_bat_state() -> LiveState {
+        let mut s = bare_live_state();
+        s.at_bats = vec![AtBat {
+            seq: 1,
+            batter_name: "타자".into(),
+            inning_label: "T1".into(),
+            relay_lines: vec![
+                RelayLine::plain("1번타자 최원준"),
+                RelayLine {
+                    text: "1구 볼".into(),
+                    pitch_idx: Some(0),
+                    is_pitch: true,
+                },
+                RelayLine {
+                    text: "2구 타격".into(),
+                    pitch_idx: Some(1),
+                    is_pitch: true,
+                },
+                RelayLine::plain("최원준 : 좌익수 뒤 홈런"),
+                RelayLine::plain("1루주자 김현수 : 홈인"),
+            ],
+            pitches: vec![pitch(1), pitch(2)],
+        }];
+        s
+    }
+
+    /// 투구 줄에 커서를 두면 그 투구가 나온다(연동의 기본 계약).
+    #[test]
+    fn a_pitch_line_resolves_to_its_own_pitch() {
+        let s = linked_at_bat_state();
+        assert_eq!(s.pitch_at_relay_line(None, 1), Some(0));
+        assert_eq!(s.pitch_at_relay_line(None, 2), Some(1));
+    }
+
+    /// 투구가 **아닌** 줄은 위쪽에서 가장 가까운 투구를 물려받는다 — 결과 요약과
+    /// 주자 진루는 마지막 투구(2구)가 만든 사건이므로 그 공이 존에 남아야 한다.
+    /// 이 규칙이 없으면 홈런 줄을 읽는 동안 존이 비거나(선택 해제) 방금 전
+    /// 무관한 공이 남는다.
+    #[test]
+    fn a_non_pitch_line_carries_down_the_nearest_pitch_above_it() {
+        let s = linked_at_bat_state();
+        assert_eq!(s.pitch_at_relay_line(None, 3), Some(1), "결과 요약 → 2구");
+        assert_eq!(s.pitch_at_relay_line(None, 4), Some(1), "주자 진루 → 2구");
+    }
+
+    /// 첫 투구보다 위에 있는 줄(타자 등장 안내)은 아직 던진 공이 없으므로
+    /// 선택 해제 — 존이 그 타석 전체를 보여주는 개요 상태로 돌아간다.
+    #[test]
+    fn a_line_above_the_first_pitch_selects_no_pitch_at_all() {
+        let s = linked_at_bat_state();
+        assert_eq!(s.pitch_at_relay_line(None, 0), None);
+    }
+
+    /// 범위 밖 줄 번호는 마지막 줄로 낮추고, 줄이 아예 없으면 None(무패닉).
+    #[test]
+    fn pitch_at_relay_line_is_lenient_about_out_of_range_and_empty_input() {
+        let s = linked_at_bat_state();
+        assert_eq!(s.pitch_at_relay_line(None, 9999), Some(1), "마지막 줄 취급");
+        assert_eq!(bare_live_state().pitch_at_relay_line(None, 0), None);
+    }
+
+    /// 반대 방향: 투구 → 그 투구를 서술하는 줄. 짝이 없는 투구는 None이라
+    /// 호출부가 커서를 세우지 않는다(우아한 저하).
+    #[test]
+    fn relay_line_of_pitch_finds_the_line_that_describes_it() {
+        let s = linked_at_bat_state();
+        assert_eq!(s.relay_line_of_pitch(None, 0), Some(1));
+        assert_eq!(s.relay_line_of_pitch(None, 1), Some(2));
+        assert_eq!(s.relay_line_of_pitch(None, 7), None, "없는 투구");
+        assert_eq!(
+            bare_live_state().relay_line_of_pitch(None, 0),
+            None,
+            "줄 정보가 없는 상태(레거시 폴백)에선 짝을 못 찾는다"
+        );
+    }
+
+    /// 두 조회는 **보고 있는 타석**(sel) 안에서만 유효해야 한다 — 과거 타석을
+    /// 돌려보는 중에 최신 타석의 줄/투구를 섞어 보면 존과 문자중계가 서로 다른
+    /// 타석을 말한다.
+    #[test]
+    fn the_relay_pitch_lookups_stay_inside_the_at_bat_being_viewed() {
+        let mut s = linked_at_bat_state();
+        let mut newest = s.at_bats[0].clone();
+        newest.seq = 2;
+        newest.relay_lines = vec![RelayLine {
+            text: "1구 헛스윙".into(),
+            pitch_idx: Some(0),
+            is_pitch: true,
+        }];
+        newest.pitches = vec![pitch(1)];
+        s.at_bats.push(newest);
+
+        // 최신(sel=None): 줄이 하나뿐이라 0번 줄이 곧 0번 투구.
+        assert_eq!(s.pitch_at_relay_line(None, 0), Some(0));
+        assert_eq!(s.relay_line_of_pitch(None, 1), None);
+        // 과거 타석(seq=1): 0번 줄은 안내라 선택 없음, 1번 투구는 2번째 줄.
+        assert_eq!(s.pitch_at_relay_line(Some(1), 0), None);
+        assert_eq!(s.relay_line_of_pitch(Some(1), 1), Some(2));
     }
 
     /// M-2: seq가 실제로 전부 다르면 유일하다고 판정한다(무회귀 — 정상 응답의

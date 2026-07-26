@@ -4,7 +4,8 @@ use super::dto::{
 };
 use crate::error::Result;
 use crate::model::{
-    AtBat, BaseState, Count, Game, GameStatus, LiveState, Pitch, PitchResult, Standing, Team,
+    AtBat, BaseState, Count, Game, GameStatus, LiveState, Pitch, PitchResult, RelayLine, Standing,
+    Team,
 };
 
 fn status_of(g: &ScheduleGame) -> GameStatus {
@@ -213,18 +214,80 @@ fn inning_label_of(t: &TextRelay) -> String {
     }
 }
 
+/// 문자중계 줄 → 투구 인덱스(v0.19 연동). 응답이 직접 실어 주는 외래키
+/// `textOption.ptsPitchId` ↔ `ptsOption.pitchId`로 잇는다. 빈 id는 잇지 않는다
+/// (양쪽이 다 결측이면 `"" == ""`로 엉뚱한 줄이 첫 투구에 붙어 버린다).
+///
+/// # 왜 이 방법인가 (후보 3종을 실측으로 떨어뜨린 근거)
+/// 구현 당시 표본은 2026-07-25 5경기 × 9이닝(타석 514건·투구 1,575건). 이후
+/// 리뷰가 5개 날짜·24경기·응답 218개(타석 2,454건·투구 7,474건)로 재검증해
+/// 아래 결론을 재확인하고 예외 하나를 더 찾았다(표는 [`crate::source::naver::dto::TextOption::pts_pitch_id`]
+/// 참고).
+/// - **① 텍스트 "N구"에서 순번 추출 — 틀린다.** 투구가 아닌 줄도 "N구"로
+///   시작한다: `type==7`의 "1구 피치클락 타자위반 스트라이크" / "1구 피치클락
+///   투수위반 볼"(구현 시 표본 2건, 큰 표본에서는 8건). 이 줄엔 추적 데이터가
+///   없는데 순번만 보면 첫 투구에 붙는다. 게다가 그 타석들은 위반이 카운트를
+///   먹어 `ballcount`가 어긋나는데, 앞이 밀리기만 하는 게 아니라 타석 중간에
+///   번호가 통째로 비는 경우도 있다(`[1,2,3,5]` 등, 큰 표본에서 확인) —
+///   순번을 인덱스로 쓰면 이후 줄이 임의 위치에서 어긋난다.
+/// - **② seqno 순서 ↔ ptsOptions 순서 — 맞지만 가정이 많다.** 실측으론
+///   타석 전부에서 `type==1` 줄 수와 투구 수가 정확히 같고 순서도 1:1이지만,
+///   "투구 줄은 type 1이다"·"둘의 순서가 같다"는 두 전제에 기댄다.
+/// - **③ 타임스탬프 근접 — 불가능.** textOption엔 시각 필드가 아예 없다.
+/// - **④ `ptsPitchId` 외래키 — 채택.** 언어·순서·타입 코드 어디에도 기대지
+///   않는 유일한 방법이며, ②와 결과가 일치한다(1,575/1,575, 큰 표본에서도
+///   7,474/7,474). 다만 "투구 줄 전부가 유효한 값을 갖는다"는 아니다 —
+///   `"-1"` 센티널(추적 데이터 없는 진짜 투구)이 투구 줄 7,476건 중 2건 있고,
+///   그 값은 어떤 `ptsOptions`와도 안 맞는다(고아 txt→pts 2건). 양방향 고아
+///   pts→txt·타석 안 중복·타석 경계를 넘는 재사용은 전부 0건이다.
+fn pitch_idx_of_line(t: &TextRelay, pts_pitch_id: &str) -> Option<usize> {
+    if pts_pitch_id.is_empty() {
+        return None;
+    }
+    t.pts_options
+        .iter()
+        .position(|p| p.pitch_id == pts_pitch_id)
+}
+
 /// 타석의 문자중계 줄(오래된→최신, 응답 원문 seqno 순서 그대로 — 한 항목 안의
-/// textOptions는 이미 오름차순이다). 빈 텍스트는 건너뛴다.
-fn relay_lines_of(t: &TextRelay) -> Vec<String> {
+/// textOptions는 이미 오름차순이다). 빈 텍스트는 건너뛴다. 투구 줄은 자기가
+/// 서술하는 투구의 인덱스를 함께 싣는다([`pitch_idx_of_line`]).
+///
+/// `is_pitch`는 `ptsPitchId`가 비어 있지 않은지로 정한다 — 매칭 성공 여부와는
+/// 별개다. `ptsPitchId == "-1"`(추적 데이터 없는 진짜 투구, 실측 7,476줄 중
+/// 2건)인 줄은 `is_pitch: true`이면서 `pitch_idx_of_line`이 `None`을 내는데,
+/// [`crate::model::LiveState::pitch_at_relay_line`]이 이 비트로 그 상태를
+/// "투구 줄이 아님"과 구분해 carry-down을 막는다(리뷰 v19b I-1).
+fn relay_lines_of(t: &TextRelay) -> Vec<RelayLine> {
     t.text_options
         .iter()
         .filter(|o| !o.text.trim().is_empty())
-        .map(|o| o.text.clone())
+        .map(|o| RelayLine {
+            text: o.text.clone(),
+            pitch_idx: pitch_idx_of_line(t, &o.pts_pitch_id),
+            is_pitch: !o.pts_pitch_id.is_empty(),
+        })
         .collect()
 }
 
-/// 타석의 투구 목록(ptsOptions → Pitch). 같은 ballcount 순번의 텍스트를
-/// 매칭해 결과 분류·원문을 함께 싣는다(없으면 빈 문자열).
+/// 타석의 투구 목록(ptsOptions → Pitch). 짝이 되는 문자중계 줄의 텍스트를 실어
+/// 결과 분류(`result_of`)와 상세줄 원문에 쓴다(없으면 빈 문자열).
+///
+/// 매칭은 `ptsPitchId` 외래키가 우선이고, 그 값이 없는 응답에서만 기존
+/// ballcount 접두("{N}구") 매칭으로 물러선다. 실측 7,474건에서 두 방법의 결과가
+/// 완전히 같아 동작 변화는 없고, 대신 "1구 피치클락 …" 같은 **투구가 아닌 줄이
+/// 접두만으로 투구에 붙는** 경로가 원천 차단된다. 폴백을 남긴 이유는 관용
+/// 파싱이다 — 외래키를 안 주는 응답에서 `Pitch.text`가 통째로 비면 존 색상
+/// 분류까지 함께 죽는다.
+///
+/// # 리뷰 M-4 — 이 우선순위는 실 데이터로는 회귀 테스트가 못 지킨다
+/// 두 방법이 실측 전수(7,474건)에서 100% 일치하므로, 실제 응답으로 이
+/// 분기를 통째로 지워도(v0.18 접두 전용으로 되돌려도) 기존 테스트가 전부
+/// 통과한다 — 순수 견고화이지 제거해야 할 죽은 코드가 아니다. 우선순위
+/// 자체를 지키는 것은 합성 테스트
+/// `pitches_of_prefers_the_foreign_key_match_over_an_earlier_same_prefix_decoy`
+/// (같은 접두로 시작하는 가짜 줄과 진짜 줄을 함께 둬 두 방법이 갈리게
+/// 만든 경우)뿐이다.
 fn pitches_of(t: &TextRelay) -> Vec<Pitch> {
     t.pts_options
         .iter()
@@ -232,7 +295,12 @@ fn pitches_of(t: &TextRelay) -> Vec<Pitch> {
             let text = t
                 .text_options
                 .iter()
-                .find(|o| o.text.starts_with(&format!("{}구", p.ballcount)))
+                .find(|o| !o.pts_pitch_id.is_empty() && o.pts_pitch_id == p.pitch_id)
+                .or_else(|| {
+                    t.text_options
+                        .iter()
+                        .find(|o| o.text.starts_with(&format!("{}구", p.ballcount)))
+                })
                 .map(|o| o.text.clone())
                 .unwrap_or_default();
             Pitch {
@@ -334,7 +402,7 @@ pub fn live_from_relay(json: &str, home: Team, away: Team) -> Result<LiveState> 
         .or_else(|| trd.text_relays.first());
     let inning_label = current.map(inning_label_of).unwrap_or_default();
 
-    let relay_log: Vec<String> = current.map(relay_lines_of).unwrap_or_default();
+    let relay_log: Vec<RelayLine> = current.map(relay_lines_of).unwrap_or_default();
     let current_pitches: Vec<Pitch> = current.map(pitches_of).unwrap_or_default();
 
     // 과거 타석들(v0.18 "돌려보기"): is_at_bat_worthy를 만족하는 모든 항목을
@@ -508,8 +576,11 @@ mod tests {
             name: c.into(),
         };
         let live = live_from_relay(json, team("LG"), team("KT")).unwrap();
-        assert!(live.relay_log.iter().any(|l| l.contains("9번타자 천성호")));
-        assert!(!live.relay_log.iter().any(|l| l.contains("1구 파울")));
+        assert!(live
+            .relay_log
+            .iter()
+            .any(|l| l.text.contains("9번타자 천성호")));
+        assert!(!live.relay_log.iter().any(|l| l.text.contains("1구 파울")));
         assert!(live.current_pitches.is_empty());
     }
 
@@ -744,8 +815,8 @@ mod tests {
             .any(|p| p.result != PitchResult::Unknown));
         // 이 타석은 두 번째로 오래된 타석(2번타자 김현수)과 구분되는 자기만의
         // 문자중계를 갖는다 — at_bats[1]과 섞여 있지 않은지 확인.
-        assert!(oldest.relay_lines.iter().any(|l| l.contains("최원준")));
-        assert!(!oldest.relay_lines.iter().any(|l| l.contains("김현수")));
+        assert!(oldest.relay_lines.iter().any(|l| l.text.contains("최원준")));
+        assert!(!oldest.relay_lines.iter().any(|l| l.text.contains("김현수")));
     }
 
     /// 진행-외 문구뿐인 항목(승리투수 발표 type==99, 이닝 시작 type==0)은
@@ -788,11 +859,285 @@ mod tests {
         assert!(!live
             .at_bats
             .iter()
-            .any(|ab| ab.relay_lines.iter().any(|l| l.contains("승리투수"))));
-        assert!(!live
+            .any(|ab| ab.relay_lines.iter().any(|l| l.text.contains("승리투수"))));
+        assert!(!live.at_bats.iter().any(|ab| ab
+            .relay_lines
+            .iter()
+            .any(|l| l.text.contains("9회말 LG 공격"))));
+    }
+
+    // ---- v0.19: 문자중계 줄 ↔ 투구 연동 (relay_lines_of의 ptsPitchId 조인) ----
+
+    fn kt_lg_fixture() -> LiveState {
+        live_from_relay(
+            include_str!("../../../tests/fixtures/relay_20260719KTLG.json"),
+            Team {
+                code: "LG".into(),
+                name: "LG".into(),
+            },
+            Team {
+                code: "KT".into(),
+                name: "KT".into(),
+            },
+        )
+        .unwrap()
+    }
+
+    /// 연동의 뼈대: 투구 줄은 자기 투구의 **인덱스**를 싣고, 투구가 아닌 줄
+    /// (타자 등장 안내·결과 요약)은 아무것도 싣지 않는다. fixture 실측(천성호
+    /// 타석 = 최신, no=97): 안내 1줄 + 투구 5줄 + 결과 요약 1줄.
+    #[test]
+    fn pitch_relay_lines_carry_the_index_of_the_pitch_they_describe() {
+        let state = kt_lg_fixture();
+        let ab = state.at_bats.last().unwrap();
+        let links: Vec<Option<usize>> = ab.relay_lines.iter().map(|l| l.pitch_idx).collect();
+        assert_eq!(
+            links,
+            vec![None, Some(0), Some(1), Some(2), Some(3), Some(4), None],
+            "안내 → 1~5구 → 결과 요약 순서로 이어져야 한다: {:?}",
+            ab.relay_lines.iter().map(|l| &l.text).collect::<Vec<_>>()
+        );
+        // 링크가 가리키는 투구가 실제로 그 줄이 말하는 투구인지 — 인덱스만
+        // 맞고 내용이 어긋나면 존이 엉뚱한 공을 띄운다.
+        for line in &ab.relay_lines {
+            if let Some(i) = line.pitch_idx {
+                assert_eq!(
+                    ab.pitches[i].text, line.text,
+                    "링크된 투구의 원문이 그 줄과 같아야 한다"
+                );
+            }
+        }
+    }
+
+    /// 투수 교체·수비위치 변경(type==2)이 안내와 첫 투구 **사이에** 끼어도
+    /// 링크가 밀리지 않는다 — 순서·개수에 기대지 않고 외래키로 잇기 때문.
+    /// fixture 실측: 오지환 타석(no=94)은 안내 1 + 교체 3 + 투구 5 + 요약 1줄.
+    #[test]
+    fn substitution_lines_between_the_announcement_and_the_pitches_do_not_shift_the_links() {
+        let state = kt_lg_fixture();
+        let ab = state
             .at_bats
             .iter()
-            .any(|ab| ab.relay_lines.iter().any(|l| l.contains("9회말 LG 공격"))));
+            .find(|ab| ab.seq == 94)
+            .expect("fixture must contain at-bat 94");
+        let links: Vec<Option<usize>> = ab.relay_lines.iter().map(|l| l.pitch_idx).collect();
+        assert_eq!(
+            links,
+            vec![
+                None,
+                None,
+                None,
+                None,
+                Some(0),
+                Some(1),
+                Some(2),
+                Some(3),
+                Some(4),
+                None
+            ]
+        );
+        assert!(
+            ab.relay_lines[1].text.contains("교체"),
+            "전제: 교체 줄이 있다"
+        );
+    }
+
+    /// ★ 매칭 방법 ①("N구" 텍스트에서 순번 추출)이 실제로 틀리는 지점.
+    /// 실측(2026-07-25 KT-롯데 4회 김현수 / LG-한화 3회 구본혁)을 최소 JSON으로
+    /// 재현했다: 피치클락 위반 줄(type==7)이 "1구 …"로 시작하지만 추적
+    /// 데이터가 없고, 위반이 카운트를 먹어 실제 투구는 ballcount 2부터
+    /// 시작한다. 텍스트 순번으로 이었다면 위반 줄이 첫 투구에 붙고 나머지가
+    /// 한 칸씩 밀렸을 것이다 — 외래키로 이으면 위반 줄은 링크가 없고
+    /// "2구 볼"이 0번 투구를 가리킨다.
+    #[test]
+    fn a_pitch_clock_violation_line_looks_like_a_pitch_but_is_not_linked() {
+        let json = r#"{"result":{"textRelayData":{
+            "currentGameState": {"ball":"0","strike":"0","out":"0","homeScore":"0","awayScore":"0"},
+            "textRelays": [
+                {"no": 35, "inn": 4, "homeOrAway": "0", "textOptions": [
+                    {"seqno": 179, "text": "2번타자 김현수", "type": 8},
+                    {"seqno": 180, "text": "1구 피치클락 타자위반 스트라이크", "type": 7},
+                    {"seqno": 181, "text": "2구 볼", "type": 1, "ptsPitchId": "260725_190332"},
+                    {"seqno": 182, "text": "3구 파울", "type": 1, "ptsPitchId": "260725_190359"}
+                ], "ptsOptions": [
+                    {"ballcount": 2, "pitchId": "260725_190332", "crossPlateX": 0.1, "crossPlateY": 0.5, "topSz": 3.3, "bottomSz": 1.6, "vx0": 1.0, "vy0": 1.0, "vz0": 1.0, "stance": "R"},
+                    {"ballcount": 3, "pitchId": "260725_190359", "crossPlateX": 0.2, "crossPlateY": 0.5, "topSz": 3.3, "bottomSz": 1.6, "vx0": 1.0, "vy0": 1.0, "vz0": 1.0, "stance": "R"}
+                ]}
+            ],
+            "lastValidMetricOption": null
+        }}}"#;
+        let team = |c: &str| Team {
+            code: c.into(),
+            name: c.into(),
+        };
+        let live = live_from_relay(json, team("LG"), team("KT")).unwrap();
+        let ab = &live.at_bats[0];
+        let links: Vec<Option<usize>> = ab.relay_lines.iter().map(|l| l.pitch_idx).collect();
+        assert_eq!(
+            links,
+            vec![None, None, Some(0), Some(1)],
+            "피치클락 위반 줄은 투구가 아니다 — 링크가 없어야 한다"
+        );
+        // 투구 순번(ballcount)은 2부터인데 인덱스는 0부터다: 이 어긋남이
+        // pitch_idx를 순번이 아니라 인덱스로 담는 이유다.
+        assert_eq!(ab.pitches[0].order, 2);
+        assert_eq!(ab.pitches[0].text, "2구 볼");
+    }
+
+    /// 우아한 저하: 응답이 외래키를 안 주면(구버전/부분 응답) 줄은 그대로
+    /// 보이되 연동만 없다 — 패닉도, 엉뚱한 링크도 없다. 특히 양쪽 id가 모두
+    /// 비어 있을 때 `"" == ""`로 첫 투구에 아무 줄이나 붙으면 안 된다.
+    #[test]
+    fn relay_lines_degrade_to_no_link_when_the_response_omits_pitch_ids() {
+        let json = r#"{"result":{"textRelayData":{
+            "currentGameState": {"ball":"0","strike":"0","out":"0","homeScore":"0","awayScore":"0"},
+            "textRelays": [
+                {"no": 1, "inn": 1, "homeOrAway": "0", "textOptions": [
+                    {"seqno": 1, "text": "1번타자 최원준", "type": 8},
+                    {"seqno": 2, "text": "1구 파울", "type": 1}
+                ], "ptsOptions": [
+                    {"ballcount": 1, "crossPlateX": 0.1, "crossPlateY": 0.5, "topSz": 3.3, "bottomSz": 1.6, "vx0": 1.0, "vy0": 1.0, "vz0": 1.0, "stance": "R"}
+                ]}
+            ],
+            "lastValidMetricOption": null
+        }}}"#;
+        let team = |c: &str| Team {
+            code: c.into(),
+            name: c.into(),
+        };
+        let live = live_from_relay(json, team("LG"), team("KT")).unwrap();
+        let ab = &live.at_bats[0];
+        assert!(
+            ab.relay_lines.iter().all(|l| l.pitch_idx.is_none()),
+            "외래키가 없으면 연동 없이 저하한다"
+        );
+        assert_eq!(ab.relay_lines.len(), 2, "줄 자체는 그대로 보여야 한다");
+        // 외래키가 없어도 투구 원문은 기존 ballcount 접두 폴백으로 살아 있다
+        // (존 색상 분류가 여기 달려 있다).
+        assert_eq!(ab.pitches[0].text, "1구 파울");
+        assert_eq!(ab.pitches[0].result, PitchResult::Foul);
+    }
+
+    /// ★ 리뷰 v19b I-1의 실측 재현: `ptsPitchId == "-1"`(추적 데이터 없는 진짜
+    /// 투구, 20260614LTLG 3회 no=21 황성빈 타석을 최소 JSON으로 고정한 것 —
+    /// 합성이 아니라 실측이라 다음 리뷰가 재현할 수 있다). 7개 투구는 정상
+    /// 추적됐고, 8번째 "8구 타격"만 `ptsPitchId="-1"`이라 어떤 `ptsOption`과도
+    /// 짝지어지지 않는다.
+    ///
+    /// 고쳐지기 전 버그: 이 줄에 커서를 두면 carry-down이 위쪽 7구를 이 줄의
+    /// 공인 척 보여줬다("8구 타격"인데 존·상세줄은 "7구 파울"). 고친 뒤에는
+    /// 그 줄 자체에서는 선택이 풀리고(`None`), 그 아래 결과 요약 줄(원래
+    /// 투구 줄이 아님)로 커서가 더 내려가면 평소처럼 마지막 실제 투구(7구)를
+    /// 계속 물려받는다 — 그건 의도된 동작이다.
+    #[test]
+    fn a_pitch_with_no_tracking_data_stops_carry_down_instead_of_borrowing_the_pitch_above_it() {
+        let json = r#"{"result":{"textRelayData":{
+            "currentGameState": {"ball":"0","strike":"0","out":"0","homeScore":"0","awayScore":"0"},
+            "textRelays": [
+                {"no": 21, "inn": 3, "homeOrAway": "0", "textOptions": [
+                    {"seqno": 1, "text": "3번타자 황성빈", "type": 8},
+                    {"seqno": 2, "text": "1구 파울", "type": 1, "ptsPitchId": "20260614_190001"},
+                    {"seqno": 3, "text": "2구 파울", "type": 1, "ptsPitchId": "20260614_190010"},
+                    {"seqno": 4, "text": "3구 볼", "type": 1, "ptsPitchId": "20260614_190020"},
+                    {"seqno": 5, "text": "4구 파울", "type": 1, "ptsPitchId": "20260614_190030"},
+                    {"seqno": 6, "text": "5구 볼", "type": 1, "ptsPitchId": "20260614_190040"},
+                    {"seqno": 7, "text": "6구 파울", "type": 1, "ptsPitchId": "20260614_190050"},
+                    {"seqno": 8, "text": "7구 파울", "type": 1, "ptsPitchId": "20260614_190060"},
+                    {"seqno": 9, "text": "투수 투수판 이탈", "type": 7},
+                    {"seqno": 10, "text": "8구 타격", "type": 1, "ptsPitchId": "-1"},
+                    {"seqno": 11, "text": "황성빈 : 우익수 오른쪽 1루타", "type": 6}
+                ], "ptsOptions": [
+                    {"ballcount": 1, "pitchId": "20260614_190001", "crossPlateX": 0.1, "crossPlateY": 0.5, "topSz": 3.3, "bottomSz": 1.6, "vx0": 1.0, "vy0": 1.0, "vz0": 1.0, "stance": "R"},
+                    {"ballcount": 2, "pitchId": "20260614_190010", "crossPlateX": 0.1, "crossPlateY": 0.5, "topSz": 3.3, "bottomSz": 1.6, "vx0": 1.0, "vy0": 1.0, "vz0": 1.0, "stance": "R"},
+                    {"ballcount": 3, "pitchId": "20260614_190020", "crossPlateX": 0.1, "crossPlateY": 0.5, "topSz": 3.3, "bottomSz": 1.6, "vx0": 1.0, "vy0": 1.0, "vz0": 1.0, "stance": "R"},
+                    {"ballcount": 4, "pitchId": "20260614_190030", "crossPlateX": 0.1, "crossPlateY": 0.5, "topSz": 3.3, "bottomSz": 1.6, "vx0": 1.0, "vy0": 1.0, "vz0": 1.0, "stance": "R"},
+                    {"ballcount": 5, "pitchId": "20260614_190040", "crossPlateX": 0.1, "crossPlateY": 0.5, "topSz": 3.3, "bottomSz": 1.6, "vx0": 1.0, "vy0": 1.0, "vz0": 1.0, "stance": "R"},
+                    {"ballcount": 6, "pitchId": "20260614_190050", "crossPlateX": 0.1, "crossPlateY": 0.5, "topSz": 3.3, "bottomSz": 1.6, "vx0": 1.0, "vy0": 1.0, "vz0": 1.0, "stance": "R"},
+                    {"ballcount": 7, "pitchId": "20260614_190060", "crossPlateX": 0.1, "crossPlateY": 0.5, "topSz": 3.3, "bottomSz": 1.6, "vx0": 1.0, "vy0": 1.0, "vz0": 1.0, "stance": "R"}
+                ]}
+            ],
+            "lastValidMetricOption": null
+        }}}"#;
+        let team = |c: &str| Team {
+            code: c.into(),
+            name: c.into(),
+        };
+        let live = live_from_relay(json, team("LT"), team("LG")).unwrap();
+        let ab = &live.at_bats[0];
+
+        // 파서: "8구 타격" 줄은 투구 줄이라고 응답이 말하지만(`is_pitch`) 짝을
+        // 못 찾는다(`pitch_idx: None`) — "애초에 투구 줄이 아님"과 구분돼야
+        // 하는 바로 그 상태다.
+        let untracked = &ab.relay_lines[9];
+        assert_eq!(untracked.text, "8구 타격");
+        assert!(
+            untracked.is_pitch,
+            "ptsPitchId가 있으니 투구 줄로 표시돼야 한다"
+        );
+        assert_eq!(
+            untracked.pitch_idx, None,
+            "\"-1\"은 어떤 투구와도 안 맞는다"
+        );
+
+        // 모델: 커서가 그 줄 자체에 있으면 위 7구를 물려받지 않고 선택이
+        // 풀린다(고쳐진 동작). 리뷰가 재현한 버그는 여기서 Some(6)이 나오는
+        // 것이었다.
+        assert_eq!(
+            live.pitch_at_relay_line(None, 9),
+            None,
+            "추적 없는 투구 줄 자체에서는 carry-down이 멈춰야 한다"
+        );
+
+        // 그 줄 위(투수판 이탈, 투구 줄이 아님)와 아래(결과 요약, 투구 줄이
+        // 아님)는 평소 carry-down 그대로 마지막 실제 투구(7구=인덱스 6)를
+        // 물려받는다 — 이건 의도된 동작이라 바뀌면 안 된다.
+        assert_eq!(
+            live.pitch_at_relay_line(None, 8),
+            Some(6),
+            "투수판 이탈 줄은 여전히 7구를 물려받는다"
+        );
+        assert_eq!(
+            live.pitch_at_relay_line(None, 10),
+            Some(6),
+            "결과 요약 줄은 추적 없는 8구를 건너뛰고 마지막 실제 투구를 물려받는다"
+        );
+    }
+
+    /// 리뷰 M-4: `pitches_of`의 외래키 우선 분기는 실측 7,474건 전부에서
+    /// 접두("{ballcount}구") 폴백과 결과가 100% 일치해 어떤 실데이터 테스트도
+    /// 이 분기를 무력화하면 잡아내지 못한다(실증: 통째로 지워도 450+ 테스트
+    /// 그대로 통과). 실 데이터로는 두 방법이 갈리지 않으므로, 두 방법이
+    /// **갈리도록 합성한** 타석으로 순서를 고정한다.
+    ///
+    /// 같은 접두("1구")로 시작하는 텍스트가 두 줄 있고, 그중 **먼저 나오는
+    /// 줄은 가짜**(ptsPitchId 없음)다. 외래키 우선이면 진짜 줄(두 번째)을
+    /// 찾아야 하고, v0.18처럼 접두만으로 찾으면 순서상 먼저인 가짜 줄을
+    /// 집어 버린다.
+    #[test]
+    fn pitches_of_prefers_the_foreign_key_match_over_an_earlier_same_prefix_decoy() {
+        let json = r#"{"result":{"textRelayData":{
+            "currentGameState": {"ball":"0","strike":"0","out":"0","homeScore":"0","awayScore":"0"},
+            "textRelays": [
+                {"no": 1, "inn": 1, "homeOrAway": "0", "textOptions": [
+                    {"seqno": 1, "text": "1번타자 최원준", "type": 8},
+                    {"seqno": 2, "text": "1구 몸에 맞는 볼(가짜, 외래키 없음)", "type": 1},
+                    {"seqno": 3, "text": "1구 파울", "type": 1, "ptsPitchId": "P1"}
+                ], "ptsOptions": [
+                    {"ballcount": 1, "pitchId": "P1", "crossPlateX": 0.1, "crossPlateY": 0.5, "topSz": 3.3, "bottomSz": 1.6, "vx0": 1.0, "vy0": 1.0, "vz0": 1.0, "stance": "R"}
+                ]}
+            ],
+            "lastValidMetricOption": null
+        }}}"#;
+        let team = |c: &str| Team {
+            code: c.into(),
+            name: c.into(),
+        };
+        let live = live_from_relay(json, team("LG"), team("KT")).unwrap();
+        let ab = &live.at_bats[0];
+        assert_eq!(
+            ab.pitches[0].text, "1구 파울",
+            "외래키가 가리키는 진짜 줄을 집어야 한다 — 접두만 봤다면 먼저 나온 가짜 줄이 집혔을 것이다"
+        );
     }
 
     /// batter_name_of: "N번타자 이름" 형식에서 이름만 뽑는다. 안내 자체가 없는

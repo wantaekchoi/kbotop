@@ -42,6 +42,26 @@ pub fn kst_days(utc_secs: u64) -> i64 {
     (utc_secs as i64 + 9 * 3600).div_euclid(86400)
 }
 
+/// "HH:MM:SS" → 자정 기준 경과 초(자릿수·범위 검증만, 날짜 없음). 게임 시작
+/// 시각(`ui::live_vm::elapsed_label`)과 예정 경기 카운트다운
+/// (`ui::games::scheduled_eta_hm`, v0.15 A-3)이 공유하는 시:분:초 파서다 — 두
+/// 곳 다 같은 "HH:MM:SS" 원문 포맷을 다루므로 파싱 자체는 공유하되, "자정
+/// 넘김을 어떻게 보정할지"는 호출부마다 다르다(elapsed_label은 항상 미래
+/// 방향이라 +24h 고정 보정이 안전하지만, scheduled_eta_hm은 날짜가 있는
+/// 절대시각 비교라 이 값만으로 보정하면 안 된다 — games.rs 쪽 주석 참고).
+///
+/// v0.18~v0.19a까지는 `ui::live`/`ui::live_vm`에 있었다(M-1, v19a 리뷰) — 한
+/// 화면의 표현 상태(ViewModel)와 무관한 범용 파서가 다른 화면(games.rs)의
+/// 유틸 공급자가 되는 배치였다. 파싱 실패는 None(관용 — 표시 생략).
+pub fn parse_hms_secs(hms: &str) -> Option<i64> {
+    let mut it = hms.split(':');
+    let h: i64 = it.next()?.parse().ok()?;
+    let m: i64 = it.next()?.parse().ok()?;
+    let s: i64 = it.next().unwrap_or("0").parse().ok()?;
+    ((0..24).contains(&h) && (0..60).contains(&m) && (0..60).contains(&s))
+        .then_some(h * 3600 + m * 60 + s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -62,5 +82,23 @@ mod tests {
             let (y, m, d) = civil_from_days(days);
             assert_eq!(days_from_civil(y, m, d), days);
         }
+    }
+
+    /// M-1(v19a 리뷰): 이동 전엔 elapsed_label/pitch_interval_label 테스트를
+    /// 통한 간접 커버뿐이었다 — 이동한 김에 파서 자체를 직접 잠근다.
+    #[test]
+    fn parse_hms_secs_converts_valid_time_to_seconds_since_midnight() {
+        assert_eq!(parse_hms_secs("00:00:00"), Some(0));
+        assert_eq!(parse_hms_secs("20:56:14"), Some(20 * 3600 + 56 * 60 + 14));
+        assert_eq!(parse_hms_secs("23:59:59"), Some(23 * 3600 + 59 * 60 + 59));
+    }
+
+    #[test]
+    fn parse_hms_secs_rejects_out_of_range_or_malformed_input() {
+        assert_eq!(parse_hms_secs("24:00:00"), None, "시는 0..24만 유효");
+        assert_eq!(parse_hms_secs("10:60:00"), None, "분은 0..60만 유효");
+        assert_eq!(parse_hms_secs("10:00:60"), None, "초는 0..60만 유효");
+        assert_eq!(parse_hms_secs("garbage"), None);
+        assert_eq!(parse_hms_secs(""), None);
     }
 }

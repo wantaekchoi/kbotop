@@ -5,6 +5,8 @@ pub mod header;
 pub mod help;
 pub mod i18n;
 pub mod live;
+/// 라이브 화면의 표현 상태(ViewModel) — `live`는 이걸 받아 그리기만 한다.
+pub(crate) mod live_vm;
 pub mod newslist;
 pub mod options;
 pub mod settings;
