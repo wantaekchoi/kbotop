@@ -1003,4 +1003,34 @@ mod tests {
             "연장에서 헤더와 값이 어긋났다:\n{head}\n{away}"
         );
     }
+    /// [v0.26 기획용 실측] 화면 크기별로 각 영역이 몇 줄·몇 칸을 쓰고, 어디가
+    /// 비는지 센다. 판단 근거를 눈대중이 아니라 숫자로 남긴다.
+    #[test]
+    #[ignore] // 기획용 조사 — `cargo test -- --ignored layout_probe`
+    fn layout_probe() {
+        for (w, h) in [(80u16, 24u16), (100, 30), (120, 40), (160, 50)] {
+            let mut app = App::new(Default::default());
+            app.screen = linescore_screen();
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            term.draw(|f| super::render(f, f.area(), &app)).unwrap();
+            let buf = term.backend().buffer();
+
+            let row_blank = |y: u16| (0..w).all(|x| buf[(x, y)].symbol().trim().is_empty());
+            let blanks: Vec<u16> = (0..h).filter(|y| row_blank(*y)).collect();
+            // 문자중계 패널 안에서 비어 있는 줄 수(테두리 안쪽만)
+            let inner_blank = (0..h)
+                .filter(|y| {
+                    (1..w - 1).all(|x| {
+                        let c = buf[(x, *y)].symbol();
+                        c.trim().is_empty() || c == "│"
+                    })
+                })
+                .count();
+            println!(
+                "{w}x{h}: 완전 빈 줄 {} / 내부 공백 줄 {} / 전체 {h}",
+                blanks.len(),
+                inner_blank
+            );
+        }
+    }
 }
