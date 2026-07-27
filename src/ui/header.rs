@@ -49,7 +49,7 @@ fn spans_width(spans: &[Span]) -> usize {
 /// 1행: 상태별 경기 수(+ 우측 정렬 현재 시각, 폭 부족 시 생략).
 /// 2행: 탭 표시(+ 마지막 갱신 경과, stale 마커 — 둘 다 폭 부족 시 생략 가능하나
 /// stale은 기존 관례대로 무조건 표시한다).
-pub fn render(f: &mut Frame, area: Rect, app: &App) {
+pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMap) {
     let l = app.labels();
     let mut live = 0u16;
     let mut sched = 0u16;
@@ -135,6 +135,8 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             active,
         ),
     };
+    let games_label_for_hit = games_label.clone();
+    let standings_label_for_hit = standings_label.clone();
     let mut tab_spans = vec![
         Span::styled(games_label, games_style),
         Span::raw(" | "),
@@ -180,6 +182,25 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             theme::status_fg(&app.theme_preset, Color::Red).add_modifier(Modifier::BOLD),
         ));
     }
+    // 탭 두 개를 클릭 영역으로 남긴다. 라벨 폭은 활성/비활성이 같게 맞춰 뒀으므로
+    // (위 match) 탭을 바꿔도 자리가 흔들리지 않는다. 좌표는 테두리 안쪽 둘째 줄 —
+    // Paragraph가 counts, tabs 순으로 그리는 그 자리다.
+    let tab_y = area.y + 2;
+    let tab_x = area.x + 1;
+    let games_w = super::text::display_width(&games_label_for_hit) as u16;
+    let sep_w = 3u16; // " | "
+    let standings_w = super::text::display_width(&standings_label_for_hit) as u16;
+    if area.height > 2 && area.width > 2 {
+        let avail = area.width - 2;
+        let games_rect = Rect::new(tab_x, tab_y, games_w.min(avail), 1);
+        hits.push(games_rect, super::hit::Zone::Tab(Tab::Games));
+        let sx = games_w + sep_w;
+        if sx < avail {
+            let standings_rect = Rect::new(tab_x + sx, tab_y, standings_w.min(avail - sx), 1);
+            hits.push(standings_rect, super::hit::Zone::Tab(Tab::Standings));
+        }
+    }
+
     let tabs = Line::from(tab_spans);
 
     let block = Block::default().borders(Borders::ALL).title(" kbotop ");
@@ -221,7 +242,8 @@ mod tests {
 
     fn render_to_string(app: &App) -> String {
         let mut term = Terminal::new(TestBackend::new(80, 4)).unwrap();
-        term.draw(|f| render(f, f.area(), app)).unwrap();
+        term.draw(|f| render(f, f.area(), app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         term.backend()
             .buffer()
             .content()
@@ -291,7 +313,8 @@ mod tests {
         let text = render_to_string(&app);
         assert!(text.contains("GO!"), "cheer badge missing:\n{text}");
         let mut term = Terminal::new(TestBackend::new(80, 4)).unwrap();
-        term.draw(|f| render(f, f.area(), &app)).unwrap();
+        term.draw(|f| render(f, f.area(), &app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         let buf = term.backend().buffer().clone();
         let team_bg = crate::ui::theme::team_color("LG");
         assert!(
@@ -309,7 +332,8 @@ mod tests {
         app.fetching = true;
         app.spinner_frame = 1; // '/'
         let mut term = Terminal::new(TestBackend::new(80, 4)).unwrap();
-        term.draw(|f| render(f, f.area(), &app)).unwrap();
+        term.draw(|f| render(f, f.area(), &app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         let buf = term.backend().buffer().clone();
         assert!(
             buf.content().iter().any(|c| c.fg == Color::Cyan),
@@ -348,7 +372,8 @@ mod tests {
 
     fn render_to_string_with_width(app: &App, width: u16) -> String {
         let mut term = Terminal::new(TestBackend::new(width, 4)).unwrap();
-        term.draw(|f| render(f, f.area(), app)).unwrap();
+        term.draw(|f| render(f, f.area(), app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         term.backend()
             .buffer()
             .content()

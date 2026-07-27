@@ -60,9 +60,11 @@ Navigation works the way it does in Vim: `j`/`k` to move, `Esc` to back out. Wha
 
 **In the live view**, `←`/`→` step through the pitches and the selected one shows up in the strike zone and the side view. `[`/`]` rewind through at-bats, and pressing again at an inning's first at-bat **pulls in the inning before it**. The play-by-play moves a line at a time with `j`/`k`, jumps to either end with `gg`/`G`, and the pitch for the line under the cursor appears in the zone alongside it.
 
+**The mouse works too.** Click a tab to go there; in a list, click once to select and again to open. Clicking a play-by-play line puts that pitch in the zone, and the wheel over the zone steps through pitches. The catch: with the mouse on, drag-to-select goes to the app instead of your terminal. Hold **Shift while dragging** to copy, or turn the mouse off in `F9`.
+
 ## Configuration
 
-The config file follows each platform's convention: `$XDG_CONFIG_HOME/kbotop/config.toml` on Linux (falling back to `~/.config/kbotop/`), `~/Library/Application Support/kbotop/` on macOS, `%APPDATA%\kbotop\` on Windows. Change your team, language, poll interval, and theme from the `F9` screen. Each change saves right away.
+The config file follows each platform's convention: `$XDG_CONFIG_HOME/kbotop/config.toml` on Linux (falling back to `~/.config/kbotop/`), `~/Library/Application Support/kbotop/` on macOS, `%APPDATA%\kbotop\` on Windows. Change your team, language, poll interval, theme, and mouse from the `F9` screen. Each change saves right away.
 
 A theme is a preset (`default` / `high-contrast` / `mono`) plus an accent color. The accent can be your team's color (`team`), one of six named colors, or a hex value you pick.
 

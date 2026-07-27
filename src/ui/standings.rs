@@ -24,7 +24,7 @@ fn block_title(app: &App) -> String {
     }
 }
 
-pub fn render(f: &mut Frame, area: Rect, app: &App) {
+pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMap) {
     let l = app.labels();
     // games.rs와 동일한 원칙: 첫 Standings 업데이트가 아직 안 왔으면(앱 기동
     // 직후 Standings 탭으로 전환한 경우) "loading"을, 왔는데 배열이 비어
@@ -128,6 +128,29 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let mut state = TableState::default();
     state.select(Some(app.selected));
     f.render_stateful_widget(table, area, &mut state);
+    // 그린 뒤에 등록한다 — 스크롤 오프셋은 ratatui가 정하므로, 우리가 다시
+    // 계산하는 대신 렌더가 끝난 state에서 읽는다(hit.rs 모듈 주석의 이유).
+    push_row_hits(hits, area, state.offset(), app.standings.len());
+}
+
+/// 테이블 본문 각 행의 영역을 등록한다. 본문은 테두리(1) + 헤더 행(1) 아래부터
+/// 시작하고, 영역 밖으로 나가는 행은 **화면에 없으므로** 등록하지 않는다.
+fn push_row_hits(hits: &mut super::hit::HitMap, area: Rect, offset: usize, len: usize) {
+    const HEAD: u16 = 2; // 위 테두리 + 헤더 행
+    let body_h = area.height.saturating_sub(HEAD + 1); // 아래 테두리
+    for row in 0..body_h {
+        let idx = offset + row as usize;
+        if idx >= len {
+            break;
+        }
+        let r = Rect::new(
+            area.x + 1,
+            area.y + HEAD + row,
+            area.width.saturating_sub(2),
+            1,
+        );
+        hits.push(r, super::hit::Zone::StandingRow(idx));
+    }
 }
 
 #[cfg(test)]
@@ -138,7 +161,8 @@ mod tests {
 
     fn render_to_string(app: &App) -> String {
         let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        term.draw(|f| render(f, f.area(), app)).unwrap();
+        term.draw(|f| render(f, f.area(), app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         term.backend()
             .buffer()
             .content()
@@ -206,7 +230,8 @@ mod tests {
             standing_of("HH", "한화"),
         ]));
         let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        term.draw(|f| render(f, f.area(), &app)).unwrap();
+        term.draw(|f| render(f, f.area(), &app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         let buf = term.backend().buffer().clone();
         for code in ["OB", "HH"] {
             assert!(
@@ -310,7 +335,8 @@ mod tests {
     /// 한글 부분 문자열 검사가 그냥은 실패한다(games.rs와 같은 관례).
     fn render_at(app: &crate::app::App, w: u16, h: u16) -> String {
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
-        term.draw(|f| render(f, f.area(), app)).unwrap();
+        term.draw(|f| render(f, f.area(), app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         let buf = term.backend().buffer();
         let raw: String = (0..h)
             .flat_map(|y| (0..w).map(move |x| (x, y)))

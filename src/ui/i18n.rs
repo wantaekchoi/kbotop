@@ -75,6 +75,9 @@ pub struct Labels {
     pub set_theme_preset: &'static str,  // "테마 프리셋" / "Theme preset"
     pub set_theme_accent: &'static str,  // "강조색" / "Accent color"
     pub set_lang: &'static str,          // "언어" / "Language" (F9 설정의 Lang 행 라벨)
+    pub set_mouse: &'static str,         // "마우스" / "Mouse" (F9 설정의 Mouse 행 라벨)
+    pub on: &'static str,                // 켬/끔 — 지금은 마우스 행만 쓴다
+    pub off: &'static str,
     // 테마 프리셋 값 표시(F9 설정 화면의 ThemePreset 행 값 칸)
     pub theme_default: &'static str,
     pub theme_high_contrast: &'static str,
@@ -159,7 +162,7 @@ pub struct Labels {
     pub tip_label: &'static str,  // "Tip: " / "팁: "
     pub news_label: &'static str, // "News: " / "뉴스: "
     // help 오버레이(순서 고정 11줄, v0.18에서 Rewind·Relay 두 줄 추가)
-    pub help_lines: [&'static str; 11],
+    pub help_lines: [&'static str; 12],
     // F2 픽커
     pub pane_date: &'static str,
     pub date_today: &'static str,
@@ -235,6 +238,9 @@ pub const EN: Labels = Labels {
     set_theme_preset: "Theme preset",
     set_theme_accent: "Accent color",
     set_lang: "Language",
+    set_mouse: "Mouse",
+    on: "on",
+    off: "off",
     theme_default: "Default",
     theme_high_contrast: "High contrast",
     theme_mono: "Mono (no color)",
@@ -315,6 +321,7 @@ pub const EN: Labels = Labels {
         "Relay      j / k, gg / G (live view)",
         "Options    F2 (date) / F9 (team/poll)",
         "Links/News o / n",
+        "Mouse      click / wheel (click again to open)",
         "Quit       q / F10",
     ],
     pane_date: "Date",
@@ -383,6 +390,9 @@ pub const KO: Labels = Labels {
     set_theme_preset: "테마 프리셋",
     set_theme_accent: "강조색",
     set_lang: "언어",
+    set_mouse: "마우스",
+    on: "켬",
+    off: "끔",
     theme_default: "기본",
     theme_high_contrast: "고대비",
     theme_mono: "흑백(색 없음)",
@@ -463,6 +473,7 @@ pub const KO: Labels = Labels {
         "중계 커서   j / k · gg / G (중계 화면)",
         "옵션        F2 (날짜) / F9 (팀·주기)",
         "링크/뉴스   o / n",
+        "마우스      클릭·휠 (다시 클릭하면 열기)",
         "종료        q / F10",
     ],
     pane_date: "날짜",
@@ -531,6 +542,9 @@ pub const JA: Labels = Labels {
     set_theme_preset: "テーマプリセット",
     set_theme_accent: "アクセントカラー",
     set_lang: "言語",
+    set_mouse: "マウス",
+    on: "オン",
+    off: "オフ",
     theme_default: "標準",
     theme_high_contrast: "高コントラスト",
     theme_mono: "モノクロ(色なし)",
@@ -611,6 +625,7 @@ pub const JA: Labels = Labels {
         "実況        j / k · gg / G (中継画面)",
         "オプション  F2 (日付) / F9 (チーム·間隔)",
         "リンク/ニュース  o / n",
+        "マウス      クリック·ホイール操作",
         "終了        q / F10",
     ],
     pane_date: "日付",

@@ -58,6 +58,8 @@ pub enum SettingKind {
     ThemePreset,
     ThemeAccent,
     Lang,
+    /// 마우스 캡처(v0.27). 끄면 터미널의 드래그 선택·복사가 돌아온다.
+    Mouse,
 }
 
 /// 언어 순환 순서(F9 설정 화면의 Lang 행). change_setting이 이 순서로 순환한다.
@@ -119,6 +121,16 @@ pub enum Screen {
         game: Game,
         state: Option<LiveState>,
     },
+}
+
+/// 우리가 다루는 마우스 동작. crossterm의 `MouseEventKind`를 그대로 쓰지 않는 건
+/// 드래그·우클릭·중간 버튼까지 따라 들어오기 때문이다 — 안 쓰는 걸 타입에 담으면
+/// 처리하지 않은 경우가 있는지 알 수 없다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseAction {
+    Click,
+    ScrollUp,
+    ScrollDown,
 }
 
 pub struct App {
@@ -235,10 +247,14 @@ pub struct App {
     /// 주입한다. games/standings 선택 하이라이트가 `theme::accent_for`를 통해
     /// 이 값을 쓴다.
     pub theme_accent: String,
+    /// 마우스를 쓸지(config `mouse`, F9에서 토글). main이 매 프레임 보고 캡처를
+    /// 켜고 끈다 — 끈 즉시 터미널이 드래그 선택을 되찾아야 하기 때문이다.
+    pub mouse: bool,
 }
 
 impl App {
     pub fn new(config: Config) -> Self {
+        let mouse = config.mouse;
         App {
             config,
             tab: Tab::Games,
@@ -276,6 +292,7 @@ impl App {
             lang: crate::ui::i18n::Lang::En,
             theme_preset: "default".into(),
             theme_accent: "team".into(),
+            mouse,
         }
     }
 
@@ -669,6 +686,107 @@ impl App {
         self.live_pitch_sel = pitch;
     }
 
+    /// 문자중계의 **그 줄**로 커서를 옮긴다(마우스 클릭). `j`/`k`가 한 칸씩
+    /// 가는 것과 목적지만 다르고, 투구 연동은 같은 규칙을 쓴다 — 규칙이 두 곳에
+    /// 흩어지면 언젠가 어긋난다.
+    fn put_relay_cursor(&mut self, idx: usize) {
+        let Screen::Live { state: Some(s), .. } = &self.screen else {
+            return;
+        };
+        let Some(last) = s
+            .active_relay_lines(self.live_atbat_sel)
+            .len()
+            .checked_sub(1)
+        else {
+            return; // 줄이 없으면 세울 자리도 없다(j/k와 같다).
+        };
+        // 화면에 그린 줄만 등록하므로 여기 오는 값은 범위 안이지만, 폴링이
+        // 그 사이 줄 수를 줄였을 수 있다 — 범위 밖이면 조용히 마지막 줄로.
+        let idx = idx.min(last);
+        let pitch = s.pitch_at_relay_line(self.live_atbat_sel, idx);
+        self.live_relay_cursor = Some(idx);
+        self.live_pitch_sel = pitch;
+    }
+
+    /// 마우스 입력. `zone`은 그 좌표에 그려져 있던 것(빈 곳이면 None).
+    ///
+    /// **오버레이가 떠 있으면 아무것도 하지 않는다** — 히트맵에는 그 아래 화면의
+    /// 영역이 남아 있어서, 처리하면 사용자가 **보고 있지도 않은 것**이 움직인다.
+    /// 오버레이는 `Esc`로 닫는다(마우스로 닫지 않는다는 건 설계 결정이다).
+    ///
+    /// 스크롤은 기존 키 처리(`on_key`)로 흘려보낸다. 목록에서든 문자중계에서든
+    /// "한 칸 위/아래"는 이미 `j`/`k`가 정의해 둔 동작이고, 경계 규칙도 거기 있다.
+    pub fn on_mouse(&mut self, zone: Option<crate::ui::hit::Zone>, kind: MouseAction) {
+        use crate::ui::hit::Zone;
+        // 껐으면 여기서 끝난다. main이 캡처를 풀지만 그것만 믿지 않는다 —
+        // 모드 전환을 무시하는 터미널도 있고, 푸는 사이에 이미 큐에 들어온
+        // 이벤트도 있다. **끔은 끔이어야 한다.**
+        if !self.mouse {
+            return;
+        }
+        if self.show_help
+            || self.options.is_some()
+            || self.settings.is_some()
+            || self.article_view.is_some()
+            || self.news_list.is_some()
+            || self.link_picker.is_some()
+            || self.team_stats_rank.is_some()
+        {
+            return;
+        }
+        match (kind, zone) {
+            (MouseAction::Click, Some(Zone::Tab(t))) => {
+                if self.tab != t || matches!(self.screen, Screen::Live { .. }) {
+                    // 키 `Tab`과 같은 경로를 타되 목적지를 직접 고른다 — 탭이
+                    // 둘뿐이라 지금은 결과가 같지만, 클릭은 "저기로"라는 뜻이지
+                    // "다음으로"가 아니다.
+                    if matches!(self.screen, Screen::Live { .. }) {
+                        self.screen = Screen::List;
+                        self.live_pitch_sel = None;
+                        self.live_atbat_sel = None;
+                        self.live_relay_cursor = None;
+                    }
+                    self.tab = t;
+                    self.selected = 0;
+                }
+            }
+            // 한 번 눌러 고르고, 고른 것을 다시 눌러 연다. 첫 클릭에 바로 열면
+            // 옆줄을 잘못 눌렀을 때 되돌리는 값이 크다.
+            (MouseAction::Click, Some(Zone::GameRow(i))) => {
+                if self.selected == i {
+                    self.on_key(KeyCode::Enter);
+                } else {
+                    self.selected = i;
+                }
+            }
+            (MouseAction::Click, Some(Zone::StandingRow(i))) => {
+                if self.selected == i {
+                    self.on_key(KeyCode::Enter);
+                } else {
+                    self.selected = i;
+                }
+            }
+            (MouseAction::Click, Some(Zone::RelayLine(i))) => self.put_relay_cursor(i),
+            (MouseAction::Click, _) => {}
+            // 존·측면 위에서 휠은 공을 넘긴다(`←`/`→`와 같은 축).
+            (MouseAction::ScrollUp, Some(Zone::PitchNav)) => {
+                self.on_key(KeyCode::Left);
+            }
+            (MouseAction::ScrollDown, Some(Zone::PitchNav)) => {
+                self.on_key(KeyCode::Right);
+            }
+            (MouseAction::ScrollUp, Some(_)) => {
+                self.on_key(KeyCode::Up);
+            }
+            (MouseAction::ScrollDown, Some(_)) => {
+                self.on_key(KeyCode::Down);
+            }
+            // 빈 곳에서의 휠은 아무것도 하지 않는다 — 어느 목록을 굴릴지
+            // 짐작하지 않는다.
+            (_, None) => {}
+        }
+    }
+
     fn is_live_screen(&self) -> bool {
         matches!(self.screen, Screen::Live { state: Some(_), .. })
     }
@@ -911,6 +1029,11 @@ impl App {
                 l.set_lang,
                 crate::ui::i18n::lang_display_name(self.lang).to_string(),
             ),
+            (
+                SettingKind::Mouse,
+                l.set_mouse,
+                if self.mouse { l.on } else { l.off }.to_string(),
+            ),
         ]
     }
 
@@ -924,6 +1047,7 @@ impl App {
             // config의 원본을 그대로 되쓴다 — F9에서 다른 설정을 바꿔도
             // 사용자의 시간대 설정이 지워지면 안 된다(설정 손실 방지).
             timezone: self.config.timezone.clone(),
+            mouse: self.mouse,
             theme: crate::config::ThemeConfig {
                 preset: self.theme_preset.clone(),
                 accent: self.theme_accent.clone(),
@@ -1013,6 +1137,8 @@ impl App {
                 };
                 self.lang = items[next];
             }
+            // 켬/끔뿐이라 방향은 상관없다 — 좌우 어느 쪽이든 뒤집는다.
+            SettingKind::Mouse => self.mouse = !self.mouse,
         }
     }
 
@@ -1256,6 +1382,134 @@ mod tests {
             stadium: String::new(),
             broadcast: String::new(),
         }
+    }
+
+    // ── 마우스(v0.27) ──────────────────────────────────────────────────────
+    // 클릭은 **고르고 나서 연다**. 한 번에 여는 편이 빠르지만, 옆줄을 잘못 눌러
+    // 남의 경기로 들어가면 되돌리는 값이 크다.
+
+    #[test]
+    fn a_click_on_another_row_selects_it_without_opening() {
+        let mut app = App::new(Default::default());
+        app.games = vec![game("a"), game("b")];
+        app.on_mouse(Some(crate::ui::hit::Zone::GameRow(1)), MouseAction::Click);
+        assert_eq!(app.selected, 1);
+        assert!(
+            matches!(app.screen, Screen::List),
+            "첫 클릭은 고르기만 해야 한다"
+        );
+    }
+
+    #[test]
+    fn a_click_on_the_selected_row_opens_it() {
+        let mut app = App::new(Default::default());
+        app.games = vec![game("a"), game("b")];
+        app.selected = 1;
+        app.on_mouse(Some(crate::ui::hit::Zone::GameRow(1)), MouseAction::Click);
+        assert!(
+            matches!(&app.screen, Screen::Live { game, .. } if game.id == "b"),
+            "고른 행을 다시 누르면 그 경기로 들어가야 한다"
+        );
+    }
+
+    /// 탭 클릭은 "저기로"다 — `Tab` 키처럼 "다음으로"가 아니다. 지금은 탭이
+    /// 둘뿐이라 결과가 같지만, 이미 그 탭에 있으면 아무 일도 없어야 한다.
+    #[test]
+    fn clicking_a_tab_goes_to_that_tab_not_the_next_one() {
+        let mut app = App::new(Default::default());
+        app.on_mouse(
+            Some(crate::ui::hit::Zone::Tab(Tab::Standings)),
+            MouseAction::Click,
+        );
+        assert_eq!(app.tab, Tab::Standings);
+        app.on_mouse(
+            Some(crate::ui::hit::Zone::Tab(Tab::Standings)),
+            MouseAction::Click,
+        );
+        assert_eq!(app.tab, Tab::Standings, "같은 탭을 다시 눌러도 안 넘어간다");
+    }
+
+    /// 라이브에서 탭을 누르면 목록으로 나가면서 그 탭으로 간다(키 `Tab`과 같은
+    /// 철학 — 헤더만 바뀌고 본문이 그대로면 혼란스럽다).
+    #[test]
+    fn clicking_a_tab_from_the_live_screen_leaves_it() {
+        let mut app = App::new(Default::default());
+        app.enter_live(game("a"));
+        app.on_mouse(
+            Some(crate::ui::hit::Zone::Tab(Tab::Games)),
+            MouseAction::Click,
+        );
+        assert!(matches!(app.screen, Screen::List));
+    }
+
+    /// 오버레이가 떠 있으면 마우스는 아무것도 하지 않는다. 히트맵에는 그 아래
+    /// 화면의 영역이 남아 있어서, 처리하면 **보고 있지도 않은 것**이 움직인다.
+    #[test]
+    fn the_mouse_does_nothing_while_an_overlay_is_open() {
+        let mut app = App::new(Default::default());
+        app.games = vec![game("a"), game("b")];
+        app.show_help = true;
+        app.on_mouse(Some(crate::ui::hit::Zone::GameRow(1)), MouseAction::Click);
+        assert_eq!(app.selected, 0, "도움말이 떠 있는데 목록이 움직였다");
+        assert!(app.show_help, "마우스로 오버레이가 닫히면 안 된다");
+    }
+
+    /// 빈 곳에서의 휠은 아무것도 하지 않는다 — 어느 목록을 굴릴지 짐작하지 않는다.
+    #[test]
+    fn a_scroll_over_nothing_does_nothing() {
+        let mut app = App::new(Default::default());
+        app.games = vec![game("a"), game("b")];
+        app.on_mouse(None, MouseAction::ScrollDown);
+        assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn a_scroll_over_the_list_moves_the_selection() {
+        let mut app = App::new(Default::default());
+        app.games = vec![game("a"), game("b")];
+        app.on_mouse(
+            Some(crate::ui::hit::Zone::GameRow(0)),
+            MouseAction::ScrollDown,
+        );
+        assert_eq!(app.selected, 1);
+        app.on_mouse(
+            Some(crate::ui::hit::Zone::GameRow(1)),
+            MouseAction::ScrollUp,
+        );
+        assert_eq!(app.selected, 0);
+    }
+
+    /// 껐으면 이벤트가 와도 무시한다. main이 캡처를 풀지만 그것만 믿으면,
+    /// 모드 전환을 무시하는 터미널에서 **끈 뒤에도 화면이 움직인다**(pty로
+    /// 실제 SGR 이벤트를 흘려 넣어 확인한 실제 결함이다).
+    #[test]
+    fn turning_the_mouse_off_ignores_events_too() {
+        let mut app = App::new(Default::default());
+        app.games = vec![game("a"), game("b")];
+        app.mouse = false;
+        app.on_mouse(Some(crate::ui::hit::Zone::GameRow(1)), MouseAction::Click);
+        app.on_mouse(
+            Some(crate::ui::hit::Zone::GameRow(0)),
+            MouseAction::ScrollDown,
+        );
+        assert_eq!(app.selected, 0, "껐는데 마우스가 목록을 움직였다");
+    }
+
+    /// 설정 화면에서 마우스 행을 좌우로 누르면 켬/끔이 뒤집힌다.
+    /// (파일까지 실려 가는지는 config.rs의 `mouse_survives_a_round_trip`이 본다.)
+    #[test]
+    fn the_settings_row_toggles_the_mouse() {
+        let mut app = App::new(Default::default());
+        let idx = app
+            .settings_rows()
+            .iter()
+            .position(|(k, _, _)| matches!(k, SettingKind::Mouse))
+            .expect("설정에 마우스 행이 없다");
+        assert!(app.mouse);
+        app.change_setting(idx, true);
+        assert!(!app.mouse);
+        app.change_setting(idx, false);
+        assert!(app.mouse, "반대 방향으로도 뒤집혀야 한다");
     }
 
     #[test]
@@ -2585,10 +2839,11 @@ mod tests {
     fn settings_rows_include_theme_preset_and_accent() {
         let app = App::new(Default::default());
         let rows = app.settings_rows();
-        assert_eq!(rows.len(), 5);
+        assert_eq!(rows.len(), 6);
         assert!(matches!(rows[2].0, SettingKind::ThemePreset));
         assert!(matches!(rows[3].0, SettingKind::ThemeAccent));
         assert!(matches!(rows[4].0, SettingKind::Lang));
+        assert!(matches!(rows[5].0, SettingKind::Mouse));
     }
 
     /// 설정 화면에서 테마 프리셋 항목을 →로 바꾸면 default→high-contrast→mono

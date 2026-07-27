@@ -1,7 +1,8 @@
-# kbotop demo — v0.26: 라이브 화면 아래 '이 대결' 블록(타자·투수 당일 기록 + 통산 상대 전적).
+# kbotop demo — v0.27: 마우스(클릭·휠). VHS는 마우스를 못 보내므로 GIF에는 키 조작만 담긴다.
+# v0.26: 라이브 화면 아래 '이 대결' 블록(타자·투수 당일 기록 + 통산 상대 전적).
 # v0.20: 지난 이닝까지 되감기([ 로 이닝 경계 넘기), 문자중계↔투구 연동(j/k),
 # 인앱 뉴스 목록 읽기(n), 인앱 설정(S)·테마 프리셋(mono=무채)·언어 전환, 브래킷 탭.
-# (2026-07-19 KIA 9:5 SSG, 9회 타석 10개, 마지막 타석 3구)
+# (2026-07-18 롯데 vs 삼성, 마지막 이닝 타석 5개)
 # record with: vhs docs/demo.tape  (needs `kbotop` on PATH: cargo install --path .)
 # 설정 자동저장이 실제 config를 안 건드리도록 임시 HOME으로 격리해 실행한다
 # (macOS는 directories 크레이트가 $HOME/Library/Application Support를 쓴다).
@@ -18,12 +19,12 @@ Set Padding 24
 Set TypingSpeed 55ms
 
 Hide
-Type "HOME=$(mktemp -d) kbotop --date 2026-07-19 --team kia --lang ko"
+Type "HOME=$(mktemp -d) kbotop --date 2026-07-18 --team lotte --lang ko"
 Enter
 Show
 
 # --team: 팀 테마 액센트 + 응원 배지, 첫 폴링 후 라이브 자동 진입
-# v0.26: 문자중계 아래 '이 대결' — 타자 1/5 .182 · 투수 투구수 · 통산 상대 전적
+# v0.26: 문자중계 아래 '이 대결' — 타자 당일 성적 · 투수 투구수 · 통산 상대 전적
 Sleep 5s
 
 # 투구 네비: Right로 하나씩 — 선택한 공만 존/측면에 남는다(단독 표시)
@@ -40,19 +41,9 @@ Type "["
 Sleep 700ms
 Type "["
 Sleep 700ms
-Type "["
-Sleep 700ms
-Type "["
-Sleep 700ms
-Type "["
-Sleep 700ms
-Type "["
-Sleep 700ms
-Type "["
-Sleep 700ms
 Sleep 800ms
 
-# v0.20~: 그 이닝(9회, 타석 10개)의 첫 타석에서 한 번 더 누르면 앞 이닝을 받아온다
+# v0.20~: 그 이닝(타석 5개)의 첫 타석에서 한 번 더 누르면 앞 이닝을 받아온다
 # — "8회 불러오는 중"이 잠깐 뜨고, 이어서 8회 타석이 목록 앞에 붙는다
 Type "["
 Sleep 2600ms

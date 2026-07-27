@@ -13,6 +13,11 @@ pub struct Config {
     /// 되는 환경(Windows·컨테이너)에서 사용자가 직접 정하는 탈출구.
     pub timezone: Option<String>,
     pub theme: ThemeConfig,
+    /// 마우스로 클릭·스크롤할지(v0.27). **끄면 터미널이 드래그 선택·복사를
+    /// 되찾는다** — 마우스 캡처를 켜면 그 입력이 앱으로 넘어오기 때문이다.
+    /// 기본값이 켬인 이유는 꺼 두면 아무도 기능을 발견하지 못하고, 켠 쪽에는
+    /// Shift+드래그라는 우회 수단이 있기 때문이다(README에 적어 뒀다).
+    pub mouse: bool,
 }
 
 impl Default for Config {
@@ -23,6 +28,7 @@ impl Default for Config {
             lang: None,
             timezone: None,
             theme: ThemeConfig::default(),
+            mouse: true,
         }
     }
 }
@@ -111,6 +117,7 @@ fn merge_into_toml(existing: &str, cfg: &Config) -> Result<String, toml::de::Err
             table.remove("timezone");
         }
     }
+    table.insert("mouse".into(), toml::Value::Boolean(cfg.mouse));
     // [theme] 테이블도 top-level과 동일한 원리로 다룬다: 통째로 재생성하지
     // 않고 기존 하위 키(사용자 수기 입력·미래 버전의 신규 키)를 읽어와 아는
     // 키(preset·accent)만 덮어쓴다. 기존 [theme]가 테이블이 아니거나 없으면
@@ -287,6 +294,7 @@ mod tests {
             lang: None,
             timezone: None,
             theme: ThemeConfig::default(),
+            mouse: true,
         };
         assert_eq!(c.effective_poll_secs(), 3);
     }
@@ -316,6 +324,7 @@ mod tests {
             lang: Some("ko".into()),
             timezone: None,
             theme: ThemeConfig::default(),
+            mouse: true,
         };
         let out = merge_into_toml("", &cfg).unwrap();
         let back = config_from_toml_str(&out);
@@ -334,6 +343,7 @@ mod tests {
             lang: None,
             timezone: None,
             theme: ThemeConfig::default(),
+            mouse: true,
         };
         let out = merge_into_toml(existing, &cfg).unwrap();
         // 알려진 키는 갱신
@@ -355,6 +365,7 @@ mod tests {
             lang: None,
             timezone: None,
             theme: ThemeConfig::default(),
+            mouse: true,
         };
         let out = merge_into_toml("", &cfg).unwrap();
         assert!(
@@ -406,6 +417,7 @@ mod tests {
                 preset: "mono".into(),
                 accent: "cyan".into(),
             },
+            mouse: true,
         };
         let out = merge_into_toml(existing, &cfg).unwrap();
         assert!(
@@ -457,6 +469,7 @@ mod tests {
             lang: None,
             timezone: None,
             theme: ThemeConfig::default(),
+            mouse: true,
         };
 
         cfg.save_to(&path).expect("save_to should succeed");
@@ -550,5 +563,23 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+    /// 마우스 설정이 파일을 왕복한다 — 껐다가 앱을 다시 켰더니 도로 켜져 있으면
+    /// 끈 의미가 없다. merge_into_toml에서 실제로 빠뜨렸던 결함이다(실행 중
+    /// config.toml에 항목이 안 남는 것으로 드러났다).
+    #[test]
+    fn mouse_survives_a_round_trip() {
+        let cfg = Config {
+            favorite_team: None,
+            poll_secs: 5,
+            lang: None,
+            timezone: None,
+            theme: ThemeConfig::default(),
+            mouse: false,
+        };
+        let body = merge_into_toml("", &cfg).unwrap();
+        assert!(body.contains("mouse"), "저장 내용에 mouse가 없다:\n{body}");
+        let back: Config = toml::from_str(&body).unwrap();
+        assert!(!back.mouse);
     }
 }

@@ -17,7 +17,7 @@ use ratatui::{
 /// [`super::live_vm::LiveVm`]이 정한다 — 이 파일은 그 결과를 위젯으로 옮길 뿐이라
 /// 새 규칙을 여기에 적어 넣을 자리가 없다(v0.18에 같은 규칙이 두 군데로 흩어진
 /// 사고의 재발 방지).
-pub fn render(f: &mut Frame, area: Rect, app: &App) {
+pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMap) {
     if !matches!(app.screen, Screen::Live { .. }) {
         return;
     }
@@ -53,7 +53,9 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(rows[1]);
-        render_relay_column(f, cols[0], &vm);
+        render_relay_column(f, cols[0], &vm, hits);
+        // 존·측면·범례를 한 덩어리로 — 그 위에서 휠이면 공이 넘어간다.
+        hits.push(cols[1], super::hit::Zone::PitchNav);
         strikezone::render(
             f,
             cols[1],
@@ -63,7 +65,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             &app.theme_preset,
         );
     } else {
-        render_relay_column(f, rows[1], &vm);
+        render_relay_column(f, rows[1], &vm, hits);
     }
 }
 
@@ -75,14 +77,14 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
 ///
 /// 작은 화면에서는 지금 그대로다 — 남는 세로가 없으면 문자중계가 다 쓴다
 /// (80×24에서 빈 줄이 0이라는 실측이 그 근거다).
-fn render_relay_column(f: &mut Frame, area: Rect, vm: &LiveVm) {
+fn render_relay_column(f: &mut Frame, area: Rect, vm: &LiveVm, hits: &mut super::hit::HitMap) {
     let matchup_h = vm.matchup_rows.len() as u16 + 2; // 테두리
     let relay_need = vm.relay_rows.len() as u16 + 2;
     let has_room = !vm.matchup_rows.is_empty()
         && area.height >= relay_need + matchup_h.max(MATCHUP_MIN_HEIGHT);
 
     if !has_room {
-        render_relay(f, area, vm);
+        render_relay(f, area, vm, hits);
         return;
     }
 
@@ -90,7 +92,7 @@ fn render_relay_column(f: &mut Frame, area: Rect, vm: &LiveVm) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(relay_need), Constraint::Length(matchup_h)])
         .split(area);
-    render_relay(f, rows[0], vm);
+    render_relay(f, rows[0], vm, hits);
 
     let lines: Vec<Line> = vm
         .matchup_rows
@@ -179,7 +181,7 @@ fn render_scoreline(f: &mut Frame, area: Rect, vm: &LiveVm, linescore: Option<&[
 /// 아니라 커서 분기에서 ratatui ListState가 이미 해 주는 **뷰포트 산수**의
 /// 짝이다. VM으로 올리면 위젯이 내부적으로 하는 일을 밖에서 한 번 더 흉내 내는
 /// 중복이 된다.
-fn render_relay(f: &mut Frame, area: Rect, vm: &LiveVm) {
+fn render_relay(f: &mut Frame, area: Rect, vm: &LiveVm, hits: &mut super::hit::HitMap) {
     let rows = vm.relay_rows_at(area.width.saturating_sub(2));
     let (rows, title) = (&rows, vm.relay_title.as_str());
     match vm.relay_cursor {
@@ -192,6 +194,7 @@ fn render_relay(f: &mut Frame, area: Rect, vm: &LiveVm) {
             let mut state = ListState::default();
             state.select(Some(idx));
             f.render_stateful_widget(widget, area, &mut state);
+            push_relay_hits(hits, area, state.offset(), rows.len());
         }
         None => {
             let n = area.height.saturating_sub(2) as usize;
@@ -201,7 +204,31 @@ fn render_relay(f: &mut Frame, area: Rect, vm: &LiveVm) {
                 .map(|row| ListItem::new(row.clone()))
                 .collect();
             f.render_widget(List::new(items).block(Block::bordered().title(title)), area);
+            // 커서가 없을 때는 뒤에서 n줄만 보인다 — 화면 첫 줄이 전체에서 몇
+            // 번째인지가 `start`다. 클릭은 **전체 목록 기준 번호**를 돌려줘야
+            // 커서를 그 줄에 놓을 수 있다.
+            push_relay_hits(hits, area, start, rows.len());
         }
+    }
+}
+
+/// 문자중계 각 줄의 영역을 등록한다. 첫 줄은 테두리 아래, 마지막 줄은 아래
+/// 테두리 위까지 — 목록이 짧으면 남는 자리는 등록하지 않는다(빈 줄을 눌러
+/// 커서가 움직이면 사용자는 자기가 뭘 눌렀는지 알 수 없다).
+fn push_relay_hits(hits: &mut super::hit::HitMap, area: Rect, offset: usize, len: usize) {
+    let body_h = area.height.saturating_sub(2);
+    for row in 0..body_h {
+        let idx = offset + row as usize;
+        if idx >= len {
+            break;
+        }
+        let r = Rect::new(
+            area.x + 1,
+            area.y + 1 + row,
+            area.width.saturating_sub(2),
+            1,
+        );
+        hits.push(r, super::hit::Zone::RelayLine(idx));
     }
 }
 
@@ -307,7 +334,8 @@ mod tests {
 
     fn render_to_string(app: &App, width: u16, height: u16) -> String {
         let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
-        term.draw(|f| crate::ui::draw(f, app)).unwrap();
+        term.draw(|f| crate::ui::draw(f, app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         term.backend()
             .buffer()
             .content()
@@ -321,7 +349,8 @@ mod tests {
     /// 쓰면 header의 상시 표시 텍스트와 우연히 겹친다 — live::render만 직접 그려 피한다.
     fn render_live_view_only(app: &App, width: u16, height: u16) -> String {
         let mut term = Terminal::new(TestBackend::new(width, height)).unwrap();
-        term.draw(|f| super::render(f, f.area(), app)).unwrap();
+        term.draw(|f| super::render(f, f.area(), app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         term.backend()
             .buffer()
             .content()
@@ -405,7 +434,8 @@ mod tests {
             state: Some(state),
         };
         let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
-        term.draw(|f| super::render(f, f.area(), &app)).unwrap();
+        term.draw(|f| super::render(f, f.area(), &app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         let buf = term.backend().buffer();
         let has_badge = buf
             .content()
@@ -941,7 +971,8 @@ mod tests {
         app.screen = linescore_screen();
 
         let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
-        term.draw(|f| super::render(f, f.area(), &app)).unwrap();
+        term.draw(|f| super::render(f, f.area(), &app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         let buf = term.backend().buffer();
         let row = |y: u16| -> String { (0..100).map(|x| buf[(x, y)].symbol()).collect() };
 
@@ -971,7 +1002,8 @@ mod tests {
         app.screen = linescore_screen();
 
         let mut term = Terminal::new(TestBackend::new(100, 12)).unwrap();
-        term.draw(|f| super::render(f, f.area(), &app)).unwrap();
+        term.draw(|f| super::render(f, f.area(), &app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         let buf = term.backend().buffer();
 
         // 스코어라인 블록의 아래 테두리 위치로 본다 — 라인스코어가 켜지면
@@ -1030,7 +1062,8 @@ mod tests {
         };
 
         let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
-        term.draw(|f| super::render(f, f.area(), &app)).unwrap();
+        term.draw(|f| super::render(f, f.area(), &app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         let buf = term.backend().buffer();
         let row = |y: u16| -> String { (0..100).map(|x| buf[(x, y)].symbol()).collect() };
 
@@ -1052,7 +1085,8 @@ mod tests {
             let mut app = App::new(Default::default());
             app.screen = linescore_screen();
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-            term.draw(|f| super::render(f, f.area(), &app)).unwrap();
+            term.draw(|f| super::render(f, f.area(), &app, &mut crate::ui::hit::HitMap::default()))
+                .unwrap();
             let buf = term.backend().buffer();
 
             let row_blank = |y: u16| (0..w).all(|x| buf[(x, y)].symbol().trim().is_empty());
@@ -1168,7 +1202,8 @@ mod tests {
     /// 공백을 제거한 렌더 결과(전각 placeholder 대응 — 다른 파일과 같은 관례).
     fn render_at(app: &App, w: u16, h: u16) -> String {
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-        term.draw(|f| super::render(f, f.area(), app)).unwrap();
+        term.draw(|f| super::render(f, f.area(), app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         let buf = term.backend().buffer();
         let raw: String = (0..h)
             .flat_map(|y| (0..w).map(move |x| (x, y)))
@@ -1193,5 +1228,73 @@ mod tests {
             !text.contains("이대결"),
             "중계가 밀리는데 대결 블록이 떴다:\n{text}"
         );
+    }
+    /// 문자중계 줄을 클릭하면 **그 줄**로 커서가 간다 — 줄 번호는 화면에 보이는
+    /// 순서가 아니라 전체 목록 기준이어야 한다(커서가 없을 때 목록은 뒤에서
+    /// 몇 줄만 보이므로, 화면 첫 줄이 전체에서 0번이 아니다).
+    #[test]
+    fn a_relay_line_registers_its_index_in_the_whole_list() {
+        let app = {
+            let mut a = App::new(Default::default());
+            a.lang = crate::ui::i18n::Lang::Ko;
+            a.screen = live_screen();
+            a
+        };
+        let mut hits = crate::ui::hit::HitMap::default();
+        let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        term.draw(|f| super::render(f, f.area(), &app, &mut hits))
+            .unwrap();
+        // 문자중계 블록 안 첫 줄. 좌표는 화면 왼쪽 칼럼(60%)의 테두리 안쪽.
+        let first = (0..30)
+            .find_map(|y| match hits.at(3, y) {
+                Some(crate::ui::hit::Zone::RelayLine(i)) => Some((y, i)),
+                _ => None,
+            })
+            .expect("문자중계 줄이 하나도 등록되지 않았다");
+        let (y, idx) = first;
+        assert_eq!(
+            hits.at(3, y + 1),
+            Some(crate::ui::hit::Zone::RelayLine(idx + 1)),
+            "다음 화면 줄은 다음 목록 번호여야 한다"
+        );
+    }
+
+    /// 존·측면은 한 덩어리로 등록된다 — 그 위에서 휠이면 공이 넘어간다.
+    #[test]
+    fn the_pitch_area_is_registered_when_the_zone_is_shown() {
+        let app = {
+            let mut a = App::new(Default::default());
+            a.lang = crate::ui::i18n::Lang::Ko;
+            a.screen = live_screen();
+            a
+        };
+        let mut hits = crate::ui::hit::HitMap::default();
+        let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        term.draw(|f| super::render(f, f.area(), &app, &mut hits))
+            .unwrap();
+        assert_eq!(
+            hits.at(100, 15),
+            Some(crate::ui::hit::Zone::PitchNav),
+            "오른쪽 칼럼이 투구 영역으로 등록되지 않았다"
+        );
+    }
+
+    /// 폭이 좁아 존을 접으면 투구 영역도 없어야 한다 — **안 보이는 것은 못 누른다**.
+    #[test]
+    fn the_pitch_area_disappears_with_the_zone() {
+        let app = {
+            let mut a = App::new(Default::default());
+            a.lang = crate::ui::i18n::Lang::Ko;
+            a.screen = live_screen();
+            a
+        };
+        let mut hits = crate::ui::hit::HitMap::default();
+        let mut term = Terminal::new(TestBackend::new(50, 24)).unwrap();
+        term.draw(|f| super::render(f, f.area(), &app, &mut hits))
+            .unwrap();
+        let has_pitch = (0..24)
+            .flat_map(|y| (0..50).map(move |x| (x, y)))
+            .any(|(x, y)| hits.at(x, y) == Some(crate::ui::hit::Zone::PitchNav));
+        assert!(!has_pitch, "존이 접혔는데 투구 영역이 남아 있다");
     }
 }

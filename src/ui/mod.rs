@@ -3,6 +3,8 @@ pub mod footer;
 pub mod games;
 pub mod header;
 pub mod help;
+/// 좌표 → 위젯(마우스). 렌더가 그리면서 남긴 클릭 영역을 담는다.
+pub mod hit;
 pub mod i18n;
 pub mod live;
 /// 라이브 화면의 표현 상태(ViewModel) — `live`는 이걸 받아 그리기만 한다.
@@ -23,6 +25,7 @@ pub mod tips;
 pub(crate) use help::help_rect;
 
 use crate::app::{App, Screen, Tab};
+use hit::HitMap;
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Modifier, Style},
@@ -34,7 +37,10 @@ use ratatui::{
 /// htop 계승: header(요약) + 본문(Min) + footer(기능키 바) 3단 레이아웃.
 /// 높이가 충분하면 본문과 footer 사이에 초보용 팁 한 줄이 끼어드는 4단이 된다
 /// (아래 show_tip 분기).
-pub fn draw(f: &mut Frame, app: &App) {
+/// 그리면서 클릭 가능한 영역을 `hits`에 남긴다 — 마우스는 그 좌표에 되묻는다.
+/// 히트맵은 **이번 프레임의 것만** 담으므로 맨 앞에서 비운다.
+pub fn draw(f: &mut Frame, app: &App, hits: &mut HitMap) {
+    hits.clear();
     let l = app.labels();
     // 높이 20 이상이면 본문-푸터 사이에 초보용 팁 한 줄을 끼운다(부족하면 본문 우선).
     let show_tip = f.area().height >= 20;
@@ -57,13 +63,13 @@ pub fn draw(f: &mut Frame, app: &App) {
         .constraints(constraints)
         .split(f.area());
 
-    header::render(f, chunks[0], app);
+    header::render(f, chunks[0], app, hits);
 
     match &app.screen {
-        Screen::Live { .. } => live::render(f, chunks[1], app),
+        Screen::Live { .. } => live::render(f, chunks[1], app, hits),
         Screen::List => match app.tab {
-            Tab::Games => games::render(f, chunks[1], app),
-            Tab::Standings => standings::render(f, chunks[1], app),
+            Tab::Games => games::render(f, chunks[1], app, hits),
+            Tab::Standings => standings::render(f, chunks[1], app, hits),
         },
     }
 
@@ -256,7 +262,8 @@ mod tests {
     fn render_to_string(app: &App) -> String {
         let backend = TestBackend::new(80, 24);
         let mut term = Terminal::new(backend).unwrap();
-        term.draw(|f| draw(f, app)).unwrap();
+        term.draw(|f| draw(f, app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         let buf = term.backend().buffer().clone();
         buf.content().iter().map(|c| c.symbol()).collect()
     }
@@ -430,7 +437,8 @@ mod tests {
         }]));
         let render = |app: &App| {
             let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
-            term.draw(|f| draw(f, app)).unwrap();
+            term.draw(|f| draw(f, app, &mut crate::ui::hit::HitMap::default()))
+                .unwrap();
             term.backend()
                 .buffer()
                 .content()
@@ -469,7 +477,8 @@ mod tests {
         app.now_secs = 0;
         let tall = {
             let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
-            term.draw(|f| draw(f, &app)).unwrap();
+            term.draw(|f| draw(f, &app, &mut crate::ui::hit::HitMap::default()))
+                .unwrap();
             term.backend()
                 .buffer()
                 .content()
@@ -480,7 +489,8 @@ mod tests {
         assert!(tall.contains("Tip:"), "tip line missing on 24-row terminal");
         let short = {
             let mut term = Terminal::new(TestBackend::new(80, 16)).unwrap();
-            term.draw(|f| draw(f, &app)).unwrap();
+            term.draw(|f| draw(f, &app, &mut crate::ui::hit::HitMap::default()))
+                .unwrap();
             term.backend()
                 .buffer()
                 .content()
@@ -575,7 +585,8 @@ mod tests {
         app.theme_accent = "cyan".into();
         // 팀 배지가 없는 상태(경기 없음, fav 미설정)에서 chrome만 렌더.
         let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        term.draw(|f| draw(f, &app)).unwrap();
+        term.draw(|f| draw(f, &app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         let buf = term.backend().buffer().clone();
         for cell in buf.content() {
             assert!(
@@ -652,7 +663,8 @@ mod tests {
         };
 
         let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
-        term.draw(|f| draw(f, &app)).unwrap();
+        term.draw(|f| draw(f, &app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         let buf = term.backend().buffer().clone();
         let cells: Vec<_> = buf.content().iter().collect();
 
@@ -776,7 +788,8 @@ mod tests {
 
         // 80x30: width>=70(live.rs wide 기준) + 측면뷰가 나오는 충분한 높이.
         let mut term = Terminal::new(TestBackend::new(80, 30)).unwrap();
-        term.draw(|f| draw(f, &app)).unwrap();
+        term.draw(|f| draw(f, &app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         let buf = term.backend().buffer().clone();
 
         for cell in buf.content() {
@@ -875,7 +888,8 @@ mod tests {
         };
 
         let mut term = Terminal::new(TestBackend::new(80, 30)).unwrap();
-        term.draw(|f| draw(f, &app)).unwrap();
+        term.draw(|f| draw(f, &app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
         let buf = term.backend().buffer().clone();
         let has_green = buf.content().iter().any(|c| c.fg == Color::Green);
         assert!(

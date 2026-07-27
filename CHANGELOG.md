@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-07-28
+
+### Added
+- **마우스로도 됩니다** — 탭을 누르면 그 탭으로 가고, 목록은 한 번 눌러 고른 뒤 다시 누르면 열립니다. 문자중계는 줄을 누르면 그 공이 스트라이크존에 뜨고, 존 위에서 휠을 굴리면 공이 하나씩 넘어갑니다. 새 의존성은 없습니다.
+- **설정에 마우스 켬/끔이 생겼습니다**(`F9`) — 마우스를 켜 두면 터미널의 드래그 선택이 앱으로 넘어갑니다. 복사할 때는 Shift를 누른 채 드래그하거나, 여기서 끄면 됩니다.
+
 ## [0.26.0] - 2026-07-27
 
 ### Added
@@ -260,7 +266,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/wantaekchoi/kbotop/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/wantaekchoi/kbotop/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/wantaekchoi/kbotop/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/wantaekchoi/kbotop/compare/v0.23.0...v0.24.0

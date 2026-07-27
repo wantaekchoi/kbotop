@@ -7,7 +7,10 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
-    event::{self, Event, KeyEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseButton,
+        MouseEventKind,
+    },
     execute,
     terminal::{
         disable_raw_mode, enable_raw_mode, BeginSynchronizedUpdate, EndSynchronizedUpdate,
@@ -16,7 +19,7 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Frame, Terminal};
 
-use kbotop::app::{App, Tab};
+use kbotop::app::{App, MouseAction, Tab};
 use kbotop::config;
 use kbotop::dateutil::{civil_from_days, days_from_civil, format_civil, kst_days};
 use kbotop::poller::{self, Command, Update};
@@ -181,6 +184,7 @@ fn init_terminal() -> Result<Tui> {
     std::panic::set_hook(Box::new(move |info| {
         if std::thread::current().id() == main_id {
             let _ = disable_raw_mode();
+            let _ = execute!(io::stdout(), DisableMouseCapture);
             let _ = execute!(io::stdout(), LeaveAlternateScreen);
             let _ = execute!(io::stdout(), crossterm::cursor::Show);
         }
@@ -212,6 +216,10 @@ fn init_terminal() -> Result<Tui> {
 /// 세 단계 모두 best-effort로 시도한 뒤 첫 에러를 반환한다 — 앞 단계가 실패해도
 /// 뒤 단계(예: show_cursor)를 건너뛰지 않는다.
 fn restore_terminal(term: &mut Tui) -> Result<()> {
+    // 마우스 캡처는 켜지지 않았을 수도 있다(설정이 끔이거나 미지원 터미널) —
+    // 끄는 건 어느 쪽이든 안전하고, 안 풀면 앱이 끝난 뒤에도 터미널이 마우스를
+    // 먹는다. 실패는 삼킨다: 아래 세 단계를 막을 이유가 없다.
+    let _ = execute!(term.backend_mut(), DisableMouseCapture);
     let r1 = disable_raw_mode();
     let r2 = execute!(term.backend_mut(), LeaveAlternateScreen);
     let r3 = term.show_cursor();
@@ -428,6 +436,10 @@ fn run(
     // 바뀐 프레임에서만 term.clear()를 호출한다. 매 프레임 clear하면 깜빡임이
     // 생기므로 반드시 전환이 실제로 일어난 프레임에서만 불러야 한다.
     let mut last_view_key = app.view_key();
+    // 이번 프레임에서 그린 클릭 영역. 렌더가 채우고, 마우스 이벤트가 되묻는다.
+    let mut hits = ui::hit::HitMap::default();
+    // 지금 캡처가 켜져 있는지. 설정과 어긋나면 아래 루프가 맞춘다.
+    let mut mouse_on = false;
 
     loop {
         // 외부 SIGTERM/SIGHUP 수신 시 q를 누른 것과 동일하게 정상 종료 경로로
@@ -533,15 +545,45 @@ fn run(
             term.clear()?;
             last_view_key = view_key;
         }
-        term.draw(|f: &mut Frame| ui::draw(f, app))?;
+        term.draw(|f: &mut Frame| ui::draw(f, app, &mut hits))?;
         let _ = execute!(std::io::stdout(), EndSynchronizedUpdate);
+
+        // 마우스 캡처는 설정을 따라간다. F9에서 끈 그 순간 터미널이 드래그
+        // 선택·복사를 되찾아야 하므로, 매 프레임 현재 값과 비교해 전환한다.
+        // execute! 실패는 삼킨다 — 마우스를 못 켜는 터미널에서도 앱은 돌아야
+        // 한다(무패닉·조용한 저하). 그런 터미널은 Event::Mouse를 안 보낼 뿐이다.
+        if app.mouse != mouse_on {
+            let _ = if app.mouse {
+                execute!(std::io::stdout(), EnableMouseCapture)
+            } else {
+                execute!(std::io::stdout(), DisableMouseCapture)
+            };
+            mouse_on = app.mouse;
+        }
 
         // 입력(100ms 폴링으로 렌더 갱신 보장).
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(k) = event::read()? {
-                if k.kind == KeyEventKind::Press && app.on_key(k.code) {
-                    break;
+            match event::read()? {
+                Event::Key(k) => {
+                    if k.kind == KeyEventKind::Press && app.on_key(k.code) {
+                        break;
+                    }
                 }
+                Event::Mouse(m) => {
+                    // 누르는 순간이 아니라 **떼는 순간**에 반응한다 — 눌렀다가
+                    // 마음이 바뀌어 커서를 옮기고 떼면 아무 일도 안 일어나는 게
+                    // 데스크톱 관례다. 드래그·우클릭·가운데 버튼은 여기서 걸러진다.
+                    let action = match m.kind {
+                        MouseEventKind::Up(MouseButton::Left) => Some(MouseAction::Click),
+                        MouseEventKind::ScrollUp => Some(MouseAction::ScrollUp),
+                        MouseEventKind::ScrollDown => Some(MouseAction::ScrollDown),
+                        _ => None,
+                    };
+                    if let Some(a) = action {
+                        app.on_mouse(hits.at(m.column, m.row), a);
+                    }
+                }
+                _ => {}
             }
         }
     }

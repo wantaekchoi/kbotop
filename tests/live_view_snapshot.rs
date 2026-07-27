@@ -168,7 +168,12 @@ fn live_view_render_matrix_is_stable_for_before_after_diffing() {
 
                                     let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
                                     term.draw(|f| {
-                                        kbotop::ui::live::render(f, f.area(), &app);
+                                        kbotop::ui::live::render(
+                                            f,
+                                            f.area(),
+                                            &app,
+                                            &mut kbotop::ui::hit::HitMap::default(),
+                                        );
                                     })
                                     .unwrap();
 

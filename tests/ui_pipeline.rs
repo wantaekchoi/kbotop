@@ -49,7 +49,8 @@ fn every_fixture_pitch_reaches_the_legend_through_the_full_app_render() {
 
     // 실전 해상도(100x30, README 데모와 동일 오더)에서 전체 앱을 그린다.
     let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    term.draw(|f| kbotop::ui::draw(f, &app)).unwrap();
+    term.draw(|f| kbotop::ui::draw(f, &app, &mut kbotop::ui::hit::HitMap::default()))
+        .unwrap();
     let text: String = term
         .backend()
         .buffer()
@@ -83,7 +84,8 @@ fn korean_full_app_renders_all_chrome_at_80x24() {
     app.date = "2026-05-29".into();
     app.apply(kbotop::poller::Update::Games(vec![]));
     let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    term.draw(|f| kbotop::ui::draw(f, &app)).unwrap();
+    term.draw(|f| kbotop::ui::draw(f, &app, &mut kbotop::ui::hit::HitMap::default()))
+        .unwrap();
     let text: String = term
         .backend()
         .buffer()
