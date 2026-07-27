@@ -1603,6 +1603,9 @@ mod tests {
                 relay_lines: vec![],
                 pitches,
             }],
+            inning_score: Vec::new(),
+            batter_line: None,
+            pitcher_line: None,
         };
         app.screen = Screen::Live {
             game: game("g"),
@@ -1669,6 +1672,7 @@ mod tests {
                         text: format!("line-{i}-b"),
                         pitch_idx: Some(0),
                         is_pitch: true,
+                        time_hm: None,
                     },
                 ],
                 pitches: vec![crate::model::Pitch {
@@ -1708,6 +1712,9 @@ mod tests {
             current_pitches: last.pitches.clone(),
             next_batter_name: String::new(),
             at_bats,
+            inning_score: Vec::new(),
+            batter_line: None,
+            pitcher_line: None,
         };
         app.screen = Screen::Live {
             game: game("g"),

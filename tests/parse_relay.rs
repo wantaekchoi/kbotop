@@ -270,3 +270,148 @@ fn at_bats_from_relay_reports_missing_text_relay_data_as_a_data_error() {
         "expected Error::Data, got: {err:?}"
     );
 }
+
+/// v0.25 라인스코어. **`"-"`를 0으로 뭉개지 않는다** — 홈팀이 이기고 있으면
+/// 9회말을 치지 않는데, 그걸 0으로 찍으면 "0점 냈다"는 거짓말이 된다.
+#[test]
+fn inning_score_keeps_the_unplayed_half_inning_as_a_dash() {
+    let json = r#"{"result":{"textRelayData":{
+        "currentGameState": {},
+        "inningScore": {
+            "home": {"1":"1","2":"0","3":"10","4":"-"},
+            "away": {"1":"0","2":"2","3":"0","4":"0"}
+        },
+        "textRelays": []
+    }}}"#;
+    let live = live_from_relay(json, team("LG", "LG"), team("KT", "KT")).unwrap();
+    let cells = &live.inning_score;
+    assert_eq!(cells.len(), 4);
+    assert_eq!(cells[0].inning, 1);
+    assert_eq!((cells[0].away.as_str(), cells[0].home.as_str()), ("0", "1"));
+    assert_eq!(cells[2].home, "10", "두 자리 득점이 잘리면 안 된다");
+    assert_eq!(cells[3].home, "-", "치지 않은 반이닝은 그대로 '-'");
+    assert_eq!(cells[3].away, "0");
+}
+
+/// 연장은 이닝이 9를 넘는다. 9칸 고정으로 그리면 잘린다.
+#[test]
+fn inning_score_covers_extra_innings() {
+    let json = r#"{"result":{"textRelayData":{
+        "currentGameState": {},
+        "inningScore": {
+            "home": {"9":"0","10":"1","11":"2"},
+            "away": {"9":"0","10":"1","11":"0"}
+        },
+        "textRelays": []
+    }}}"#;
+    let live = live_from_relay(json, team("LG", "LG"), team("KT", "KT")).unwrap();
+    let innings: Vec<u8> = live.inning_score.iter().map(|c| c.inning).collect();
+    assert_eq!(
+        innings,
+        vec![9, 10, 11],
+        "이닝 번호가 문자열 키라 정렬이 어긋나기 쉽다"
+    );
+}
+
+/// 한쪽에만 있는 이닝(말 공격 전)도 빠뜨리지 않는다 — 합집합으로 돈다.
+#[test]
+fn inning_score_includes_an_inning_only_one_side_has() {
+    let json = r#"{"result":{"textRelayData":{
+        "currentGameState": {},
+        "inningScore": {"home": {"1":"0"}, "away": {"1":"0","2":"1"}},
+        "textRelays": []
+    }}}"#;
+    let live = live_from_relay(json, team("LG", "LG"), team("KT", "KT")).unwrap();
+    assert_eq!(live.inning_score.len(), 2);
+    assert_eq!(live.inning_score[1].away, "1");
+    assert_eq!(live.inning_score[1].home, "", "아직 안 친 쪽은 빈 문자열");
+}
+
+/// 현재 타자·투수의 그 경기 성적을 **pcode로** 찾는다. 이름으로 찾으면
+/// 동명이인에서 어긋난다(name_of가 pcode를 쓰는 것과 같은 이유).
+#[test]
+fn player_lines_are_matched_by_pcode_not_by_name() {
+    let json = r#"{"result":{"textRelayData":{
+        "currentGameState": {"batter":"B1","pitcher":"P1"},
+        "homeLineup": {"batter":[
+            {"pcode":"B0","name":"같은이름","ab":9,"hit":9,"seasonHra":0.9},
+            {"pcode":"B1","name":"같은이름","ab":4,"hit":2,"seasonHra":0.274}
+        ],"pitcher":[
+            {"pcode":"P1","name":"투수","inn":5.0,"hit":3,"ballCount":57}
+        ]},
+        "textRelays": []
+    }}}"#;
+    let live = live_from_relay(json, team("LG", "LG"), team("KT", "KT")).unwrap();
+    let b = live.batter_line.expect("타자 기록");
+    assert_eq!(
+        (b.hits, b.at_bats),
+        (2, 4),
+        "같은 이름의 다른 선수를 잡았다"
+    );
+    assert!((b.season_avg - 0.274).abs() < 1e-4);
+
+    let p = live.pitcher_line.expect("투수 기록");
+    assert_eq!(p.pitches, 57);
+    assert_eq!(p.hits_allowed, 3);
+    assert!((p.innings - 5.0).abs() < 1e-4);
+}
+
+/// 라인업에 없는 선수(교체 직후 등)면 기록이 None이다 — 0으로 채우지 않는다.
+#[test]
+fn an_unknown_player_yields_no_line_rather_than_zeros() {
+    let json = r#"{"result":{"textRelayData":{
+        "currentGameState": {"batter":"NOPE","pitcher":""},
+        "homeLineup": {"batter":[{"pcode":"B1","name":"타자"}],"pitcher":[]},
+        "textRelays": []
+    }}}"#;
+    let live = live_from_relay(json, team("LG", "LG"), team("KT", "KT")).unwrap();
+    assert!(live.batter_line.is_none());
+    assert!(
+        live.pitcher_line.is_none(),
+        "빈 pcode로 첫 선수를 잡으면 안 된다"
+    );
+}
+
+/// v0.25: 문자중계 줄 시각. **투구 줄에만 붙는다** — 응답이 시각을 싣는 곳이
+/// `ptsPitchId`뿐이고 타자 등장·결과 요약 줄은 비어 있다(실측). 목록에서 쓰는
+/// 값이라 분까지만 남긴다(초는 선택 투구 상세줄에 이미 있다).
+#[test]
+fn only_pitch_lines_carry_a_timestamp() {
+    let json = r#"{"result":{"textRelayData":{
+        "currentGameState": {},
+        "textRelays": [{"inn":9,"homeOrAway":"0","ptsOptions":[],"textOptions":[
+            {"type":8,"text":"대타 이영빈","ptsPitchId":null},
+            {"type":1,"text":"1구 볼","ptsPitchId":"260726_214031"},
+            {"type":1,"text":"2구 타격","ptsPitchId":"260726_214046"},
+            {"type":13,"text":"이영빈 : 2루수 땅볼 아웃","ptsPitchId":null}
+        ]}]
+    }}}"#;
+    let live = live_from_relay(json, team("LG", "LG"), team("KT", "KT")).unwrap();
+    let times: Vec<Option<&str>> = live
+        .relay_log
+        .iter()
+        .map(|l| l.time_hm.as_deref())
+        .collect();
+    assert_eq!(
+        times,
+        vec![None, Some("21:40"), Some("21:40"), None],
+        "투구 줄에만 시각이 붙어야 한다"
+    );
+}
+
+/// 추적 없는 진짜 투구(`ptsPitchId == "-1"` 센티널)는 시각을 만들 수 없다 —
+/// 형식이 안 맞으니 자연히 None이고, 그 줄이 투구 줄이라는 사실(`is_pitch`)은
+/// 그대로 남는다.
+#[test]
+fn the_untracked_pitch_sentinel_yields_no_timestamp_but_stays_a_pitch_line() {
+    let json = r#"{"result":{"textRelayData":{
+        "currentGameState": {},
+        "textRelays": [{"inn":9,"homeOrAway":"0","ptsOptions":[],"textOptions":[
+            {"type":1,"text":"8구 타격","ptsPitchId":"-1"}
+        ]}]
+    }}}"#;
+    let live = live_from_relay(json, team("LG", "LG"), team("KT", "KT")).unwrap();
+    let line = &live.relay_log[0];
+    assert!(line.time_hm.is_none());
+    assert!(line.is_pitch, "센티널도 투구 줄이라는 사실은 유지된다");
+}

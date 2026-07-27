@@ -28,11 +28,13 @@ No API key, one static binary.
 brew install wantaekchoi/tap/kbotop
 ```
 
-**Prebuilt binary** (macOS arm64/x64 · Linux · Windows)
+**Prebuilt binary** (macOS arm64/x64 · Linux)
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/releases/latest/download/kbotop-installer.sh | sh
 ```
+
+**Windows** — download `kbotop-x86_64-pc-windows-msvc.zip` from [Releases](https://github.com/wantaekchoi/kbotop/releases/latest), unzip it, and run `kbotop.exe`. (The install script above also works from a POSIX shell such as Git Bash or MSYS.)
 
 **cargo** (if you have a Rust toolchain)
 
@@ -47,18 +49,30 @@ kbotop                    # today's games
 kbotop --team lg          # straight into your team's live game
 kbotop --date yesterday   # also: YYYY-MM-DD, YYYYMMDD, today, tomorrow, +N, -N
 kbotop --lang en          # ko / en / ja (default: auto by locale)
+kbotop --tz +09:00        # display time zone (default: detected from the system)
 ```
 
-Vim-style keys. Press `?` in the app for the full list.
+Navigation works the way it does in Vim: `j`/`k` to move, `Esc` to back out. What follows is the everyday subset; press `?` in the app for the full list.
 
-- List: `Enter` live view · `Tab` games/standings · `F2` date · `F9` settings · `o` team links · `n` news
-- Live: `←`/`→` pitches · `[`/`]` rewind at-bats (press again at an inning's first at-bat to pull in the inning before it) · `j`/`k` and `gg`/`G` play-by-play cursor
+**From the game list**, `Enter` opens that game's live view. `Tab` switches to the standings, `F2` changes the date. `o` opens the team's links, `n` the news, `F9` the settings.
+
+**From the standings**, `Enter` opens that team's season numbers, from batting average and OPS through ERA and WHIP.
+
+**In the live view**, `←`/`→` step through the pitches and the selected one shows up in the strike zone and the side view. `[`/`]` rewind through at-bats, and pressing again at an inning's first at-bat **pulls in the inning before it**. The play-by-play moves a line at a time with `j`/`k`, jumps to either end with `gg`/`G`, and the pitch for the line under the cursor appears in the zone alongside it.
 
 ## Configuration
 
-`$XDG_CONFIG_HOME/kbotop/config.toml`, falling back to `~/.config/kbotop/config.toml`. Change your team, language, poll interval, and theme from the `F9` screen. Each change saves right away.
+The config file follows each platform's convention: `$XDG_CONFIG_HOME/kbotop/config.toml` on Linux (falling back to `~/.config/kbotop/`), `~/Library/Application Support/kbotop/` on macOS, `%APPDATA%\kbotop\` on Windows. Change your team, language, poll interval, and theme from the `F9` screen. Each change saves right away.
 
-A theme is a preset (`default` / `high-contrast` / `mono`) plus an accent color. `mono` uses no color at all, so it stays readable on monochrome terminals.
+A theme is a preset (`default` / `high-contrast` / `mono`) plus an accent color. The accent can be your team's color (`team`), one of six named colors, or a hex value you pick.
+
+```toml
+[theme]
+preset = "default"
+accent = "#ff6600"   # team · none · cyan/green/yellow/magenta/blue/red · #rrggbb
+```
+
+`mono` uses no color at all, so it stays readable on monochrome terminals.
 
 ## Disclaimer
 

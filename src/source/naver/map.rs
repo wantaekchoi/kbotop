@@ -1,11 +1,11 @@
 use super::dto::{
-    ApiEnvelope, Lineup, PtsOption, RelayResult, ScheduleGame, ScheduleResult, StandingsResult,
-    TextRelay, TextRelayData,
+    ApiEnvelope, Lineup, Player, PtsOption, RelayResult, ScheduleGame, ScheduleResult,
+    StandingsResult, TextRelay, TextRelayData,
 };
 use crate::error::Result;
 use crate::model::{
-    AtBat, BaseState, Count, Game, GameStatus, LiveState, Pitch, PitchResult, RelayLine, Standing,
-    Team,
+    AtBat, BaseState, BatterLine, Count, Game, GameStatus, InningCell, LiveState, Pitch,
+    PitchResult, PitcherLine, RelayLine, Standing, Team,
 };
 
 fn status_of(g: &ScheduleGame) -> GameStatus {
@@ -196,6 +196,15 @@ fn time_from_pitch_id(id: &str) -> Option<String> {
     Some(format!("{}:{}:{}", &time[0..2], &time[2..4], &time[4..6]))
 }
 
+/// `ptsPitchId` "YYMMDD_HHMMSS" → "HH:MM"(v0.25). 목록에서 쓰는 값이라 초는
+/// 버린다 — 초까지는 선택 투구 상세줄에 이미 있다. 형식이 다르면 None(관용).
+///
+/// 투구 줄이 아니면 이 값이 비어 있고, 센티널 `"-1"`(추적 없는 진짜 투구)도
+/// 형식이 안 맞아 자연히 None이 된다.
+fn hm_from_pitch_id(id: &str) -> Option<String> {
+    time_from_pitch_id(id).map(|hms| hms[..5].to_string())
+}
+
 fn result_of(text: &str) -> PitchResult {
     if text.contains("헛스윙") {
         PitchResult::StrikeSwinging
@@ -290,6 +299,7 @@ fn relay_lines_of(t: &TextRelay) -> Vec<RelayLine> {
             text: o.text.clone(),
             pitch_idx: pitch_idx_of_line(t, &o.pts_pitch_id),
             is_pitch: !o.pts_pitch_id.is_empty(),
+            time_hm: hm_from_pitch_id(&o.pts_pitch_id),
         })
         .collect()
 }
@@ -497,6 +507,52 @@ pub fn live_from_relay(json: &str, home: Team, away: Team) -> Result<LiveState> 
         .map(|b| b.name.clone())
         .unwrap_or_default();
 
+    // 라인스코어(v0.25): 양팀 키의 합집합을 이닝 번호 순으로 돈다. 한쪽에만 있는
+    // 이닝(진행 중이라 말 공격 전)도 빠뜨리지 않는다.
+    let mut inning_nums: Vec<u8> = trd
+        .inning_score
+        .home
+        .keys()
+        .chain(trd.inning_score.away.keys())
+        .filter_map(|k| k.parse::<u8>().ok())
+        .collect();
+    inning_nums.sort_unstable();
+    inning_nums.dedup();
+    let inning_score: Vec<InningCell> = inning_nums
+        .into_iter()
+        .map(|n| {
+            let key = n.to_string();
+            InningCell {
+                inning: n,
+                away: trd.inning_score.away.get(&key).cloned().unwrap_or_default(),
+                home: trd.inning_score.home.get(&key).cloned().unwrap_or_default(),
+            }
+        })
+        .collect();
+
+    // 현재 타자·투수의 그 경기 성적. pcode로 라인업에서 찾는다 — 이름으로 찾으면
+    // 동명이인에서 어긋난다(name_of가 pcode를 쓰는 것과 같은 이유).
+    let find_player = |pcode: &str| -> Option<&Player> {
+        if pcode.is_empty() {
+            return None;
+        }
+        [&trd.home_lineup, &trd.away_lineup]
+            .into_iter()
+            .flatten()
+            .flat_map(|lu| lu.batter.iter().chain(lu.pitcher.iter()))
+            .find(|p| p.pcode == pcode)
+    };
+    let batter_line = find_player(&cgs.batter).map(|p| BatterLine {
+        hits: p.hit,
+        at_bats: p.ab,
+        season_avg: p.season_hra,
+    });
+    let pitcher_line = find_player(&cgs.pitcher).map(|p| PitcherLine {
+        innings: p.inn,
+        hits_allowed: p.hit,
+        pitches: p.ball_count,
+    });
+
     let metric = trd.last_valid_metric_option;
     Ok(LiveState {
         inning_label,
@@ -521,6 +577,9 @@ pub fn live_from_relay(json: &str, home: Team, away: Team) -> Result<LiveState> 
         current_pitches,
         next_batter_name,
         at_bats,
+        inning_score,
+        batter_line,
+        pitcher_line,
     })
 }
 

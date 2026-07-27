@@ -33,12 +33,19 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
+    // 라인스코어(v0.25)는 세 줄을 더 쓴다. 세로가 빠듯하면 접는다 — 문자중계가
+    // 읽을 수 없을 만큼 짧아지면 라인스코어가 오히려 손해다(폭 예산과 같은 규칙).
+    let linescore = (area.height >= LINESCORE_MIN_HEIGHT)
+        .then(|| vm.linescore_rows(area.width.saturating_sub(2)))
+        .flatten();
+    let head_h = 5 + linescore.as_ref().map_or(0, |r| r.len() as u16);
+
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(5), Constraint::Min(0)])
+        .constraints([Constraint::Length(head_h), Constraint::Min(0)])
         .split(area);
 
-    render_scoreline(f, rows[0], &vm);
+    render_scoreline(f, rows[0], &vm, linescore.as_deref());
 
     // 폭이 좁거나 아직 투구 데이터가 없으면 존을 숨기고 중계에 본문 전체를 준다(우아한 저하).
     if vm.show_strike_zone(rows[1].width) {
@@ -62,7 +69,11 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
 
 /// 스코어라인 3줄(점수·상태배지·지금-이-순간 값 / 상세 / 투구줄)을 그린다.
 /// 폭은 이 함수만 아는 사실이므로 VM의 폭 인자 메서드에 그대로 넘긴다.
-fn render_scoreline(f: &mut Frame, area: Rect, vm: &LiveVm) {
+/// 라인스코어를 켜는 최소 화면 높이. 스코어라인(5) + 라인스코어(3) 위에
+/// 문자중계가 최소 여덟 줄은 남아야 읽을 만하다.
+const LINESCORE_MIN_HEIGHT: u16 = 16;
+
+fn render_scoreline(f: &mut Frame, area: Rect, vm: &LiveVm, linescore: Option<&[String]>) {
     let bold = Style::default().add_modifier(Modifier::BOLD);
     let mut spans = vec![
         Span::styled(vm.away.name.as_str(), team_badge_style(&vm.away.code)),
@@ -94,13 +105,22 @@ fn render_scoreline(f: &mut Frame, area: Rect, vm: &LiveVm) {
     }
 
     let inner_width = area.width.saturating_sub(2) as usize;
+    let mut lines = vec![
+        Line::from(spans),
+        Line::from(vm.detail_line(inner_width)),
+        Line::from(vm.pitch_line.text(inner_width)),
+    ];
+    // 라인스코어(v0.25). 숫자 표라 DIM으로 낮춰 스코어라인 본문과 층을 나눈다.
+    if let Some(rows) = linescore {
+        for r in rows {
+            lines.push(Line::from(Span::styled(
+                r.clone(),
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+        }
+    }
     f.render_widget(
-        Paragraph::new(vec![
-            Line::from(spans),
-            Line::from(vm.detail_line(inner_width)),
-            Line::from(vm.pitch_line.text(inner_width)),
-        ])
-        .block(Block::bordered().title(vm.title.as_str())),
+        Paragraph::new(lines).block(Block::bordered().title(vm.title.as_str())),
         area,
     );
 }
@@ -121,7 +141,8 @@ fn render_scoreline(f: &mut Frame, area: Rect, vm: &LiveVm) {
 /// 짝이다. VM으로 올리면 위젯이 내부적으로 하는 일을 밖에서 한 번 더 흉내 내는
 /// 중복이 된다.
 fn render_relay(f: &mut Frame, area: Rect, vm: &LiveVm) {
-    let (rows, title) = (&vm.relay_rows, vm.relay_title.as_str());
+    let rows = vm.relay_rows_at(area.width.saturating_sub(2));
+    let (rows, title) = (&rows, vm.relay_title.as_str());
     match vm.relay_cursor {
         Some(idx) => {
             let items: Vec<ListItem> = rows.iter().map(|row| ListItem::new(row.clone())).collect();
@@ -220,6 +241,9 @@ mod tests {
             }],
             next_batter_name: String::new(),
             at_bats: vec![],
+            inning_score: Vec::new(),
+            batter_line: None,
+            pitcher_line: None,
         };
         let game = Game {
             id: "g".into(),
@@ -867,6 +891,116 @@ mod tests {
         assert!(
             !narrow_text.contains("Duration"),
             "duration must be the first thing dropped in a narrow area:\n{narrow_text}"
+        );
+    }
+    /// v0.25 라인스코어. 이닝 번호·양팀 득점이 **세로로 맞아야** 표로 읽힌다.
+    /// 두 자리 득점(10)이 섞이면 칸이 밀리기 쉬워 좌표를 직접 본다.
+    #[test]
+    fn linescore_columns_line_up_even_with_a_two_digit_inning_score() {
+        let mut app = App::new(Default::default());
+        app.screen = linescore_screen();
+
+        let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        term.draw(|f| super::render(f, f.area(), &app)).unwrap();
+        let buf = term.backend().buffer();
+        let row = |y: u16| -> String { (0..100).map(|x| buf[(x, y)].symbol()).collect() };
+
+        // 테두리(0) + 스코어라인 3줄(1~3) 다음이 라인스코어 헤더다.
+        let head = row(4);
+        let away = row(5);
+        let home = row(6);
+        assert!(head.contains('9'), "이닝 헤더가 없다:\n{head}");
+
+        let ten = home.find("10").expect("두 자리 득점이 없다:\n{home}");
+        assert_eq!(
+            &head[ten..ten + 2],
+            " 8",
+            "이닝 8 칸과 홈 득점 10이 어긋났다:\n{head}\n{home}"
+        );
+        assert_eq!(
+            &away[ten..ten + 2],
+            " 0",
+            "원정 칸이 어긋났다:\n{away}\n{home}"
+        );
+    }
+
+    /// 화면이 낮으면 접는다 — 문자중계가 읽을 수 없을 만큼 짧아지면 손해다.
+    #[test]
+    fn a_short_terminal_hides_the_linescore() {
+        let mut app = App::new(Default::default());
+        app.screen = linescore_screen();
+
+        let mut term = Terminal::new(TestBackend::new(100, 12)).unwrap();
+        term.draw(|f| super::render(f, f.area(), &app)).unwrap();
+        let buf = term.backend().buffer();
+
+        // 스코어라인 블록의 아래 테두리 위치로 본다 — 라인스코어가 켜지면
+        // 블록이 세 줄 길어진다. 화면 문자열로 "10"을 찾으면 스코어라인의
+        // 점수("KT 2 : 10 LG")가 걸린다(첫 판정이 그래서 틀렸다).
+        let bottom = (1..12)
+            .find(|y| buf[(0, *y)].symbol() == "└")
+            .expect("스코어라인 블록의 아래 테두리를 못 찾았다");
+        assert_eq!(bottom, 4, "낮은 화면인데 블록이 늘었다 — 라인스코어가 떴다");
+    }
+
+    /// 라인스코어가 있는 상태. 8회 홈 10득점으로 두 자리 칸을 만든다.
+    fn linescore_screen() -> Screen {
+        let mut state =
+            crate::source::naver::map::live_from_relay(RELAY, team("LG", "LG"), team("KT", "KT"))
+                .unwrap();
+        state.inning_score = (1..=9)
+            .map(|n| crate::model::InningCell {
+                inning: n,
+                away: if n == 7 { "2".into() } else { "0".into() },
+                home: if n == 8 { "10".into() } else { "0".into() },
+            })
+            .collect();
+        state.away_score = 2;
+        state.home_score = 10;
+        match live_screen() {
+            Screen::Live { game, .. } => Screen::Live {
+                game,
+                state: Some(state),
+            },
+            other => other,
+        }
+    }
+
+    /// 연장에서 이닝 번호가 두 자리가 되면 헤더가 값과 어긋나기 쉽다 — 칸 폭을
+    /// 값 기준으로만 잡았을 때 실제로 그랬다(v0.25 화면 캡처에서 발견).
+    #[test]
+    fn linescore_columns_line_up_in_extra_innings() {
+        let mut app = App::new(Default::default());
+        let mut state =
+            crate::source::naver::map::live_from_relay(RELAY, team("LG", "LG"), team("KT", "KT"))
+                .unwrap();
+        state.inning_score = (1..=11)
+            .map(|n| crate::model::InningCell {
+                inning: n,
+                away: "0".into(),
+                home: "0".into(),
+            })
+            .collect();
+        app.screen = match live_screen() {
+            Screen::Live { game, .. } => Screen::Live {
+                game,
+                state: Some(state),
+            },
+            other => other,
+        };
+
+        let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        term.draw(|f| super::render(f, f.area(), &app)).unwrap();
+        let buf = term.backend().buffer();
+        let row = |y: u16| -> String { (0..100).map(|x| buf[(x, y)].symbol()).collect() };
+
+        let head = row(4);
+        let away = row(5);
+        let eleven = head.find("11").expect("11회 헤더가 없다");
+        assert_eq!(
+            &away[eleven..eleven + 2],
+            " 0",
+            "연장에서 헤더와 값이 어긋났다:\n{head}\n{away}"
         );
     }
 }

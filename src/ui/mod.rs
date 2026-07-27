@@ -627,6 +627,9 @@ mod tests {
             current_pitches: vec![],
             next_batter_name: String::new(),
             at_bats: vec![],
+            inning_score: Vec::new(),
+            batter_line: None,
+            pitcher_line: None,
         };
         let game = Game {
             id: "g".into(),
@@ -746,6 +749,9 @@ mod tests {
             ],
             next_batter_name: String::new(),
             at_bats: vec![],
+            inning_score: Vec::new(),
+            batter_line: None,
+            pitcher_line: None,
         };
         let game = Game {
             id: "g".into(),
@@ -842,6 +848,9 @@ mod tests {
             current_pitches: vec![pitch],
             next_batter_name: String::new(),
             at_bats: vec![],
+            inning_score: Vec::new(),
+            batter_line: None,
+            pitcher_line: None,
         };
         let game = Game {
             id: "g".into(),

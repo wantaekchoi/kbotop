@@ -581,6 +581,9 @@ mod tests {
             current_pitches: vec![],
             next_batter_name: String::new(),
             at_bats: vec![],
+            inning_score: Vec::new(),
+            batter_line: None,
+            pitcher_line: None,
         }
     }
 

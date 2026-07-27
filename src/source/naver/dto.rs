@@ -241,6 +241,11 @@ pub struct RelayResult {
 #[serde(rename_all = "camelCase")]
 pub struct TextRelayData {
     pub current_game_state: Option<CurrentGameState>,
+    /// 이닝별 득점(v0.25). `{"home":{"1":"1",...},"away":{...}}` 형태이고 값이
+    /// **문자열**이다 — `"-"`는 그 반이닝을 하지 않았다는 뜻(홈이 이기면 9회말을
+    /// 안 친다)이라 0과 구분해야 한다. 키는 이닝 번호라 연장이면 `"10"`으로 는다.
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub inning_score: InningScoreDto,
     #[serde(default, deserialize_with = "null_as_default")]
     pub text_relays: Vec<TextRelay>,
     pub last_valid_metric_option: Option<MetricOption>,
@@ -390,6 +395,15 @@ pub struct Lineup {
     pub pitcher: Vec<Player>,
 }
 
+/// 이닝별 득점 원문. 이닝 번호 → 득점 문자열.
+#[derive(Deserialize, Default)]
+pub struct InningScoreDto {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub home: std::collections::BTreeMap<String, String>,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub away: std::collections::BTreeMap<String, String>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Player {
@@ -400,4 +414,28 @@ pub struct Player {
     /// 타순(1~9). 교체 선수는 같은 batOrder를 공유한다. 0이면 미상.
     #[serde(default, deserialize_with = "lenient_int")]
     pub bat_order: u8,
+
+    // --- 그 경기 개인 기록(v0.25). 타자·투수가 같은 구조체를 공유하므로 서로
+    // 쓰지 않는 필드는 0으로 남는다(응답도 그렇게 온다).
+    /// 타자: 타수
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub ab: u16,
+    /// 타자: 안타
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub hit: u16,
+    /// 타자: 시즌 타율
+    #[serde(default, deserialize_with = "lenient_float")]
+    pub season_hra: f32,
+    /// 투수: 소화 이닝(3.1 = 3과 1/3이 아니라 소수 표기 그대로 온다)
+    #[serde(default, deserialize_with = "lenient_float")]
+    pub inn: f32,
+    /// 투수: 투구 수
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub ball_count: u16,
+    /// 투수: 자책점
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub er: u16,
+    /// 투수: 탈삼진
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub kk: u16,
 }

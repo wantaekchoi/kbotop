@@ -117,6 +117,10 @@ pub(crate) struct LiveVm<'a> {
     /// 그대로 통과시켜, 줄을 어떻게 보일지에 대한 결정이 렌더의
     /// `format!("· {entry}")`에 남아 있었다 — 리뷰 I-1로 여기(VM)로 옮겼다.
     pub relay_rows: Vec<String>,
+    /// 시각을 붙일 때 쓰는 원본 줄(v0.25). `relay_rows`는 폭과 무관한 최종
+    /// 문자열이고, 시각은 **폭이 남을 때만** 붙으므로 폭을 아는 쪽
+    /// ([`LiveVm::relay_rows_at`])이 조립한다.
+    relay_lines: &'a [RelayLine],
     /// 문자중계 커서. `None`이면 하이라이트 없이 꼬리만 보여준다(기본 상태).
     /// `Some(idx)`는 **이미 `relay_rows` 범위 안으로 클램프됐다** — v0.19a까지
     /// 이 클램프(`idx.min(len-1)`)는 렌더에 있었다(리뷰 I-1). 렌더는 이제 범위
@@ -132,6 +136,13 @@ pub(crate) struct LiveVm<'a> {
     /// 조회가 두 번(여기와 render()) 일어난다(M-7) — 여기 한 번만 조회해
     /// 재사용한다.
     pub labels: &'static Labels,
+    /// 라인스코어 원본(v0.25). 표는 폭에 따라 접히므로 조립은
+    /// [`LiveVm::linescore_rows`]가 폭을 받아서 한다.
+    inning_score: &'a [crate::model::InningCell],
+    /// 원정·홈 팀 표시명(라인스코어 좌측 칸). 배지가 아니라 평문이다 —
+    /// 표 안에서 배경색을 쓰면 숫자 정렬이 시각적으로 흐트러진다.
+    away_label: &'a str,
+    home_label: &'a str,
 }
 
 impl<'a> LiveVm<'a> {
@@ -263,7 +274,11 @@ impl<'a> LiveVm<'a> {
             pitches,
             selected_pitch,
             relay_rows,
+            relay_lines: s.active_relay_lines(app.live_atbat_sel),
             relay_cursor,
+            inning_score: &s.inning_score,
+            away_label: &s.away.name,
+            home_label: &s.home.name,
             relay_title: match app.fetching_inning {
                 Some(inning) => format!(
                     "{}— {} ",
@@ -452,6 +467,127 @@ fn pitch_line(l: &Labels, game_start: &str, pitches: &[Pitch], sel: Option<usize
 /// - 투구 줄/아닌 줄을 다른 글머리로 가르는 안도 접었다. 연동 규칙이 "위쪽 가장
 ///   가까운 투구를 물려받는다"라 첫 투구 이후의 줄은 전부 어떤 공이든 가리키므로,
 ///   구분 표시가 없어도 커서를 움직이는 것만으로 관계가 드러난다.
+impl LiveVm<'_> {
+    /// 화면에 낼 문자중계 줄. 폭이 남으면 투구 줄 오른쪽에 시각을 붙인다(v0.25).
+    ///
+    /// 시각을 가진 줄은 **투구 줄뿐**이다(응답이 `ptsPitchId`에만 시각을 싣는다).
+    /// 왼쪽에 이어 붙이면 줄마다 들쭉날쭉해지므로 **오른쪽 정렬**로 둔다 — 시각
+    /// 없는 줄은 그 자리가 비고, 있는 줄끼리 세로로 맞아 훑기 쉽다.
+    ///
+    /// 본문을 밀어내면서까지 넣을 값은 아니라, 가장 긴 줄에 시각을 붙여도 폭이
+    /// 남을 때만 켠다.
+    pub fn relay_rows_at(&self, width: u16) -> Vec<String> {
+        // 폭은 **시각이 붙는 줄들**만 보고 판단한다. 전체 최댓값을 쓰면 시각이
+        // 없는 긴 줄(결과 요약 "1루주자 황영묵 : 도루실패아웃 …") 하나 때문에
+        // 짧은 투구 줄들까지 시각을 잃는다 — v0.25 화면 캡처에서 실제로 그랬다.
+        let longest_timed = self
+            .relay_rows
+            .iter()
+            .zip(self.relay_lines.iter())
+            .filter(|(_, l)| l.time_hm.is_some())
+            .map(|(r, _)| super::text::display_width(r))
+            .max();
+        let Some(longest_timed) = longest_timed else {
+            return self.relay_rows.clone(); // 시각을 가진 줄이 없다
+        };
+        if (width as usize) < longest_timed + RELAY_TIME_WIDTH + 2 {
+            return self.relay_rows.clone();
+        }
+
+        // 시각은 **시각 있는 줄들 중 가장 긴 것** 오른쪽에 맞춘다. 패널 오른쪽
+        // 끝에 붙이면 짧은 투구 줄과 시각 사이가 너무 멀어 읽는 눈이 건너뛴다.
+        let body_w = longest_timed.min((width as usize).saturating_sub(RELAY_TIME_WIDTH + 1));
+        self.relay_rows
+            .iter()
+            .zip(self.relay_lines.iter())
+            .map(|(row, line)| match &line.time_hm {
+                Some(t) => {
+                    let used = super::text::display_width(row);
+                    format!("{row}{}{t}", " ".repeat(body_w.saturating_sub(used) + 1))
+                }
+                None => row.clone(),
+            })
+            .collect()
+    }
+}
+
+/// 문자중계 줄 오른쪽 시각 칸("21:40").
+const RELAY_TIME_WIDTH: usize = 5;
+
+/// 라인스코어 세 줄(이닝 번호 / 원정 / 홈)을 만든다. 폭이 모자라면 `None` —
+/// 표가 잘려 나가면 숫자가 어느 이닝 것인지 알 수 없어 오히려 해롭다.
+///
+/// 칸 폭은 **실제 값의 최대 자릿수**로 잡는다. 두 자리 득점(`"10"`)이 흔하고,
+/// `"-"`(치지 않은 반이닝)는 한 칸이다.
+impl LiveVm<'_> {
+    pub fn linescore_rows(&self, width: u16) -> Option<Vec<String>> {
+        if self.inning_score.is_empty() {
+            return None;
+        }
+        let name_w = LINESCORE_NAME_WIDTH;
+        // 칸 폭은 **값과 이닝 번호 둘 다**의 최대 자릿수로 잡는다. 값만 보면
+        // 연장(10·11회)에서 헤더가 값과 어긋난다 — 9이닝까지만 보는 테스트는
+        // 통과하고 실제 화면에서만 드러난다(v0.25 캡처에서 발견).
+        let cell_w = self
+            .inning_score
+            .iter()
+            .flat_map(|c| {
+                [
+                    c.away.chars().count(),
+                    c.home.chars().count(),
+                    c.inning.to_string().len(),
+                ]
+            })
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        let total_w = self.inning_score.len();
+        let need = name_w + total_w * (cell_w + 1) + LINESCORE_TOTAL_WIDTH + 1;
+        if (width as usize) < need {
+            return None;
+        }
+
+        let pad = |s: &str| format!("{:>w$}", s, w = cell_w);
+        let head: String = self
+            .inning_score
+            .iter()
+            .map(|c| format!("{} ", pad(&c.inning.to_string())))
+            .collect();
+        let away: String = self
+            .inning_score
+            .iter()
+            .map(|c| format!("{} ", pad(&c.away)))
+            .collect();
+        let home: String = self
+            .inning_score
+            .iter()
+            .map(|c| format!("{} ", pad(&c.home)))
+            .collect();
+
+        let name = |s: &str| {
+            let t = super::text::ellipsize(s, name_w);
+            let used = super::text::display_width(&t);
+            format!("{t}{}", " ".repeat(name_w.saturating_sub(used)))
+        };
+        let total = |v: u16| format!("{:>w$}", v, w = LINESCORE_TOTAL_WIDTH);
+        Some(vec![
+            format!(
+                "{} {head}{:>w$}",
+                " ".repeat(name_w),
+                "R",
+                w = LINESCORE_TOTAL_WIDTH
+            ),
+            format!("{} {away}{}", name(self.away_label), total(self.away_score)),
+            format!("{} {home}{}", name(self.home_label), total(self.home_score)),
+        ])
+    }
+}
+
+/// 라인스코어 좌측 팀명 칸(전각 3자까지).
+const LINESCORE_NAME_WIDTH: usize = 6;
+/// 우측 합계(R) 칸.
+const LINESCORE_TOTAL_WIDTH: usize = 3;
+
 fn format_relay_rows(lines: &[RelayLine]) -> Vec<String> {
     lines
         .iter()
@@ -601,7 +737,9 @@ fn game_duration_label(
 mod tests {
     use super::{LiveVm, PitchLine};
     use crate::app::{App, Screen};
-    use crate::model::{AtBat, BaseState, Count, Game, GameStatus, LiveState, Pitch, Team};
+    use crate::model::{
+        AtBat, BaseState, Count, Game, GameStatus, LiveState, Pitch, RelayLine, Team,
+    };
 
     const RELAY: &str = include_str!("../../tests/fixtures/relay_20260719KTLG.json");
 
@@ -639,7 +777,38 @@ mod tests {
             current_pitches: vec![],
             next_batter_name: String::new(),
             at_bats: vec![],
+            inning_score: Vec::new(),
+            batter_line: None,
+            pitcher_line: None,
         }
+    }
+
+    /// 문자중계 줄만 채운 최소 화면에서 VM을 만든다(v0.25 시각 테스트용).
+    /// `LiveVm`은 `App`을 빌리므로 App을 살려 둔 채 돌려줄 수 없어, 호출부가
+    /// 클로저로 받아 쓰게 한다.
+    fn with_relay_vm(lines: &[RelayLine], f: impl FnOnce(&LiveVm)) {
+        let mut app = App::new(Default::default());
+        let mut state = bare_state();
+        state.relay_log = lines.to_vec();
+        app.screen = Screen::Live {
+            game: Game {
+                id: "g".into(),
+                start: String::new(),
+                status: GameStatus::Live,
+                status_label: String::new(),
+                home: team("LG", "LG"),
+                away: team("KT", "KT"),
+                home_score: None,
+                away_score: None,
+                away_starter: String::new(),
+                home_starter: String::new(),
+                stadium: String::new(),
+                broadcast: String::new(),
+            },
+            state: Some(state),
+        };
+        let vm = LiveVm::from_app(&app).expect("vm");
+        f(&vm);
     }
 
     /// fixture 기반 라이브 화면 — live.rs 테스트와 같은 데이터(천성호 타석이
@@ -1344,4 +1513,93 @@ mod tests {
             super::game_duration_label(GameStatus::Live, "2026-07-19T18:30:00", "22:30:00", None);
         assert_eq!(got.as_deref(), Some("(+4:00)"));
     }
+    /// v0.25: 폭이 남으면 투구 줄 오른쪽에 시각이 붙는다. 시각 없는 줄은
+    /// 그대로 두고, 붙은 줄끼리는 **끝이 세로로 맞아야** 훑을 수 있다.
+    #[test]
+    fn relay_rows_align_timestamps_on_the_right_when_there_is_room() {
+        let lines = vec![
+            RelayLine::plain("대타 이영빈"),
+            RelayLine {
+                text: "1구 볼".into(),
+                pitch_idx: Some(0),
+                is_pitch: true,
+                time_hm: Some("21:40".into()),
+            },
+            RelayLine {
+                text: "이영빈 : 2루수 땅볼 아웃 (2루수->1루수 송구아웃)".into(),
+                pitch_idx: None,
+                is_pitch: false,
+                time_hm: None,
+            },
+            RelayLine {
+                text: "2구 타격".into(),
+                pitch_idx: Some(1),
+                is_pitch: true,
+                time_hm: Some("21:41".into()),
+            },
+        ];
+        with_relay_vm(&lines, |vm| {
+            let rows = vm.relay_rows_at(80);
+
+            let ends: Vec<usize> = rows
+                .iter()
+                .filter(|r| r.ends_with("21:40") || r.ends_with("21:41"))
+                .map(|r| super::super::text::display_width(r))
+                .collect();
+            assert_eq!(ends.len(), 2, "투구 줄 둘에 시각이 붙어야 한다: {rows:?}");
+            assert_eq!(ends[0], ends[1], "시각 끝이 세로로 안 맞는다: {rows:?}");
+
+            // 시각 없는 줄은 손대지 않는다.
+            assert!(rows[0].ends_with("이영빈"), "{rows:?}");
+            assert!(rows[2].ends_with(")"), "{rows:?}");
+        });
+    }
+
+    /// 좁으면 붙이지 않는다 — 본문을 밀어내면서까지 넣을 값은 아니다.
+    #[test]
+    fn a_narrow_relay_panel_drops_the_timestamps() {
+        let lines = vec![RelayLine {
+            text: "아주 긴 문자중계 줄이 여기에 계속 이어집니다 정말로".into(),
+            pitch_idx: Some(0),
+            is_pitch: true,
+            time_hm: Some("21:40".into()),
+        }];
+        with_relay_vm(&lines, |vm| {
+            let rows = vm.relay_rows_at(30);
+            assert!(!rows[0].contains("21:40"), "좁은데 시각이 붙었다: {rows:?}");
+        });
+    }
+
+    /// 시각을 가진 줄이 하나도 없으면(투구 전 타석) 아무것도 바뀌지 않는다.
+    #[test]
+    fn rows_without_any_timestamp_are_returned_unchanged() {
+        let lines = vec![RelayLine::plain("8번 타자 장규현")];
+        with_relay_vm(&lines, |vm| {
+            assert_eq!(vm.relay_rows_at(80), vm.relay_rows);
+        });
+    }
+    /// 시각 없는 긴 줄이 섞여 있어도 짧은 투구 줄에는 시각이 붙는다 — 폭 판단을
+    /// 전체 최댓값으로 하면 결과 요약 줄 하나가 전부를 막는다(v0.25 캡처에서 발견).
+    #[test]
+    fn a_long_untimed_line_does_not_block_timestamps_on_short_pitch_lines() {
+        let lines = vec![
+            RelayLine {
+                text: "1구 볼".into(),
+                pitch_idx: Some(0),
+                is_pitch: true,
+                time_hm: Some("21:40".into()),
+            },
+            RelayLine::plain(
+                "1루주자 황영묵 : 도루실패아웃 (포수->유격수 태그아웃) 그리고 더 긴 설명이 이어진다",
+            ),
+        ];
+        with_relay_vm(&lines, |vm| {
+            let rows = vm.relay_rows_at(66);
+            assert!(
+                rows[0].ends_with("21:40"),
+                "긴 줄 때문에 시각이 막혔다: {rows:?}"
+            );
+        });
+    }
+
 }

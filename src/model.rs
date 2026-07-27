@@ -133,6 +133,11 @@ pub struct RelayLine {
     /// 투구가 아닌 줄(결과 요약 등)의 carry-down은 이 필드와 무관하게 그대로
     /// 유지된다(의도된 동작).
     pub is_pitch: bool,
+    /// 그 줄의 시각 "HH:MM"(v0.25). **투구 줄에만 있다** — 응답이 시각을 싣는
+    /// 곳이 `textOption.ptsPitchId`(`YYMMDD_HHMMSS`)뿐이고, 타자 등장 안내나
+    /// 결과 요약 줄은 그 값이 비어 있다(실측). 초까지는 선택 투구 상세줄이
+    /// 이미 보여주므로 목록에서는 분까지만 쓴다.
+    pub time_hm: Option<String>,
 }
 
 impl RelayLine {
@@ -143,6 +148,7 @@ impl RelayLine {
             text: text.into(),
             pitch_idx: None,
             is_pitch: false,
+            time_hm: None,
         }
     }
 }
@@ -184,6 +190,38 @@ pub struct LiveState {
     /// 손으로 만든 LiveState(테스트 등)가 이 필드를 비워 두면 active_*() 헬퍼가
     /// relay_log/current_pitches로 자동 폴백한다(무회귀).
     pub at_bats: Vec<AtBat>,
+    /// 이닝별 득점(v0.25, 오래된→최신). 연장이면 그만큼 길어진다.
+    pub inning_score: Vec<InningCell>,
+    /// 현재 타자의 그 경기 성적. 이름을 못 찾거나 아직 기록이 없으면 None.
+    pub batter_line: Option<BatterLine>,
+    /// 현재 투수의 그 경기 성적.
+    pub pitcher_line: Option<PitcherLine>,
+}
+
+/// 라인스코어 한 칸. `away`·`home`은 응답 원문 그대로의 문자열이다 —
+/// **`"-"`(그 반이닝을 하지 않음)를 0으로 바꾸지 않는다.** 홈팀이 이기고 있으면
+/// 9회말을 치지 않는데, 그걸 0으로 찍으면 "0점 냈다"는 거짓말이 된다.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InningCell {
+    pub inning: u8,
+    pub away: String,
+    pub home: String,
+}
+
+/// 타자의 그 경기 성적(v0.25).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BatterLine {
+    pub hits: u16,
+    pub at_bats: u16,
+    pub season_avg: f32,
+}
+
+/// 투수의 그 경기 성적(v0.25).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PitcherLine {
+    pub innings: f32,
+    pub hits_allowed: u16,
+    pub pitches: u16,
 }
 
 impl LiveState {
@@ -411,6 +449,9 @@ mod tests {
             current_pitches: vec![],
             next_batter_name: String::new(),
             at_bats: vec![],
+            inning_score: Vec::new(),
+            batter_line: None,
+            pitcher_line: None,
         }
     }
 
@@ -524,11 +565,13 @@ mod tests {
                     text: "1구 볼".into(),
                     pitch_idx: Some(0),
                     is_pitch: true,
+                    time_hm: None,
                 },
                 RelayLine {
                     text: "2구 타격".into(),
                     pitch_idx: Some(1),
                     is_pitch: true,
+                    time_hm: None,
                 },
                 RelayLine::plain("최원준 : 좌익수 뒤 홈런"),
                 RelayLine::plain("1루주자 김현수 : 홈인"),
@@ -600,6 +643,7 @@ mod tests {
             text: "1구 헛스윙".into(),
             pitch_idx: Some(0),
             is_pitch: true,
+            time_hm: None,
         }];
         newest.pitches = vec![pitch(1)];
         s.at_bats.push(newest);

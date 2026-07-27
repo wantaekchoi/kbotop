@@ -5,6 +5,16 @@
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-07-27
+
+### Added
+- **라인스코어가 뜹니다** — 이닝별 득점을 표로 보여줍니다. "4 : 14"만 봐서는 알 수 없던 "8회에 10점이 터진 경기"가 한눈에 들어옵니다. 연장도 그대로 늘어납니다.
+- **문자중계 줄에 시각이 붙습니다** — 투구마다 몇 시 몇 분에 던졌는지 보여, 타석의 템포가 드러납니다. 시각이 없는 줄(타자 등장·결과 요약)은 그 자리를 비웁니다.
+
+### Changed
+- README의 키 안내를 화면별로 다시 썼습니다. 키만 나열하는 대신 그 키로 무엇을 할 수 있는지가 보입니다.
+- 문서가 실제 동작과 어긋나면 테스트가 잡습니다. 설정 파일 경로가 Linux 기준으로만 적혀 있던 것, Windows 설치 방법, 빠져 있던 `--tz` 안내를 함께 고쳤습니다.
+
 ## [0.24.0] - 2026-07-27
 
 ### Added
@@ -242,7 +252,15 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/wantaekchoi/kbotop/compare/v0.24.0...v0.25.0
+[0.24.0]: https://github.com/wantaekchoi/kbotop/compare/v0.23.0...v0.24.0
+[0.23.0]: https://github.com/wantaekchoi/kbotop/compare/v0.22.0...v0.23.0
+[0.22.0]: https://github.com/wantaekchoi/kbotop/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/wantaekchoi/kbotop/compare/v0.20.0...v0.21.0
+[0.20.0]: https://github.com/wantaekchoi/kbotop/compare/v0.19.0...v0.20.0
+[0.19.0]: https://github.com/wantaekchoi/kbotop/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/wantaekchoi/kbotop/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/wantaekchoi/kbotop/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/wantaekchoi/kbotop/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/wantaekchoi/kbotop/compare/v0.14.0...v0.15.0
