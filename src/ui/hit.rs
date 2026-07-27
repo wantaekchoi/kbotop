@@ -58,6 +58,36 @@ impl HitMap {
         self.zones.clear();
     }
 
+    /// 표 본문의 각 행을 등록한다. 본문은 **테두리(1) + 헤더 행(1)** 아래부터
+    /// 시작하고, 영역 밖으로 나가는 행은 화면에 없으므로 등록하지 않는다.
+    ///
+    /// 경기 목록과 순위표가 이 계산을 각자 복사해 갖고 있었다 — 지금은 같지만
+    /// 한쪽만 고치면 조용히 갈린다. v0.24가 팀 성적 게이트를 한 함수로 모은
+    /// 것과 같은 이유로 여기 하나만 둔다.
+    pub fn push_table_rows(
+        &mut self,
+        area: Rect,
+        offset: usize,
+        len: usize,
+        zone: impl Fn(usize) -> Zone,
+    ) {
+        const HEAD: u16 = 2; // 위 테두리 + 헤더 행
+        let body_h = area.height.saturating_sub(HEAD + 1); // 아래 테두리
+        for row in 0..body_h {
+            let idx = offset + row as usize;
+            if idx >= len {
+                break;
+            }
+            let r = Rect::new(
+                area.x + 1,
+                area.y + HEAD + row,
+                area.width.saturating_sub(2),
+                1,
+            );
+            self.push(r, zone(idx));
+        }
+    }
+
     /// 그 좌표에 있는 것. 겹치면 마지막에 등록된 것(= 위에 그려진 것).
     pub fn at(&self, x: u16, y: u16) -> Option<Zone> {
         let p = Position::new(x, y);

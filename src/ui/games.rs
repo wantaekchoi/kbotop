@@ -242,27 +242,12 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMa
     f.render_stateful_widget(table, area, &mut state);
     // 그린 뒤에 등록한다 — 스크롤 오프셋은 ratatui가 정하므로, 우리가 다시
     // 계산하는 대신 렌더가 끝난 state에서 읽는다(hit.rs 모듈 주석의 이유).
-    push_row_hits(hits, area, state.offset(), app.games.len());
-}
-
-/// 테이블 본문 각 행의 영역을 등록한다. 본문은 테두리(1) + 헤더 행(1) 아래부터
-/// 시작하고, 영역 밖으로 나가는 행은 **화면에 없으므로** 등록하지 않는다.
-fn push_row_hits(hits: &mut super::hit::HitMap, area: Rect, offset: usize, len: usize) {
-    const HEAD: u16 = 2; // 위 테두리 + 헤더 행
-    let body_h = area.height.saturating_sub(HEAD + 1); // 아래 테두리
-    for row in 0..body_h {
-        let idx = offset + row as usize;
-        if idx >= len {
-            break;
-        }
-        let r = Rect::new(
-            area.x + 1,
-            area.y + HEAD + row,
-            area.width.saturating_sub(2),
-            1,
-        );
-        hits.push(r, super::hit::Zone::GameRow(idx));
-    }
+    hits.push_table_rows(
+        area,
+        state.offset(),
+        app.games.len(),
+        super::hit::Zone::GameRow,
+    );
 }
 
 #[cfg(test)]

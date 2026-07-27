@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-07-28
+
+### Fixed
+- **마우스만 죽어 있던 경우를 고쳤습니다** — 순위 탭에서 팀 성적을 펼쳐 둔 사이 그 팀이 순위표에서 사라지면(폴링 갱신), 화면에는 아무것도 안 떠 있는데 클릭과 휠만 먹지 않았습니다. 키는 정상이라 마우스가 고장 난 것처럼 보였습니다.
+- **`g`를 누른 뒤 클릭하면 고른 행이 날아가던 것을 고쳤습니다** — `gg` 대기 상태가 클릭으로 끊기지 않아, 클릭으로 고른 행이 그다음 `g` 하나에 맨 위로 점프했습니다.
+
 ## [0.27.0] - 2026-07-28
 
 ### Added
@@ -266,7 +272,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.27.1...HEAD
+[0.27.1]: https://github.com/wantaekchoi/kbotop/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/wantaekchoi/kbotop/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/wantaekchoi/kbotop/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/wantaekchoi/kbotop/compare/v0.24.0...v0.25.0

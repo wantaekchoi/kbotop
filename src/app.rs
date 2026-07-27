@@ -724,16 +724,25 @@ impl App {
         if !self.mouse {
             return;
         }
+        // 팀 성적은 `team_stats_rank`가 아니라 **`team_stats_target()`**을 본다.
+        // 렌더(ui/mod.rs)와 키 소비(on_key)가 v0.24에서 이 함수 하나로 통일한
+        // 이유가 그대로 여기에도 적용된다 — rank는 남았는데 그 팀이 순위표에서
+        // 사라지면(폴링 갱신) **화면 없이 마우스만 잠긴다.** 그때 키는 멀쩡히
+        // 듣고 있어서, 사용자에게는 마우스가 죽은 것처럼만 보인다.
         if self.show_help
             || self.options.is_some()
             || self.settings.is_some()
             || self.article_view.is_some()
             || self.news_list.is_some()
             || self.link_picker.is_some()
-            || self.team_stats_rank.is_some()
+            || self.team_stats_target().is_some()
         {
             return;
         }
+        // `gg` 대기를 끊는다. on_key는 모든 분기에서 이걸 지운다 — "입력이 오면
+        // g 시퀀스는 끝난다"가 그쪽 계약이다. 마우스만 예외로 두면, g를 한 번
+        // 누른 뒤 클릭해서 고른 행이 **다음 g 하나에 맨 위로 날아간다.**
+        self.pending_g = false;
         match (kind, zone) {
             (MouseAction::Click, Some(Zone::Tab(t))) => {
                 if self.tab != t || matches!(self.screen, Screen::Live { .. }) {
@@ -1512,6 +1521,45 @@ mod tests {
         assert!(app.mouse, "반대 방향으로도 뒤집혀야 한다");
     }
 
+    /// 오버레이가 **화면에서 사라지면** 마우스도 함께 풀려야 한다.
+    ///
+    /// v0.24가 렌더와 키 소비를 `team_stats_target()` 하나로 통일한 이유가
+    /// 그대로 여기 적용된다 — v0.27의 마우스 경로만 `team_stats_rank`를 직접
+    /// 봐서, rank는 남았는데 그 팀이 순위표에서 사라진 순간(폴링 갱신)
+    /// **키는 듣는데 마우스만 죽는** 상태가 생겼다.
+    #[test]
+    fn the_mouse_unlocks_when_the_overlay_disappears() {
+        let mut app = App::new(Default::default());
+        app.games = vec![game("a"), game("b")];
+        app.standings = vec![standing_with_games(1, 10)];
+        app.team_stats_rank = Some(1);
+        // 폴링이 순위표를 갱신해 그 팀이 사라진다.
+        app.standings = vec![];
+        assert!(
+            app.team_stats_target().is_none(),
+            "오버레이는 이미 안 보인다"
+        );
+        // 키는 정상 동작한다.
+        app.on_key(KeyCode::Down);
+        assert_eq!(app.selected, 1, "키는 살아 있다");
+        // 마우스는?
+        app.on_mouse(Some(crate::ui::hit::Zone::GameRow(0)), MouseAction::Click);
+        assert_eq!(app.selected, 0, "마우스만 잠겨 있으면 여기서 1로 남는다");
+    }
+
+    /// 클릭도 `gg` 대기를 끊는다. on_key는 **모든** 분기에서 이걸 지운다 —
+    /// "입력이 오면 g 시퀀스는 끝난다"가 그쪽 계약이고, 마우스만 예외로 두면
+    /// 클릭해서 고른 행이 다음 `g` 하나에 맨 위로 날아간다.
+    #[test]
+    fn a_click_cancels_a_pending_g() {
+        let mut app = App::new(Default::default());
+        app.games = vec![game("a"), game("b"), game("c")];
+        app.on_key(KeyCode::Char('g'));
+        app.on_mouse(Some(crate::ui::hit::Zone::GameRow(2)), MouseAction::Click);
+        assert_eq!(app.selected, 2);
+        app.on_key(KeyCode::Char('g'));
+        assert_eq!(app.selected, 2, "클릭 뒤의 g 하나가 gg로 읽혀 맨 위로 갔다");
+    }
     #[test]
     fn tab_toggles_between_games_and_standings() {
         let mut app = App::new(Default::default());
