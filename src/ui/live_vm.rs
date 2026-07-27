@@ -136,6 +136,10 @@ pub(crate) struct LiveVm<'a> {
     /// 조회가 두 번(여기와 render()) 일어난다(M-7) — 여기 한 번만 조회해
     /// 재사용한다.
     pub labels: &'static Labels,
+    /// 이 대결의 요약 줄(v0.26). 타자·투수의 그 경기 성적과 통산 상대 전적을
+    /// 이미 사람이 읽을 문장으로 만들어 둔다 — 렌더는 그리기만 한다.
+    /// 보여줄 게 없으면 빈 벡터다(돌려보기 중에는 그 타석 값이 아니라 비운다).
+    pub matchup_rows: Vec<String>,
     /// 라인스코어 원본(v0.25). 표는 폭에 따라 접히므로 조립은
     /// [`LiveVm::linescore_rows`]가 폭을 받아서 한다.
     inning_score: &'a [crate::model::InningCell],
@@ -276,6 +280,7 @@ impl<'a> LiveVm<'a> {
             relay_rows,
             relay_lines: s.active_relay_lines(app.live_atbat_sel),
             relay_cursor,
+            matchup_rows: matchup_rows(l, s, past_at_bat.is_some()),
             inning_score: &s.inning_score,
             away_label: &s.away.name,
             home_label: &s.home.name,
@@ -513,6 +518,47 @@ impl LiveVm<'_> {
 
 /// 문자중계 줄 오른쪽 시각 칸("21:40").
 const RELAY_TIME_WIDTH: usize = 5;
+
+/// 대결 요약 줄을 만든다(v0.26).
+///
+/// **돌려보기 중에는 비운다** — 여기 값은 "지금 이 순간"의 것이라 과거 타석
+/// 화면에 섞으면 v0.18에서 두 번 데인 "한 화면이 두 상황을 말하는" 결함이
+/// 재현된다(now_fields를 비우는 것과 같은 이유).
+fn matchup_rows(l: &Labels, s: &LiveState, viewing_past: bool) -> Vec<String> {
+    if viewing_past {
+        return vec![];
+    }
+    let mut rows = Vec::new();
+    if let Some(b) = &s.batter_line {
+        // 타율은 야구 관례대로 앞 0을 떼고 소수 셋째 자리까지("2/4 .274").
+        let avg = format!("{:.3}", b.season_avg);
+        rows.push(format!(
+            "{} {} {}/{}  {}",
+            l.matchup_batter,
+            s.batter_name,
+            b.hits,
+            b.at_bats,
+            avg.trim_start_matches('0')
+        ));
+    }
+    if let Some(p) = &s.pitcher_line {
+        rows.push(format!(
+            "{} {} {:.1}{} {}{} {}{}",
+            l.matchup_pitcher,
+            s.pitcher_name,
+            p.innings,
+            l.matchup_innings,
+            p.hits_allowed,
+            l.matchup_hits,
+            p.pitches,
+            l.matchup_pitches
+        ));
+    }
+    if !s.matchup.trim().is_empty() {
+        rows.push(format!("{} {}", l.matchup_career, s.matchup.trim()));
+    }
+    rows
+}
 
 /// 라인스코어 세 줄(이닝 번호 / 원정 / 홈)을 만든다. 폭이 모자라면 `None` —
 /// 표가 잘려 나가면 숫자가 어느 이닝 것인지 알 수 없어 오히려 해롭다.
@@ -780,6 +826,7 @@ mod tests {
             inning_score: Vec::new(),
             batter_line: None,
             pitcher_line: None,
+            matchup: String::new(),
         }
     }
 

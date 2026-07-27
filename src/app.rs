@@ -1606,6 +1606,7 @@ mod tests {
             inning_score: Vec::new(),
             batter_line: None,
             pitcher_line: None,
+            matchup: String::new(),
         };
         app.screen = Screen::Live {
             game: game("g"),
@@ -1715,6 +1716,7 @@ mod tests {
             inning_score: Vec::new(),
             batter_line: None,
             pitcher_line: None,
+            matchup: String::new(),
         };
         app.screen = Screen::Live {
             game: game("g"),

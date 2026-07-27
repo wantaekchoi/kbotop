@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-07-27
+
+### Added
+- **이 대결이 어떤 대결인지 보여줍니다** — 라이브 화면 아래에 지금 타자의 오늘 성적(2/4 .274), 투수의 이닝·피안타·투구 수, 그리고 두 사람의 통산 상대 전적이 뜹니다. 화면에 자리가 남을 때만 나타나고, 문자중계를 밀어내지 않습니다.
+
+### Changed
+- 라이브 화면이 남는 세로 공간을 씁니다. 문자중계 패널이 화면 아래까지 늘어나 큰 터미널에서 아래 절반이 비던 것을, 남는 자리에 대결 정보를 놓아 채웠습니다.
+
 ## [0.25.0] - 2026-07-27
 
 ### Added
@@ -252,7 +260,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/wantaekchoi/kbotop/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/wantaekchoi/kbotop/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/wantaekchoi/kbotop/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/wantaekchoi/kbotop/compare/v0.22.0...v0.23.0

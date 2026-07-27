@@ -580,6 +580,7 @@ pub fn live_from_relay(json: &str, home: Team, away: Team) -> Result<LiveState> 
         inning_score,
         batter_line,
         pitcher_line,
+        matchup: trd.pitcher_vs_batter_career_stats.clone(),
     })
 }
 

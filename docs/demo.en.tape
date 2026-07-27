@@ -1,7 +1,9 @@
-# kbotop demo (English) — v0.20: rewind past inning boundaries ([ pulls in the previous inning),
+# kbotop demo (English) — v0.26: a matchup block under the play-by-play
+# (today's batter/pitcher lines + career head-to-head).
+# v0.20: rewind past inning boundaries ([ pulls in the previous inning),
 # line, its pitch shows in the zone), rewind ([ ] at-bats),
 # live pitch nav (side/zone), in-app news list (n), settings (S), theme presets, tabs.
-# (2026-07-19 Kiwoom 9:9 Hanwha, last at-bat, 7 pitches)
+# (2026-07-19 KIA 9:5 SSG, 10 at-bats in the 9th, last at-bat 3 pitches)
 # record with: vhs docs/demo.en.tape  (needs `kbotop` on PATH: cargo install --path .)
 # Isolate config autosave from the real config via a temp HOME
 # (on macOS the directories crate uses $HOME/Library/Application Support).
@@ -18,11 +20,12 @@ Set Padding 24
 Set TypingSpeed 55ms
 
 Hide
-Type "HOME=$(mktemp -d) kbotop --date 2026-07-19 --team nc --lang en"
+Type "HOME=$(mktemp -d) kbotop --date 2026-07-19 --team kia --lang en"
 Enter
 Show
 
 # --team: team accent + cheer badge, auto-enters live after first poll
+# v0.26: the matchup block under the play-by-play (batter/pitcher lines, head-to-head)
 Sleep 5s
 
 # pitch nav: Right steps one at a time — only the selected ball stays in zone/side view
@@ -45,10 +48,14 @@ Type "["
 Sleep 700ms
 Type "["
 Sleep 700ms
+Type "["
+Sleep 700ms
+Type "["
+Sleep 700ms
 Sleep 800ms
 
-# v0.20~: 그 이닝(9회, 타석 8개)의 첫 타석에서 한 번 더 누르면 앞 이닝을 받아온다
-# — "8회 불러오는 중"이 잠깐 뜨고, 이어서 8회 타석이 목록 앞에 붙는다
+# v0.20~: one more `[` at the first at-bat of the inning pulls in the previous one
+# — "loading the 8th" flashes, then the 8th's at-bats prepend to the list
 Type "["
 Sleep 2600ms
 Type "["

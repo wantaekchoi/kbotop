@@ -783,4 +783,50 @@ mod tests {
             buf.content().iter().map(|c| c.symbol()).collect::<String>()
         );
     }
+    /// [v0.26 기획용 실측] 폭별로 존이 어떻게 보이는지 센다 — 박스 종횡비,
+    /// 범례가 넘치는 줄 수. 지금 40% 고정 분할에 근거가 없어 그 근거를 만든다.
+    #[test]
+    #[ignore] // 기획용 조사 — `cargo test -- --ignored zone_width_probe`
+    fn zone_width_probe() {
+        let live = crate::source::naver::map::live_from_relay(
+            include_str!("../../tests/fixtures/relay_20260719KTLG.json"),
+            crate::model::Team {
+                code: "LG".into(),
+                name: "LG".into(),
+            },
+            crate::model::Team {
+                code: "KT".into(),
+                name: "KT".into(),
+            },
+        )
+        .unwrap();
+        let l = crate::ui::i18n::labels(crate::ui::i18n::Lang::Ko);
+
+        for w in [20u16, 24, 28, 32, 36, 40, 48] {
+            let h = 24u16;
+            let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+            term.draw(|f| render(f, f.area(), &live.current_pitches, None, l, "default"))
+                .unwrap();
+            let buf = term.backend().buffer();
+
+            // 존 박스: 점선 테두리(⡇ ⢸ 등)가 아니라 실제 박스 문자를 세는 대신
+            // 각 행에서 비지 않은 칸의 좌우 폭을 잰다.
+            let mut box_w = 0usize;
+            let mut box_h = 0usize;
+            for y in 0..h {
+                let filled: Vec<usize> = (0..w as usize)
+                    .filter(|x| !buf[(*x as u16, y)].symbol().trim().is_empty())
+                    .collect();
+                if let (Some(a), Some(b)) = (filled.first(), filled.last()) {
+                    box_w = box_w.max(b - a + 1);
+                    box_h += 1;
+                }
+            }
+            // 범례(맨 아래 LEGEND_HEIGHT 줄)에서 실제로 글자가 있는 줄 수
+            let legend_rows = ((h - LEGEND_HEIGHT)..h)
+                .filter(|y| (0..w).any(|x| !buf[(x, *y)].symbol().trim().is_empty()))
+                .count();
+            println!("폭 {w:>2}: 내용폭 {box_w:>2} · 내용높이 {box_h:>2} · 범례 {legend_rows}줄");
+        }
+    }
 }

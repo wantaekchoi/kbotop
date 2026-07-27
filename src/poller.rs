@@ -584,6 +584,7 @@ mod tests {
             inning_score: Vec::new(),
             batter_line: None,
             pitcher_line: None,
+            matchup: String::new(),
         }
     }
 

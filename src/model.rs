@@ -196,6 +196,9 @@ pub struct LiveState {
     pub batter_line: Option<BatterLine>,
     /// 현재 투수의 그 경기 성적.
     pub pitcher_line: Option<PitcherLine>,
+    /// 이 투수 대 이 타자의 통산 상대 전적(v0.26). 응답이 완성된 문장으로 준다
+    /// (`"3타수 0안타 0홈런 0.000"`). 없으면 빈 문자열.
+    pub matchup: String,
 }
 
 /// 라인스코어 한 칸. `away`·`home`은 응답 원문 그대로의 문자열이다 —
@@ -452,6 +455,7 @@ mod tests {
             inning_score: Vec::new(),
             batter_line: None,
             pitcher_line: None,
+            matchup: String::new(),
         }
     }
 

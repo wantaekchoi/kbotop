@@ -246,6 +246,10 @@ pub struct TextRelayData {
     /// 안 친다)이라 0과 구분해야 한다. 키는 이닝 번호라 연장이면 `"10"`으로 는다.
     #[serde(default, deserialize_with = "null_as_default")]
     pub inning_score: InningScoreDto,
+    /// 현재 투수 대 타자의 통산 상대 전적(v0.26). `"3타수 0안타 0홈런 0.000"`처럼
+    /// **완성된 한 줄**로 온다 — 우리가 조립할 게 아니라 그대로 쓴다.
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub pitcher_vs_batter_career_stats: String,
     #[serde(default, deserialize_with = "null_as_default")]
     pub text_relays: Vec<TextRelay>,
     pub last_valid_metric_option: Option<MetricOption>,

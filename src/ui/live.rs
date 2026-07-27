@@ -53,7 +53,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(rows[1]);
-        render_relay(f, cols[0], &vm);
+        render_relay_column(f, cols[0], &vm);
         strikezone::render(
             f,
             cols[1],
@@ -63,9 +63,48 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             &app.theme_preset,
         );
     } else {
-        render_relay(f, rows[1], &vm);
+        render_relay_column(f, rows[1], &vm);
     }
 }
+
+/// 문자중계 칼럼. **남는 세로가 있으면** 아래에 대결 요약 블록을 놓는다(v0.26).
+///
+/// v0.25까지 문자중계 패널이 `Min(0)`으로 아래까지 늘어나, 화면이 클수록 아래
+/// 절반이 비었다(실측: 160×50에서 20%). 줄 수는 타석당 유한한데(보통 5~12줄)
+/// 패널만 커지는 구조였다.
+///
+/// 작은 화면에서는 지금 그대로다 — 남는 세로가 없으면 문자중계가 다 쓴다
+/// (80×24에서 빈 줄이 0이라는 실측이 그 근거다).
+fn render_relay_column(f: &mut Frame, area: Rect, vm: &LiveVm) {
+    let matchup_h = vm.matchup_rows.len() as u16 + 2; // 테두리
+    let relay_need = vm.relay_rows.len() as u16 + 2;
+    let has_room = !vm.matchup_rows.is_empty()
+        && area.height >= relay_need + matchup_h.max(MATCHUP_MIN_HEIGHT);
+
+    if !has_room {
+        render_relay(f, area, vm);
+        return;
+    }
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(relay_need), Constraint::Length(matchup_h)])
+        .split(area);
+    render_relay(f, rows[0], vm);
+
+    let lines: Vec<Line> = vm
+        .matchup_rows
+        .iter()
+        .map(|r| Line::from(r.as_str()))
+        .collect();
+    f.render_widget(
+        Paragraph::new(lines).block(Block::bordered().title(vm.labels.title_matchup)),
+        rows[1],
+    );
+}
+
+/// 대결 블록이 자리를 얻으려면 최소 이만큼(테두리 2 + 한 줄)은 남아야 한다.
+const MATCHUP_MIN_HEIGHT: u16 = 3;
 
 /// 스코어라인 3줄(점수·상태배지·지금-이-순간 값 / 상세 / 투구줄)을 그린다.
 /// 폭은 이 함수만 아는 사실이므로 VM의 폭 인자 메서드에 그대로 넘긴다.
@@ -244,6 +283,7 @@ mod tests {
             inning_score: Vec::new(),
             batter_line: None,
             pitcher_line: None,
+            matchup: String::new(),
         };
         let game = Game {
             id: "g".into(),
@@ -1032,5 +1072,126 @@ mod tests {
                 inner_blank
             );
         }
+    }
+    /// v0.26: 남는 세로가 있으면 문자중계 아래에 대결 블록이 붙는다.
+    #[test]
+    fn a_tall_terminal_shows_the_matchup_block() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        app.screen = matchup_screen();
+        let text = render_at(&app, 120, 40);
+        for needle in ["이대결", "장규현", "0/1"] {
+            assert!(text.contains(needle), "{needle} missing:\n{text}");
+        }
+    }
+
+    /// **대결 블록이 문자중계를 밀어내지 않는다** — 이게 v0.26의 금지선이다.
+    ///
+    /// 처음엔 "80×24에서는 아예 안 뜬다"로 잡았는데 틀렸다. 그 크기에서도
+    /// 문자중계가 일곱 줄이면 자리가 남고, 남으면 띄우는 게 맞다. 지켜야 할
+    /// 것은 화면 크기가 아니라 **중계 줄이 하나도 잘리지 않는다**는 조건이다.
+    #[test]
+    fn the_matchup_block_never_pushes_relay_lines_off_screen() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        app.screen = matchup_screen();
+
+        for (w, h) in [(80u16, 24u16), (100, 30), (120, 40)] {
+            let text = render_at(&app, w, h);
+            for needle in ["9번타자천성호", "1구파울", "5구헛스윙"] {
+                assert!(
+                    text.contains(needle),
+                    "{w}x{h}에서 중계 줄 '{needle}'이 밀려났다:\n{text}"
+                );
+            }
+        }
+    }
+
+    /// 자리가 없으면 대결 블록이 접힌다 — 중계가 우선이다.
+    #[test]
+    fn a_short_column_keeps_the_relay_and_drops_the_matchup() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        app.screen = matchup_screen();
+        let text = render_at(&app, 80, 16);
+        assert!(
+            !text.contains("이대결"),
+            "자리가 없는데 대결 블록이 떴다:\n{text}"
+        );
+        // 이 높이에서는 중계 자체도 스크롤된다(맨 위 줄이 밀린다) — 여기서
+        // 지키는 것은 "대결 블록이 중계 자리를 뺏지 않는다"뿐이다.
+        assert!(text.contains("문자중계"), "중계 패널이 사라졌다:\n{text}");
+    }
+
+    /// 돌려보기 중에는 비운다 — 여기 값은 "지금 이 순간"의 것이라 과거 타석
+    /// 화면에 섞으면 v0.18에서 두 번 데인 결함이 재현된다.
+    #[test]
+    fn rewinding_hides_the_matchup_block() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        app.screen = matchup_screen();
+        // 과거 타석으로 이동
+        app.on_key(crossterm::event::KeyCode::Char('['));
+        let text = render_at(&app, 120, 40);
+        assert!(
+            !text.contains("이대결"),
+            "돌려보기 중인데 대결 블록이 떴다:\n{text}"
+        );
+    }
+
+    fn matchup_screen() -> Screen {
+        let mut state =
+            crate::source::naver::map::live_from_relay(RELAY, team("LG", "LG"), team("KT", "KT"))
+                .unwrap();
+        state.batter_name = "장규현".into();
+        state.pitcher_name = "유토".into();
+        state.batter_line = Some(crate::model::BatterLine {
+            hits: 0,
+            at_bats: 1,
+            season_avg: 0.333,
+        });
+        state.pitcher_line = Some(crate::model::PitcherLine {
+            innings: 0.0,
+            hits_allowed: 0,
+            pitches: 19,
+        });
+        state.matchup = "1타수 0안타 0홈런 0.000".into();
+        match live_screen() {
+            Screen::Live { game, .. } => Screen::Live {
+                game,
+                state: Some(state),
+            },
+            other => other,
+        }
+    }
+
+    /// 공백을 제거한 렌더 결과(전각 placeholder 대응 — 다른 파일과 같은 관례).
+    fn render_at(app: &App, w: u16, h: u16) -> String {
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| super::render(f, f.area(), app)).unwrap();
+        let buf = term.backend().buffer();
+        let raw: String = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .map(|(x, y)| buf[(x, y)].symbol().to_string())
+            .collect();
+        raw.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+    /// 경계 높이에서 **중계가 잘리면서까지** 대결 블록을 띄우지는 않는다.
+    ///
+    /// 자리 판단(`has_room`)을 지워도 Layout이 알아서 줄여 대부분의 크기에서는
+    /// 티가 안 난다 — 뮤테이션이 그 사실을 드러냈다. 차이가 나는 건 "블록이
+    /// 들어갈 자리는 있지만 그러면 중계가 밀리는" 이 구간이다.
+    #[test]
+    fn at_the_boundary_the_relay_wins_over_the_matchup() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        app.screen = matchup_screen();
+
+        // 문자중계 칼럼이 13줄 남는 높이(스코어라인 8 + 13 = 21).
+        let text = render_at(&app, 80, 21);
+        assert!(
+            !text.contains("이대결"),
+            "중계가 밀리는데 대결 블록이 떴다:\n{text}"
+        );
     }
 }
