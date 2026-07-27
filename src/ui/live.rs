@@ -177,6 +177,10 @@ mod tests {
             away: team("KT", "KT"),
             home_score: Some(state.home_score),
             away_score: Some(state.away_score),
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         };
         Screen::Live {
             game,
@@ -226,6 +230,10 @@ mod tests {
             away: team("KT", "KT"),
             home_score: Some(3),
             away_score: Some(2),
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         };
         Screen::Live {
             game,
@@ -323,6 +331,10 @@ mod tests {
             away: team("OB", "두산"),
             home_score: Some(state.home_score),
             away_score: Some(state.away_score),
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         };
         app.screen = Screen::Live {
             game,
@@ -435,6 +447,10 @@ mod tests {
                 away: team("KT", "KT"),
                 home_score: None,
                 away_score: None,
+                away_starter: String::new(),
+                home_starter: String::new(),
+                stadium: String::new(),
+                broadcast: String::new(),
             },
             state: None,
         };

@@ -143,6 +143,14 @@ pub struct ScheduleGame {
     #[serde(default, deserialize_with = "lenient_int_opt")]
     pub away_team_score: Option<u16>,
     #[serde(default, deserialize_with = "lenient_string")]
+    pub away_starter_name: String,
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub home_starter_name: String,
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub stadium: String,
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub broad_channel: String,
+    #[serde(default, deserialize_with = "lenient_string")]
     pub status_code: String, // "RESULT" | "BEFORE" | 진행중 값
     #[serde(default, deserialize_with = "lenient_string")]
     pub status_info: String, // "9회말"
@@ -179,6 +187,12 @@ pub struct TeamStat {
     pub lose_game_count: u16,
     #[serde(default, deserialize_with = "lenient_int")]
     pub drawn_game_count: u16,
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub last_five_games: String,
+    /// 연속 기록("3승"·"1패"). 응답이 실제로 null을 주는 경우가 있어(시즌 첫 경기
+    /// 전 등) lenient_string으로 빈 문자열까지 완화한다.
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub continuous_game_result: String,
     #[serde(default, deserialize_with = "lenient_float")]
     pub wra: f32,
     #[serde(default, deserialize_with = "lenient_float")]

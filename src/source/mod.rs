@@ -70,6 +70,10 @@ mod tests {
             },
             home_score: None,
             away_score: None,
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         }
     }
 

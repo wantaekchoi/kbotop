@@ -29,6 +29,15 @@ pub struct Game {
     pub away: Team,
     pub home_score: Option<u16>,
     pub away_score: Option<u16>,
+    /// 선발투수(원정/홈, v0.23). 경기 **하루 전쯤** 확정되며 그 전에는 응답이 빈
+    /// 문자열을 준다(실측: 이틀 뒤 경기는 `""`) — 빈 값은 화면에서 생략한다.
+    pub away_starter: String,
+    pub home_starter: String,
+    /// 구장명("잠실"·"대구"). 예정·진행·종료 어느 상태에서도 온다.
+    pub stadium: String,
+    /// 중계 채널("SPOTV"). **종료된 경기에서는 빈 문자열**이다(실측) — 끝난
+    /// 경기에 중계 채널은 의미가 없으니 그대로 생략한다.
+    pub broadcast: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -310,6 +319,14 @@ pub struct Standing {
     pub draws: u16,
     pub win_rate: f32,
     pub game_behind: f32,
+    /// 최근 5경기 결과 "WWLDW"(v0.23). **오른쪽이 최신**이다 — 10팀 전부에서
+    /// `continuousGameResult`와 대조해 확정했다(한화 `WWWLW`=1승, 롯데
+    /// `LLLLW`=1승, KT `WDWWL`=1패). 결측이면 빈 문자열.
+    pub last_five: String,
+    /// 연속 기록 "3승"·"1패"(응답 원문 그대로). **무승부는 연속을 끊지 않고
+    /// 건너뛴다** — SSG `WWWWD`가 4승, NC `WWLLD`가 2패인 게 그 증거다(KBO 관례).
+    /// 그래서 이 값을 last_five에서 계산하지 않고 응답 값을 그대로 쓴다.
+    pub streak: String,
 }
 
 #[cfg(test)]

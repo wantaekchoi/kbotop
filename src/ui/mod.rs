@@ -239,6 +239,10 @@ mod tests {
             },
             home_score: Some(3),
             away_score: Some(2),
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         }
     }
 
@@ -280,6 +284,8 @@ mod tests {
             draws: 0,
             win_rate: 0.700,
             game_behind: 0.0,
+            last_five: String::new(),
+            streak: String::new(),
         }]));
         let text = render_to_string(&app);
         assert!(text.contains("KIA"));
@@ -298,6 +304,8 @@ mod tests {
             draws: 0,
             win_rate: 0.5,
             game_behind: 0.0,
+            last_five: String::new(),
+            streak: String::new(),
         }
     }
 
@@ -354,6 +362,10 @@ mod tests {
             },
             home_score: Some(10),
             away_score: Some(9),
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         }]));
         // ratatui는 전각(2-width) 문자 뒤에 placeholder 공백 셀을 채워 넣는다
         // (정상 동작 — 실제 터미널 폭 계산과 일치). 공백을 제거하고 문자 순서만 검증한다.
@@ -382,6 +394,8 @@ mod tests {
             draws: 0,
             win_rate: 0.7,
             game_behind: 0.0,
+            last_five: String::new(),
+            streak: String::new(),
         }]));
         let games_text = render_to_string(&app);
         app.tab = Tab::Standings;
@@ -613,6 +627,10 @@ mod tests {
             away: team("KT", "KT"),
             home_score: Some(3),
             away_score: Some(2),
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         };
         app.screen = Screen::Live {
             game,
@@ -728,6 +746,10 @@ mod tests {
             away: team("KT", "KT"),
             home_score: Some(1),
             away_score: Some(2),
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         };
         app.screen = Screen::Live {
             game,
@@ -820,6 +842,10 @@ mod tests {
             away: team("KT", "KT"),
             home_score: Some(1),
             away_score: Some(2),
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         };
         app.screen = Screen::Live {
             game,

@@ -53,3 +53,57 @@ fn decimal_looking_integer_field_is_not_silently_dropped_to_default() {
     let s = standings_from_json(json).unwrap();
     assert_eq!(s[0].rank, 1); // 1.0 → 1 (as_i64() 실패 시 as_f64() 폴백으로 살아나야 함)
 }
+
+/// v0.23: 최근 5경기·연속 기록이 파싱된다.
+///
+/// **오른쪽이 최신이다** — 10팀 전부에서 `continuousGameResult`와 대조해 확정했다.
+/// 그리고 **무승부는 연속을 끊지 않고 건너뛴다**: NC `WWLLD`가 2패, SSG `WWWWD`가
+/// 4승이다(KBO 관례). 그래서 연속 기록을 last_five에서 계산하지 않고 응답 값을
+/// 그대로 쓴다 — 계산했다면 이 두 팀에서 틀렸을 것이다.
+#[test]
+fn parses_last_five_and_streak_including_the_draw_cases() {
+    const STANDINGS: &str = include_str!("fixtures/standings_2026_streaks.json");
+    let rows = standings_from_json(STANDINGS).unwrap();
+    assert_eq!(rows.len(), 10);
+
+    let by_name = |n: &str| {
+        rows.iter()
+            .find(|r| r.team.name == n)
+            .expect("team")
+            .clone()
+    };
+
+    let nc = by_name("NC");
+    assert_eq!(nc.last_five, "WWLLD");
+    assert_eq!(
+        nc.streak, "2패",
+        "마지막이 무승부여도 그 앞 연패가 살아 있다"
+    );
+
+    let ssg = by_name("SSG");
+    assert_eq!(ssg.last_five, "WWWWD");
+    assert_eq!(ssg.streak, "4승");
+
+    // 마지막 글자가 곧 연속인 일반 케이스도 함께 고정한다.
+    let hanwha = by_name("한화");
+    assert_eq!(hanwha.last_five, "WWWLW");
+    assert_eq!(hanwha.streak, "1승");
+
+    assert!(
+        rows.iter().all(|r| r.last_five.len() == 5),
+        "최근 5경기는 다섯 글자 고정폭이어야 칼럼이 안 흔들린다"
+    );
+}
+
+/// 두 필드가 없거나 null인 응답에서도 파싱이 죽지 않는다(시즌 첫 경기 전 등).
+#[test]
+fn missing_streak_fields_degrade_to_empty_strings() {
+    let json = r#"{"result":{"seasonTeamStats":[
+        {"ranking":1,"teamId":"LG","teamName":"LG","gameCount":0,"winGameCount":0,
+         "loseGameCount":0,"drawnGameCount":0,"wra":0.0,"gameBehind":0.0,
+         "lastFiveGames":null,"continuousGameResult":null}
+    ]}}"#;
+    let rows = standings_from_json(json).unwrap();
+    assert!(rows[0].last_five.is_empty());
+    assert!(rows[0].streak.is_empty());
+}

@@ -103,8 +103,8 @@ mod tests {
     fn every_language_has_enough_tips_to_rotate() {
         for lang in ALL {
             assert!(
-                tips(lang).len() >= 10,
-                "{lang:?} has too few tips: {}",
+                tips(lang).len() >= 60,
+                "{lang:?} has too few tips: {} (세 언어를 비슷한 규모로 유지한다 — v0.23)",
                 tips(lang).len()
             );
         }

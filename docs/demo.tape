@@ -17,7 +17,7 @@ Set Padding 24
 Set TypingSpeed 55ms
 
 Hide
-Type "HOME=$(mktemp -d) kbotop --date 2026-07-19 --team lg --lang ko"
+Type "HOME=$(mktemp -d) kbotop --date 2026-07-19 --team kt --lang ko"
 Enter
 Show
 
@@ -72,9 +72,9 @@ Sleep 800ms
 Escape
 Sleep 1400ms
 
-# Esc: 목록으로
+# Esc: 목록으로 — v0.23부터 목록에 선발 매치업·구장·중계가 함께 뜬다
 Escape
-Sleep 1200ms
+Sleep 2600ms
 
 # n: 인앱 뉴스 목록 — 방향키로 고르고 Enter로 발췌 읽기(원문은 o로 브라우저)
 Type "n"
@@ -114,7 +114,7 @@ Sleep 1200ms
 
 # 순위표(브래킷 탭)
 Tab
-Sleep 1800ms
+Sleep 2600ms
 
 Type "q"
 Sleep 600ms

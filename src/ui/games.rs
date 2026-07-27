@@ -91,6 +91,16 @@ fn block_title(app: &App) -> String {
     }
 }
 
+/// 선발 매치업 칸("올러 vs 최원태"). 한글 이름 3자 + " vs " + 3자를 기준으로
+/// 잡되 외국인 선수 이름이 길어질 수 있어 여유를 뒀다.
+const STARTERS_COL_WIDTH: usize = 20;
+/// 구장·중계 칸("대구 · SPOTV").
+const VENUE_COL_WIDTH: usize = 18;
+/// 선발 칸을 켜는 최소 내부 폭(기존 칼럼 합계 + 팀명 최소폭 + 선발 칸).
+const WIDTH_FOR_STARTERS: u16 = 78;
+/// 구장 칸까지 켜는 최소 내부 폭.
+const WIDTH_FOR_VENUE: u16 = 97;
+
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let l = app.labels();
     // 첫 Games 업데이트가 아직 안 왔으면(프리페치 순간) "loading"을, 왔는데
@@ -112,15 +122,32 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let header = Row::new(["", l.col_away, l.col_score, l.col_home, l.col_status]);
+    // 폭 예산(v0.23): 남을 때만 선발 매치업 → 구장 순으로 붙인다. 중계 채널은
+    // 종료 경기에서 빈 값이라(실측) 칸을 예약하지 않고 구장 칸에 함께 싣는다.
+    let inner = area.width.saturating_sub(2);
+    let show_starters = inner >= WIDTH_FOR_STARTERS;
+    let show_venue = inner >= WIDTH_FOR_VENUE;
+
+    let mut header_cells = vec!["", l.col_away, l.col_score, l.col_home, l.col_status];
+    if show_starters {
+        header_cells.push(l.col_starters);
+    }
+    if show_venue {
+        header_cells.push(l.col_venue);
+    }
+    let header = Row::new(header_cells);
 
     let rows: Vec<Row> = app
         .games
         .iter()
         .map(|g| {
             let (tag, tag_style) = status_tag(g.status, l, &app.theme_preset);
-            let score = match (g.away_score, g.home_score) {
-                (Some(a), Some(h)) => format!("{a} : {h}"),
+            // 아직 시작 안 한 경기는 점수를 비운다(v0.23). 서버는 예정 경기에도
+            // `homeTeamScore: 0`을 주므로(실측) 값만 보면 "0 : 0"이 찍혀 무승부
+            // 중인 것처럼 보인다 — 상태로 판단해야 한다. 실행 확인에서 잡혔다.
+            let score = match (g.status, g.away_score, g.home_score) {
+                (GameStatus::Scheduled, _, _) => "— : —".to_string(),
+                (_, Some(a), Some(h)) => format!("{a} : {h}"),
                 _ => "— : —".to_string(),
             };
             // A-3: Scheduled 경기는 상태 칸에 "남은 시간"을 보여준다 — 서버가
@@ -136,7 +163,20 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 g.status_label.clone()
             };
-            Row::new(vec![
+            // 선발은 경기 하루 전쯤 확정된다 — 그 전에는 빈 문자열이라 칸을 비운다
+            // ("미정" 같은 문구를 지어내지 않는다).
+            let starters = match (g.away_starter.as_str(), g.home_starter.as_str()) {
+                ("", "") => String::new(),
+                (a, h) => format!("{a} vs {h}"),
+            };
+            // 중계 채널은 끝난 경기에서 빈다 — 구장만 남는다.
+            let venue = match (g.stadium.as_str(), g.broadcast.as_str()) {
+                ("", "") => String::new(),
+                (s, "") => s.to_string(),
+                ("", b) => b.to_string(),
+                (s, b) => format!("{s} · {b}"),
+            };
+            let mut cells = vec![
                 Cell::from(Span::styled(tag, tag_style)),
                 Cell::from(Span::styled(
                     g.away.name.as_str(),
@@ -148,17 +188,35 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
                     team_badge_style(&g.home.code),
                 )),
                 Cell::from(status_cell),
-            ])
+            ];
+            if show_starters {
+                cells.push(Cell::from(super::text::ellipsize(
+                    &starters,
+                    STARTERS_COL_WIDTH,
+                )));
+            }
+            if show_venue {
+                cells.push(Cell::from(super::text::ellipsize(&venue, VENUE_COL_WIDTH)));
+            }
+            Row::new(cells)
         })
         .collect();
 
-    let widths = [
+    let mut widths = vec![
         Constraint::Length(6),
-        Constraint::Min(10),
+        // 팀명은 이 화면의 본체다. 전각 6글자("기아타이거즈"=12칸)까지 안 잘리도록
+        // 최소폭을 12로 둔다 — v0.23에서 선발·구장 칸을 붙이자 10으로는 밀렸다.
+        Constraint::Min(12),
         Constraint::Length(9),
-        Constraint::Min(10),
+        Constraint::Min(12),
         Constraint::Length(STATUS_COL_WIDTH as u16),
     ];
+    if show_starters {
+        widths.push(Constraint::Length(STARTERS_COL_WIDTH as u16));
+    }
+    if show_venue {
+        widths.push(Constraint::Length(VENUE_COL_WIDTH as u16));
+    }
 
     let highlight = match theme::accent_for(
         &app.theme_preset,
@@ -221,6 +279,10 @@ mod tests {
             },
             home_score: Some(1),
             away_score: Some(2),
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         }
     }
 
@@ -309,6 +371,10 @@ mod tests {
             },
             home_score: Some(3),
             away_score: Some(10),
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         }]));
         let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
         term.draw(|f| render(f, f.area(), &app)).unwrap();
@@ -343,6 +409,10 @@ mod tests {
             },
             home_score: Some(0),
             away_score: Some(0),
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         }]));
         let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
         term.draw(|f| render(f, f.area(), &app)).unwrap();
@@ -536,5 +606,123 @@ mod tests {
         app.apply(Update::Games(vec![game("g")])); // status: Live, status_label: ""
         let text = render_to_string(&app);
         assert!(!text.contains("to go"));
+    }
+    /// v0.23: 넓은 터미널에서 선발 매치업과 구장이 뜬다.
+    #[test]
+    fn wide_terminal_shows_starters_and_venue() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::En;
+        let mut g = game("g");
+        g.away_starter = "올러".into();
+        g.home_starter = "최원태".into();
+        g.stadium = "대구".into();
+        g.broadcast = "SPOTV".into();
+        app.apply(Update::Games(vec![g]));
+
+        let text = render_at(&app, 120, 8);
+        for needle in ["올러", "최원태", "대구", "SPOTV"] {
+            assert!(text.contains(needle), "{needle} missing:\n{text}");
+        }
+    }
+
+    /// 선발이 아직 안 나온 경기(이틀 뒤)는 칸을 비운다 — "미정" 같은 문구를
+    /// 지어내지 않는다(모르는 건 안 보여준다).
+    #[test]
+    fn an_unannounced_starter_leaves_the_cell_blank() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::En;
+        let mut g = game("g");
+        g.stadium = "대구".into();
+        app.apply(Update::Games(vec![g]));
+
+        let text = render_at(&app, 120, 8);
+        assert!(text.contains("대구"), "구장은 그 전에도 뜬다:\n{text}");
+        assert!(!text.contains("vs"), "선발 없는데 구분자가 떴다:\n{text}");
+        assert!(!text.to_lowercase().contains("tbd"));
+    }
+
+    /// 끝난 경기는 중계 채널이 비므로 구장만 남는다 — 가운뎃점 구분자가
+    /// 덩그러니 남지 않아야 한다.
+    #[test]
+    fn a_finished_game_shows_the_venue_without_a_dangling_separator() {
+        let mut app = App::new(Default::default());
+        let mut g = game("g");
+        g.stadium = "사직".into();
+        g.broadcast = String::new();
+        app.apply(Update::Games(vec![g]));
+
+        let text = render_at(&app, 120, 8);
+        assert!(text.contains("사직"));
+        assert!(!text.contains("· "), "구분자만 남았다:\n{text}");
+    }
+
+    /// 좁아지면 뒤쪽부터 뗀다 — 구장이 먼저, 그다음 선발. 팀·스코어는 남는다.
+    #[test]
+    fn narrow_terminals_drop_venue_then_starters() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::En;
+        let mut g = game("g");
+        g.away_starter = "올러".into();
+        g.home_starter = "최원태".into();
+        g.stadium = "대구".into();
+        app.apply(Update::Games(vec![g]));
+
+        let mid = render_at(&app, 85, 6);
+        assert!(mid.contains("올러"), "선발이 너무 일찍 빠졌다:\n{mid}");
+        assert!(!mid.contains("대구"), "좁은데 구장이 남았다:\n{mid}");
+
+        let narrow = render_at(&app, 70, 6);
+        assert!(!narrow.contains("올러"), "좁은데 선발이 남았다:\n{narrow}");
+        assert!(
+            narrow.contains("SK"),
+            "팀명은 어떤 폭에서도 남는다:\n{narrow}"
+        );
+    }
+
+    /// 지정한 폭으로 렌더한 뒤 **공백을 모두 제거한** 문자열을 돌려준다.
+    /// ratatui는 전각(2칸) 문자 뒤에 placeholder 공백 셀을 채우므로("올 러"),
+    /// 공백을 남기면 한글 부분 문자열 검사가 항상 실패한다(이 파일의 다른
+    /// 테스트들과 같은 관례).
+    fn render_at(app: &App, w: u16, h: u16) -> String {
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| render(f, f.area(), app)).unwrap();
+        let buf = term.backend().buffer();
+        let raw: String = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .map(|(x, y)| buf[(x, y)].symbol().to_string())
+            .collect();
+        raw.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+    /// 예정 경기는 점수를 비운다 — 서버가 `0`을 주지만(실측) 시작도 안 한 경기가
+    /// "0 : 0"으로 뜨면 무승부 중인 것처럼 읽힌다. v0.23 실행 확인에서 잡혔다.
+    #[test]
+    fn a_scheduled_game_shows_no_score_even_though_the_server_sends_zero() {
+        let mut app = App::new(Default::default());
+        let mut g = game("g");
+        g.status = GameStatus::Scheduled;
+        g.away_score = Some(0);
+        g.home_score = Some(0);
+        app.apply(Update::Games(vec![g]));
+
+        let text = render_at(&app, 120, 6);
+        assert!(!text.contains("0:0"), "예정 경기에 0:0이 떴다:\n{text}");
+        assert!(text.contains("—:—"), "빈 점수 표시가 없다:\n{text}");
+    }
+
+    /// 진행·종료 경기는 0점도 그대로 보여준다 — 실제로 0점일 수 있다.
+    #[test]
+    fn a_live_game_still_shows_a_genuine_zero_score() {
+        let mut app = App::new(Default::default());
+        let mut g = game("g");
+        g.status = GameStatus::Live;
+        g.away_score = Some(0);
+        g.home_score = Some(3);
+        app.apply(Update::Games(vec![g]));
+
+        let text = render_at(&app, 120, 6);
+        assert!(
+            text.contains("0:3"),
+            "진행 경기의 실제 점수가 사라졌다:\n{text}"
+        );
     }
 }

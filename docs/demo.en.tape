@@ -18,7 +18,7 @@ Set Padding 24
 Set TypingSpeed 55ms
 
 Hide
-Type "HOME=$(mktemp -d) kbotop --date 2026-07-19 --team lg --lang en"
+Type "HOME=$(mktemp -d) kbotop --date 2026-07-19 --team kt --lang en"
 Enter
 Show
 
@@ -73,9 +73,9 @@ Sleep 800ms
 Escape
 Sleep 1400ms
 
-# Esc: back to the list
+# Esc: back to the list — since v0.23 it shows the starters, venue and channel
 Escape
-Sleep 1200ms
+Sleep 2600ms
 
 # n: in-app news list — arrow to pick, Enter to read the excerpt (o opens the source)
 Type "n"
@@ -116,7 +116,7 @@ Sleep 1200ms
 
 # standings (bracket tab)
 Tab
-Sleep 1800ms
+Sleep 2600ms
 
 Type "q"
 Sleep 600ms

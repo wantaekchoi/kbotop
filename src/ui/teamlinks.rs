@@ -254,6 +254,10 @@ mod tests {
             },
             home_score: None,
             away_score: None,
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         }
     }
 
@@ -270,6 +274,8 @@ mod tests {
             draws: 5,
             win_rate: 0.526,
             game_behind: 0.0,
+            last_five: String::new(),
+            streak: String::new(),
         }
     }
 }

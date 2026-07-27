@@ -66,8 +66,11 @@ impl Default for NaverSource {
 
 impl DataSource for NaverSource {
     fn games(&self, date: &str) -> Result<Vec<Game>> {
+        // `fields`를 붙이지 않으면 기본 19개 필드만 온다 — 선발투수·구장·중계
+        // 채널은 요청해야 실린다(v0.23 실측). `basic`은 기존에 받던 것들이라
+        // 빼면 안 된다.
         let url = format!(
-            "{}/schedule/games?upperCategoryId=kbaseball&categoryId=kbo&fromDate={date}&toDate={date}",
+            "{}/schedule/games?fields=basic,stadium,homeStarterName,awayStarterName,broadChannel&upperCategoryId=kbaseball&categoryId=kbo&fromDate={date}&toDate={date}",
             self.base
         );
         map::games_from_schedule(&self.get(&url)?)
@@ -266,6 +269,10 @@ mod tests {
             },
             home_score: None,
             away_score: None,
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         }
     }
 
@@ -276,6 +283,28 @@ mod tests {
         let src = NaverSource::with_base(server.base_url());
         let games = src.games("2026-07-19").unwrap();
         assert!(!games.is_empty());
+    }
+
+    /// v0.23: 선발투수·구장·중계 채널은 `fields`로 요청해야 온다. 이 파라미터가
+    /// 빠지면 응답에 그 필드가 아예 없어 화면이 조용히 비므로, 요청 자체를 고정한다.
+    #[test]
+    fn games_requests_the_extra_fields_needed_for_starters_and_venue() {
+        const SCHEDULE: &str = include_str!("../../../tests/fixtures/schedule_20260719.json");
+        let server = LocalServer::spawn("HTTP/1.1 200 OK", SCHEDULE);
+        let src = NaverSource::with_base(server.base_url());
+        let _ = src.games("2026-07-19");
+
+        let req = server.recv_request().expect("no request captured");
+        let line = req.lines().next().unwrap_or_default();
+        for field in [
+            "homeStarterName",
+            "awayStarterName",
+            "stadium",
+            "broadChannel",
+        ] {
+            assert!(line.contains(field), "{field} not requested: {line}");
+        }
+        assert!(line.contains("basic"), "basic fields must stay: {line}");
     }
 
     #[test]

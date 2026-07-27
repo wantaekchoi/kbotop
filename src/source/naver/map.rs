@@ -59,6 +59,10 @@ pub fn games_from_schedule(json: &str) -> Result<Vec<Game>> {
                 },
                 home_score: g.home_team_score,
                 away_score: g.away_team_score,
+                away_starter: g.away_starter_name.clone(),
+                home_starter: g.home_starter_name.clone(),
+                stadium: g.stadium.clone(),
+                broadcast: g.broad_channel.clone(),
             })
         })
         .collect())
@@ -84,6 +88,8 @@ pub fn standings_from_json(json: &str) -> Result<Vec<Standing>> {
             draws: t.drawn_game_count,
             win_rate: t.wra,
             game_behind: t.game_behind,
+            last_five: t.last_five_games.clone(),
+            streak: t.continuous_game_result.clone(),
         })
         .collect();
     out.sort_by_key(|s| s.rank);
@@ -515,6 +521,10 @@ mod tests {
             away_team_name: Some("KT".into()),
             home_team_score: None,
             away_team_score: None,
+            away_starter_name: String::new(),
+            home_starter_name: String::new(),
+            stadium: String::new(),
+            broad_channel: String::new(),
             status_code: String::new(),
             status_info: String::new(),
             cancel: false,

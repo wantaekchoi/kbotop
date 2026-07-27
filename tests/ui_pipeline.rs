@@ -39,6 +39,10 @@ fn every_fixture_pitch_reaches_the_legend_through_the_full_app_render() {
             away: team("KT", "KT"),
             home_score: Some(state.home_score),
             away_score: Some(state.away_score),
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         },
         state: Some(state),
     };

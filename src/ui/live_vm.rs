@@ -657,6 +657,10 @@ mod tests {
             away: team("KT", "KT"),
             home_score: Some(state.home_score),
             away_score: Some(state.away_score),
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         };
         let mut app = App::new(Default::default());
         app.screen = Screen::Live {
@@ -1027,6 +1031,10 @@ mod tests {
                 away: team("KT", "KT"),
                 home_score: None,
                 away_score: None,
+                away_starter: String::new(),
+                home_starter: String::new(),
+                stadium: String::new(),
+                broadcast: String::new(),
             },
             state: None,
         };

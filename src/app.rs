@@ -1210,6 +1210,10 @@ mod tests {
             },
             home_score: Some(1),
             away_score: Some(2),
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         }
     }
 
@@ -2215,6 +2219,8 @@ mod tests {
                 draws: 0,
                 win_rate: 1.0,
                 game_behind: 0.0,
+                last_five: String::new(),
+                streak: String::new(),
             },
         ]));
         app.on_key(KeyCode::Char('o'));

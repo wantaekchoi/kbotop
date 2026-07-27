@@ -56,3 +56,58 @@ fn out_of_range_numeric_field_on_one_game_degrades_instead_of_failing_whole_day(
     let g2 = games.iter().find(|g| g.id == "g2").unwrap();
     assert_eq!(g2.away_score, Some(3)); // 형제 레코드의 정상 값은 그대로 파싱
 }
+
+/// v0.23: 선발투수·구장·중계 채널이 파싱된다. 실응답 fixture(2026-07-28 예정 경기)로 본다.
+#[test]
+fn parses_starters_venue_and_broadcast_from_a_scheduled_day() {
+    const SCHEDULE: &str = include_str!("fixtures/schedule_20260728_starters.json");
+    let games = games_from_schedule(SCHEDULE).unwrap();
+    assert_eq!(games.len(), 5);
+
+    let first = &games[0];
+    assert_eq!(first.away_starter, "올러");
+    assert_eq!(first.home_starter, "최원태");
+    assert_eq!(first.stadium, "대구");
+    assert_eq!(first.broadcast, "SPOTV");
+
+    // 모든 예정 경기에 구장이 실린다 — 이 칸은 결측 걱정 없이 쓸 수 있다.
+    assert!(
+        games.iter().all(|g| !g.stadium.is_empty()),
+        "구장이 빈 경기가 있다: {:?}",
+        games
+            .iter()
+            .map(|g| (&g.id, &g.stadium))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// 선발은 경기 하루 전쯤 확정되고 그 전에는 **빈 문자열**로 온다(실측: 이틀 뒤
+/// 경기). 화면이 "미정" 같은 문구를 지어내지 않도록 빈 값 그대로 통과시킨다.
+#[test]
+fn a_starter_that_is_not_announced_yet_stays_empty_rather_than_guessed() {
+    let json = r#"{"result":{"games":[{
+        "gameId":"20260729HTSS02026","gameDateTime":"2026-07-29T18:30:00",
+        "homeTeamCode":"SS","awayTeamCode":"HT","homeTeamName":"삼성","awayTeamName":"KIA",
+        "statusCode":"BEFORE","stadium":"대구","broadChannel":"SPOTV",
+        "homeStarterName":"","awayStarterName":""
+    }]}}"#;
+    let games = games_from_schedule(json).unwrap();
+    assert_eq!(games.len(), 1);
+    assert!(games[0].home_starter.is_empty());
+    assert!(games[0].away_starter.is_empty());
+    assert_eq!(games[0].stadium, "대구", "구장은 그 전에도 온다");
+}
+
+/// 새 필드가 통째로 없는 응답(fields 파라미터 없이 받은 옛 형태)에서도
+/// 파싱이 죽지 않는다 — 관용 파싱 원칙.
+#[test]
+fn a_response_without_the_extra_fields_still_parses() {
+    let json = r#"{"result":{"games":[{
+        "gameId":"g","gameDateTime":"2026-07-29T18:30:00",
+        "homeTeamCode":"SS","awayTeamCode":"HT","statusCode":"BEFORE"
+    }]}}"#;
+    let games = games_from_schedule(json).unwrap();
+    assert_eq!(games.len(), 1);
+    assert!(games[0].stadium.is_empty());
+    assert!(games[0].broadcast.is_empty());
+}

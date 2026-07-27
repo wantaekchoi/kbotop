@@ -149,6 +149,10 @@ fn live_view_render_matrix_is_stable_for_before_after_diffing() {
                                         away: team("KT", "KT"),
                                         home_score: Some(state.home_score),
                                         away_score: Some(state.away_score),
+                                        away_starter: String::new(),
+                                        home_starter: String::new(),
+                                        stadium: String::new(),
+                                        broadcast: String::new(),
                                     };
                                     let mut app = App::new(Default::default());
                                     app.lang = lang;

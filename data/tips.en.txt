@@ -1,8 +1,5 @@
 # kbotop bottom-bar tips (English) — one tip per line. '#' lines and blank lines are ignored.
-# Plain statements of baseball rules and KBO conventions, written from scratch.
-#
-# Deliberately shorter than the Korean file: tips are for newcomers, so accuracy matters
-# more than count, and each line has to be maintained in every language.
+# Plain statements of baseball rules, stats, and KBO conventions, written from scratch.
 # Keep every line under 75 display columns (a test enforces this).
 
 Three strikes is a strikeout; four balls is a walk.
@@ -25,3 +22,54 @@ An infield fly is an automatic out with runners on and under two outs.
 A hold goes to a reliever who protects a lead without finishing.
 Pitch types here come from the tracking data in the broadcast feed.
 A quality start is six innings or more with three earned runs or fewer.
+On a dropped third strike the batter may run if first base is open.
+A ground-rule double is a fair ball that bounces over the fence.
+An intentional walk puts a batter on first to set up a better matchup.
+A player replaced by a pinch hitter or runner cannot return that game.
+A starter needs five innings and the lead to be in line for the win.
+A blown save is a lead lost in a save situation.
+A wild pitch is charged to the pitcher; a passed ball to the catcher.
+Earned runs exclude anything that scored because of an error.
+On-base percentage counts walks and hit-by-pitch, not just hits.
+Slugging is total bases per at-bat, so extra-base hits drive it up.
+OPS is on-base plus slugging, a quick read on total offense.
+Scoring position means a runner on second or third.
+An infield hit is a ground ball the batter beats out for a single.
+An error is a play a fielder should have made, letting a runner live.
+Fielder's choice is when the defense goes after another runner instead.
+The cycle is a single, double, triple, and homer in one game.
+A no-hitter allows no hits; a perfect game allows no baserunners at all.
+A complete game goes the distance; a shutout adds no runs allowed.
+A squeeze play bunts the runner home from third.
+Hit and run sends the runner while the batter must protect with a swing.
+A bunt is a soft tap that rolls the ball short of the fielders.
+Bunting foul with two strikes is a strikeout.
+On a check swing the plate umpire can ask the base umpire for help.
+A runner hit by a batted ball before it passes a fielder is out.
+Running more than three feet out of the lane to dodge a tag is an out.
+The catcher may not block the plate without the ball.
+A foul tip caught cleanly by the catcher is a strike.
+The batting order is fixed; a substitute inherits the same slot.
+A productive out still moves the runner up a base.
+With the bases loaded, a walk or hit-by-pitch forces in a run.
+A game called early still counts once five innings are in the books.
+A suspended game picks up later from where it stopped.
+Replay review can overturn calls like safe or out.
+Win probability here is a live model estimate, not a prediction.
+Whether watching in person helps the team is a matter of faith.
+Every fan base swears the team loses whenever they tune in.
+Ordering fried chicken is said to start the comeback. Results vary.
+The real game starts with two outs in the ninth, or so they say.
+It ain't over till it's over.
+Nobody mentions a no-hitter while it is still going.
+Change the channel and your team scores. Change it back and they stop.
+If the team only wins when you wear the jersey, that is scouting now.
+Magic numbers are best counted only when they go down.
+Players on a hot streak rarely change anything about their day.
+A team's uniform number retires with the player, not the season.
+Batting average tells you contact; OPS tells you damage.
+A save needs a lead of three or fewer, or the tying run on deck.
+Pitchers hit the showers; catchers hit the ice pack.
+The seventh-inning stretch is when the ballpark remembers it is a party.
+The bullpen is both a place and a state of mind.
+A rain delay is the only time the tarp gets an ovation.
