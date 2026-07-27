@@ -87,19 +87,25 @@ fn theme_preset_label(l: &crate::ui::i18n::Labels, preset: &str) -> &'static str
     }
 }
 
-/// 액센트 값을 설정 화면에 보여줄 라벨로 바꾼다. 알 수 없는 값은 관용적으로
-/// "team" 라벨로 표시한다(accent_for의 기본 폴백과 다르지만, 설정 화면
-/// 표시는 "무엇이 선택돼 있나"를 최대한 그럴듯하게 보여주는 게 목적이다).
-fn theme_accent_label(l: &crate::ui::i18n::Labels, accent: &str) -> &'static str {
+/// 액센트 값을 설정 화면에 보여줄 라벨로 바꾼다.
+///
+/// config에 적어 둔 16진 색(v0.22)은 **그 값을 그대로** 보여준다. v0.21까지는
+/// 모르는 값을 전부 "team" 라벨로 뭉갰는데, 그러면 `#ff6600`을 적어 둔 사용자가
+/// 설정 화면에서 "팀 컬러"를 보고 자기 설정이 사라진 줄 안다 — 화면이 실제 상태와
+/// 다른 말을 하면 안 된다. hex도 아닌 진짜 미상 값만 team으로 폴백한다.
+fn theme_accent_label(l: &crate::ui::i18n::Labels, accent: &str) -> String {
     match accent {
-        "cyan" => l.accent_cyan,
-        "green" => l.accent_green,
-        "yellow" => l.accent_yellow,
-        "magenta" => l.accent_magenta,
-        "blue" => l.accent_blue,
-        "red" => l.accent_red,
-        "none" => l.accent_none,
-        _ => l.accent_team,
+        "cyan" => l.accent_cyan.to_string(),
+        "green" => l.accent_green.to_string(),
+        "yellow" => l.accent_yellow.to_string(),
+        "magenta" => l.accent_magenta.to_string(),
+        "blue" => l.accent_blue.to_string(),
+        "red" => l.accent_red.to_string(),
+        "none" => l.accent_none.to_string(),
+        other if crate::ui::theme::accent_for("default", other, None).is_some() => {
+            other.to_string()
+        }
+        _ => l.accent_team.to_string(),
     }
 }
 
@@ -700,6 +706,15 @@ impl App {
     /// 오판해 걸러주지 못하고, 새 경기가 처음부터 엉뚱한 과거 타석에 고정된
     /// 채(+그 타석 기준 투구 선택까지 살아남은 채) 열릴 수 있다.
     pub fn enter_live(&mut self, game: Game) {
+        // 목록 커서를 이 경기에 맞춘다(v0.22). `--team` 자동 진입은 커서를 건드리지
+        // 않아, Esc로 목록에 나오면 커서가 첫 항목(남의 경기)에 있었다 — 거기서
+        // Enter를 누르면 방금 보던 경기가 아닌 데로 들어간다. v0.21 실행 확인에서
+        // "되감기 캐시가 안 먹는다"고 두 번 오판하게 만든 자리다. 진입 경로가 여기
+        // 하나로 모여 있으므로(v0.18) 두 경로가 함께 고쳐진다. 목록에 없는 경기면
+        // (날짜 전환 직후 등) 커서를 건드리지 않는다 — 엉뚱한 자리로 옮기느니 그대로 둔다.
+        if let Some(i) = self.games.iter().position(|g| g.id == game.id) {
+            self.selected = i;
+        }
         self.screen = Screen::Live { game, state: None };
         self.live_pitch_sel = None;
         self.live_atbat_sel = None;
@@ -848,7 +863,7 @@ impl App {
             (
                 SettingKind::ThemeAccent,
                 l.set_theme_accent,
-                theme_accent_label(l, &self.theme_accent).to_string(),
+                theme_accent_label(l, &self.theme_accent),
             ),
             (
                 SettingKind::Lang,
@@ -2966,5 +2981,50 @@ mod tests {
             Some(0),
             "투구 줄이면 그 투구가 함께 선택된다"
         );
+    }
+    /// config에 적어 둔 16진 액센트는 설정 화면에 **그 값 그대로** 뜬다(v0.22).
+    /// v0.21까지는 모르는 값을 전부 "team"으로 뭉개, `#ff6600`을 적어 둔 사용자가
+    /// 화면에서 "팀 컬러"를 보고 자기 설정이 사라진 줄 알게 됐다.
+    #[test]
+    fn a_hex_accent_is_shown_as_itself_in_the_settings_screen() {
+        let mut app = App::new(Default::default());
+        app.theme_accent = "#ff6600".into();
+        let rows = app.settings_rows();
+        let (_, _, value) = &rows[3];
+        assert_eq!(value, "#ff6600");
+    }
+
+    /// hex도 명명색도 아닌 진짜 미상 값만 team으로 폴백한다(기존 관용 유지).
+    #[test]
+    fn an_unknown_accent_value_still_falls_back_to_the_team_label() {
+        let mut app = App::new(Default::default());
+        app.theme_accent = "chartreuse".into();
+        let rows = app.settings_rows();
+        let (_, _, value) = &rows[3];
+        assert_eq!(value, app.labels().accent_team);
+    }
+
+    /// 라이브에 들어가면 목록 커서도 그 경기를 가리킨다(v0.22). `--team` 자동
+    /// 진입이 커서를 안 맞춰, Esc로 나온 뒤 Enter가 남의 경기로 들어가던 결함.
+    #[test]
+    fn entering_live_points_the_list_cursor_at_that_game() {
+        let mut app = App::new(Default::default());
+        app.games = vec![game("a"), game("b"), game("c")];
+        app.selected = 0;
+
+        app.enter_live(game("c"));
+        assert_eq!(app.selected, 2, "커서가 진입한 경기를 가리켜야 한다");
+    }
+
+    /// 목록에 없는 경기로 들어가면(날짜 전환 직후 등) 커서를 건드리지 않는다 —
+    /// 엉뚱한 자리로 옮기느니 그대로 두는 편이 낫다.
+    #[test]
+    fn entering_a_game_missing_from_the_list_leaves_the_cursor_alone() {
+        let mut app = App::new(Default::default());
+        app.games = vec![game("a"), game("b")];
+        app.selected = 1;
+
+        app.enter_live(game("elsewhere"));
+        assert_eq!(app.selected, 1);
     }
 }

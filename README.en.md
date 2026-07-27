@@ -22,15 +22,22 @@ No API key, one static binary.
 
 ## Install
 
+**Homebrew** (macOS · Linux)
+
 ```sh
-# crates.io
-cargo install kbotop
-
-# Homebrew
 brew install wantaekchoi/tap/kbotop
+```
 
-# prebuilt binary (macOS arm64/x64, Linux, Windows)
+**Prebuilt binary** (macOS arm64/x64 · Linux · Windows)
+
+```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/releases/latest/download/kbotop-installer.sh | sh
+```
+
+**cargo** (if you have a Rust toolchain)
+
+```sh
+cargo install kbotop
 ```
 
 ## Usage

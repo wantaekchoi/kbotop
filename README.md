@@ -22,15 +22,22 @@ API 키는 필요 없고, 바이너리 하나로 돕니다.
 
 ## 설치
 
+**Homebrew** (macOS · Linux)
+
 ```sh
-# crates.io
-cargo install kbotop
-
-# Homebrew
 brew install wantaekchoi/tap/kbotop
+```
 
-# 미리 빌드된 바이너리 (macOS arm64/x64, Linux, Windows)
+**미리 빌드된 바이너리** (macOS arm64/x64 · Linux · Windows)
+
+```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/releases/latest/download/kbotop-installer.sh | sh
+```
+
+**cargo** (Rust 툴체인이 있다면)
+
+```sh
+cargo install kbotop
 ```
 
 ## 사용법

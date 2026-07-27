@@ -166,4 +166,110 @@ mod tests {
         // 인코딩 자체 검증: '한'(U+D55C, UTF-8 ED 95 9C)
         assert_eq!(encode_url("https://x.kr/한"), "https://x.kr/%ED%95%9C");
     }
+    /// 화면 컨텍스트마다 어느 팀의 링크가 나오는지 — v0.21까지 이 순수 함수가
+    /// 통째로 안 덮여 있었다(파일 86.15%). 화면별 분기가 어긋나도 걸리는 게 없었다.
+    #[test]
+    fn link_items_follow_the_screen_context() {
+        use crate::app::{Screen, Tab};
+        let mut app = crate::app::App::new(Default::default());
+
+        // 라이브: 원정 → 홈 순으로 두 팀 모두.
+        app.screen = Screen::Live {
+            game: sample_game("LG", "LG", "KT", "KT"),
+            state: None,
+        };
+        let live_items = link_items_for_screen(&app);
+        assert_eq!(live_items.len(), 4, "두 팀 × (공홈, 굿즈)");
+        assert!(live_items[0].0.starts_with("KT"), "원정 팀이 먼저다");
+        assert!(live_items[2].0.starts_with("LG"));
+
+        // 목록/경기 탭: 커서가 가리키는 경기의 두 팀.
+        app.screen = Screen::List;
+        app.tab = Tab::Games;
+        app.games = vec![
+            sample_game("HH", "한화", "OB", "두산"),
+            sample_game("SS", "삼성", "NC", "NC"),
+        ];
+        app.selected = 1;
+        let game_items = link_items_for_screen(&app);
+        assert_eq!(game_items.len(), 4);
+        assert!(game_items[0].0.starts_with("NC"));
+
+        // 목록/순위 탭: 커서 팀 하나만.
+        app.tab = Tab::Standings;
+        app.standings = vec![sample_standing("WO", "키움")];
+        app.selected = 0;
+        let standing_items = link_items_for_screen(&app);
+        assert_eq!(standing_items.len(), 2, "한 팀 × (공홈, 굿즈)");
+        assert!(standing_items[0].0.starts_with("키움"));
+    }
+
+    /// 커서가 범위를 벗어났거나 목록이 비면 빈 목록이다 — 링크 픽커가 열려도
+    /// 아무것도 없을 뿐, 패닉하지 않는다(무패닉 원칙).
+    #[test]
+    fn an_out_of_range_cursor_yields_no_links_instead_of_panicking() {
+        use crate::app::{Screen, Tab};
+        let mut app = crate::app::App::new(Default::default());
+        app.screen = Screen::List;
+        app.tab = Tab::Games;
+        app.selected = 7; // 빈 목록에서 범위 밖
+        assert!(link_items_for_screen(&app).is_empty());
+
+        app.tab = Tab::Standings;
+        assert!(link_items_for_screen(&app).is_empty());
+    }
+
+    /// 링크가 없는 팀 코드(미지의 구단)는 그 팀만 조용히 빠진다.
+    #[test]
+    fn a_team_without_links_is_skipped_silently() {
+        use crate::app::Screen;
+        let mut app = crate::app::App::new(Default::default());
+        app.screen = Screen::Live {
+            game: sample_game("LG", "LG", "ZZ", "미지의구단"),
+            state: None,
+        };
+        let items = link_items_for_screen(&app);
+        assert_eq!(items.len(), 2, "링크가 있는 팀 것만 남는다");
+        assert!(items.iter().all(|(label, _)| label.starts_with("LG")));
+    }
+
+    fn sample_game(
+        home_code: &str,
+        home_name: &str,
+        away_code: &str,
+        away_name: &str,
+    ) -> crate::model::Game {
+        crate::model::Game {
+            id: "g".into(),
+            start: String::new(),
+            status: crate::model::GameStatus::Live,
+            status_label: String::new(),
+            home: crate::model::Team {
+                code: home_code.into(),
+                name: home_name.into(),
+            },
+            away: crate::model::Team {
+                code: away_code.into(),
+                name: away_name.into(),
+            },
+            home_score: None,
+            away_score: None,
+        }
+    }
+
+    fn sample_standing(code: &str, name: &str) -> crate::model::Standing {
+        crate::model::Standing {
+            rank: 1,
+            team: crate::model::Team {
+                code: code.into(),
+                name: name.into(),
+            },
+            games: 100,
+            wins: 50,
+            losses: 45,
+            draws: 5,
+            win_rate: 0.526,
+            game_behind: 0.0,
+        }
+    }
 }

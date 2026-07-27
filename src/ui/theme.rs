@@ -108,6 +108,7 @@ pub fn accent_for(preset: &str, accent: &str, fav: Option<&str>) -> Option<Color
 }
 
 /// 배경 양쪽에서 읽히는 명명색만 허용한다(black/white는 한쪽에서 사라짐).
+/// 명명색이 아니면 16진 색(v0.22)으로 한 번 더 해석해 본다.
 fn named_color(name: &str) -> Option<Color> {
     match name {
         "cyan" => Some(Color::Cyan),
@@ -116,6 +117,38 @@ fn named_color(name: &str) -> Option<Color> {
         "magenta" => Some(Color::Magenta),
         "blue" => Some(Color::Blue),
         "red" => Some(Color::Red),
+        other => hex_color(other),
+    }
+}
+
+/// `#rrggbb` / `rrggbb` / `#rgb` → Color::Rgb (v0.22 — config에서 액센트 색을
+/// 직접 고른다). 사람이 손으로 적는 값이라 `#` 생략과 3자리 축약까지 받는다.
+///
+/// 형식이 틀리면 `None`이고 호출부는 "색 없음"으로 조용히 저하한다 — 설정
+/// 파일의 오타가 앱을 죽이거나 에러 화면을 띄우면 안 된다(config 폴백 원칙).
+///
+/// 대비를 여기서 따로 보지 않는 이유: 액센트는 **배경으로만** 쓰이고 그 위 글자색은
+/// [`contrast_fg`]가 고른다. 팀 컬러가 임의 RGB인데도 배지가 읽히는 것과 같은
+/// 구조라, 밝기와 무관하게 읽힘이 보장된다.
+fn hex_color(s: &str) -> Option<Color> {
+    let body = s.strip_prefix('#').unwrap_or(s);
+    // **이 검사는 바이트 경계를 지킨다 — 지우면 패닉한다.** 아래 슬라이싱은 바이트
+    // 단위인데, `len()`도 바이트 길이라 정확히 6바이트인 멀티바이트 문자열(한글 두
+    // 글자 "가나" 등)이 6자리 분기로 들어와 문자 중간을 자른다. 실제로 한 번 뺐다가
+    // `accent = "가나"`에서 패닉하는 걸 확인하고 되살렸다 — 뮤테이션이 이 줄을
+    // "중복"으로 표시했던 건 그때 테스트가 ASCII 입력만 보고 있었기 때문이다.
+    // (검출되지 않는 코드가 곧 불필요한 코드는 아니다.)
+    if !body.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let pair = |i: usize| u8::from_str_radix(&body[i..i + 2], 16).ok();
+    match body.len() {
+        6 => Some(Color::Rgb(pair(0)?, pair(2)?, pair(4)?)),
+        // 3자리 축약: 각 자리를 두 번 반복(#f60 = #ff6600), CSS와 같은 관례.
+        3 => {
+            let nib = |i: usize| u8::from_str_radix(&body[i..i + 1], 16).ok().map(|v| v * 17);
+            Some(Color::Rgb(nib(0)?, nib(1)?, nib(2)?))
+        }
         _ => None,
     }
 }
@@ -365,5 +398,85 @@ mod tests {
              (fg falls back to the terminal default, the shape isn't skipped): {:?}",
             buf.content().iter().map(|c| c.symbol()).collect::<String>()
         );
+    }
+    /// v0.22: config에서 액센트 색을 16진으로 직접 고른다. 세 형식 모두 받는다.
+    #[test]
+    fn accent_accepts_hex_colors_in_three_forms() {
+        assert_eq!(
+            accent_for("default", "#ff6600", None),
+            Some(Color::Rgb(255, 102, 0))
+        );
+        assert_eq!(
+            accent_for("default", "ff6600", None),
+            Some(Color::Rgb(255, 102, 0)),
+            "# 없는 형식도 받는다"
+        );
+        assert_eq!(
+            accent_for("default", "#f60", None),
+            Some(Color::Rgb(255, 102, 0)),
+            "3자리 축약은 각 자리를 두 번 반복한다(CSS 관례)"
+        );
+    }
+
+    /// 형식이 틀리면 색 없음으로 조용히 저하한다 — 설정 오타가 앱을 죽이면 안 된다.
+    #[test]
+    fn a_malformed_accent_value_degrades_to_no_color() {
+        for bad in ["#ff66", "#gggggg", "#1234567", "", "#", "orange", "12345"] {
+            assert_eq!(
+                accent_for("default", bad, None),
+                None,
+                "{bad:?} should not resolve to a color"
+            );
+        }
+    }
+
+    /// mono는 색을 아예 쓰지 않는다 — 이 규칙이 hex보다 위다.
+    #[test]
+    fn mono_preset_still_wins_over_a_hex_accent() {
+        assert_eq!(accent_for("mono", "#ff6600", None), None);
+    }
+
+    /// 기존 값(team·none·명명색)의 동작은 그대로다.
+    #[test]
+    fn hex_support_does_not_change_the_existing_accent_values() {
+        assert_eq!(
+            accent_for("default", "team", Some("LG")),
+            Some(team_color("LG"))
+        );
+        assert_eq!(accent_for("default", "none", Some("LG")), None);
+        assert_eq!(accent_for("default", "cyan", None), Some(Color::Cyan));
+    }
+
+    /// 액센트는 배경으로 쓰이고 글자색은 contrast_fg가 고른다 — 어떤 hex를 넣어도
+    /// 그 위 글자가 WCAG AA(4.5:1)를 넘는다. 대비 로직을 새로 만들지 않은 근거다.
+    #[test]
+    fn any_hex_accent_gets_a_readable_foreground() {
+        for hex in [
+            "#000000", "#ffffff", "#ff6600", "#123456", "#7f7f7f", "#00ff00",
+        ] {
+            let bg = accent_for("default", hex, None).expect("valid hex");
+            let fg = contrast_fg(bg);
+            let r = contrast_ratio(bg, fg);
+            assert!(r >= 4.5, "{hex}: contrast {r:.2} < 4.5");
+        }
+    }
+    /// 슬라이싱이 바이트 단위라 비ASCII 입력에서 패닉하지 않는지 — 무패닉 원칙.
+    ///
+    /// **"가나"가 핵심 케이스다**: 한글 두 글자가 정확히 6바이트라 6자리 hex 분기로
+    /// 들어가고, `body[0..2]`가 '가'의 중간을 잘라 패닉한다(실측). config 파일에
+    /// 아무 글자나 적는 건 사용자가 언제든 하는 일이므로 이건 실사용 경로다.
+    #[test]
+    fn a_multibyte_accent_value_does_not_panic() {
+        for weird in [
+            "#가나다",
+            "#🎨🎨",
+            "가나다라마바",
+            "#ﬀﬀﬀ",
+            "#가나",
+            "가나",
+            "#aa가",
+        ] {
+            assert_eq!(accent_for("default", weird, None), None, "{weird:?}");
+        }
     }
 }
