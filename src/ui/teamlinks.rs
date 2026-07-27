@@ -276,6 +276,7 @@ mod tests {
             game_behind: 0.0,
             last_five: String::new(),
             streak: String::new(),
+            stats: Default::default(),
         }
     }
 }

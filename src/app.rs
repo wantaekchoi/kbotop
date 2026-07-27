@@ -180,6 +180,11 @@ pub struct App {
     /// 상한은 두지 않는다: 하루 5경기를 다 돌아도 경기당 9이닝 남짓이고, 상한
     /// 로직이 버는 것보다 "언제 버릴지" 판단이 틀릴 위험이 크다.
     pub past_innings: HashMap<String, BTreeMap<u8, Vec<AtBat>>>,
+    /// 순위 탭에서 성적을 펼쳐 본 팀의 순위(v0.24). None이면 오버레이가 닫힌 상태.
+    /// 인덱스가 아니라 `Standing::rank`로 들고 있는 이유: 폴링이 순위표를 갱신하면
+    /// 배열이 다시 정렬돼 같은 인덱스가 다른 팀을 가리킬 수 있다(v0.18에서 타석
+    /// 선택을 인덱스에서 seq로 바꾼 것과 같은 이유).
+    pub team_stats_rank: Option<u16>,
     /// 지금 받아오는 중인 이닝(None = 요청 없음). 되감기는 한 번에 한 이닝씩만
     /// 거슬러 가므로 하나면 충분하다. 화면에는 "N회 불러오는 중"으로 나간다.
     pub fetching_inning: Option<u8>,
@@ -253,6 +258,7 @@ impl App {
             live_pitch_sel: None,
             live_atbat_sel: None,
             live_relay_cursor: None,
+            team_stats_rank: None,
             past_innings: HashMap::new(),
             fetching_inning: None,
             fav_code: None,
@@ -363,6 +369,19 @@ impl App {
                     }
                 }
                 _ => {}
+            }
+            self.pending_g = false;
+            return false;
+        }
+        // 팀 성적 오버레이(v0.24)가 **화면에 보이는 동안** 키를 소비한다.
+        //
+        // 조건이 `team_stats_rank.is_some()`이 아니라 `team_stats_target()`인 게
+        // 중요하다 — 렌더도 같은 함수를 보므로 "안 보이는데 키만 먹는" 상태가
+        // 구조적으로 생길 수 없다. 두 축을 따로 두면 rank는 살아 있는데 그 팀이
+        // 순위표에서 사라진 경우(폴링 갱신) 화면 없이 입력만 잠긴다.
+        if self.team_stats_target().is_some() {
+            if matches!(key, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q')) {
+                self.team_stats_rank = None;
             }
             self.pending_g = false;
             return false;
@@ -546,6 +565,18 @@ impl App {
                 self.pending_g = false;
             }
             KeyCode::Enter => {
+                // 순위 탭의 Enter는 그 팀 성적을 펼친다(v0.24). 경기 탭의
+                // Enter(라이브 진입)와 뜻이 다르지만, 두 탭이 같은 키를 각자
+                // 쓰는 건 이미 있는 구조다(`o` 링크가 탭마다 다른 팀을 고른다).
+                if self.tab == Tab::Standings && matches!(self.screen, Screen::List) {
+                    // 열지 말지(경기 전 팀은 성적이 전부 0이라 "기록 없음"과
+                    // 구분되지 않는다)는 team_stats_target 한 곳에서 판정한다 —
+                    // 여기서도 걸러 두면 같은 규칙이 두 곳에 흩어져 언젠가
+                    // 어긋난다(v0.18에서 같은 술어를 공유하게 만든 이유).
+                    self.team_stats_rank = self.standings.get(self.selected).map(|s| s.rank);
+                    self.pending_g = false;
+                    return false;
+                }
                 if self.tab == Tab::Games && matches!(self.screen, Screen::List) {
                     if let Some(g) = self.games.get(self.selected).cloned() {
                         if Self::can_enter_live(g.status) {
@@ -723,6 +754,16 @@ impl App {
         // 섞일 수 없고, 나갔다 돌아오면 되감아 둔 이닝이 그대로 있어야 한다.
         // fetching_inning은 화면에 딸린 상태라 리셋한다.
         self.fetching_inning = None;
+    }
+
+    /// 성적 오버레이가 보여줄 팀. 닫혀 있거나 그 순위가 사라졌거나 아직 경기를
+    /// 안 치렀으면 None — 화면은 이 값 하나만 보고 그린다.
+    pub fn team_stats_target(&self) -> Option<&crate::model::Standing> {
+        let rank = self.team_stats_rank?;
+        self.standings
+            .iter()
+            .find(|s| s.rank == rank)
+            .filter(|s| s.games > 0)
     }
 
     /// 그 경기에 대해 받아 둔 이닝들. 없으면 빈 맵을 빌려준다 — 호출부가 매번
@@ -2221,6 +2262,7 @@ mod tests {
                 game_behind: 0.0,
                 last_five: String::new(),
                 streak: String::new(),
+                stats: Default::default(),
             },
         ]));
         app.on_key(KeyCode::Char('o'));
@@ -3032,5 +3074,121 @@ mod tests {
 
         app.enter_live(game("elsewhere"));
         assert_eq!(app.selected, 1);
+    }
+    /// 경기 탭의 Enter는 그대로 라이브에 들어간다 — v0.24에서 순위 탭 Enter에
+    /// 다른 뜻(성적 오버레이)을 줬으므로, 같은 키를 나눠 쓰는 이 자리가 회귀에
+    /// 가장 취약하다.
+    #[test]
+    fn enter_on_the_games_tab_still_opens_the_live_view() {
+        let mut app = App::new(Default::default());
+        app.tab = Tab::Games;
+        app.games = vec![game("g")];
+        app.selected = 0;
+
+        app.on_key(KeyCode::Enter);
+        assert!(
+            matches!(app.screen, Screen::Live { .. }),
+            "라이브로 안 들어갔다"
+        );
+        assert!(app.team_stats_rank.is_none(), "경기 탭에서 성적이 열렸다");
+    }
+
+    /// 순위 탭의 Enter는 성적을 펼치고, 화면은 목록에 그대로 남는다.
+    #[test]
+    fn enter_on_the_standings_tab_opens_stats_without_leaving_the_list() {
+        let mut app = App::new(Default::default());
+        app.tab = Tab::Standings;
+        app.apply(Update::Standings(vec![standing_with_games(1, 94)]));
+        app.selected = 0;
+
+        app.on_key(KeyCode::Enter);
+        assert_eq!(app.team_stats_rank, Some(1));
+        assert!(matches!(app.screen, Screen::List), "화면이 바뀌었다");
+    }
+
+    /// 오버레이가 열려 있는 동안에는 다른 키가 목록을 움직이지 않는다 —
+    /// 뒤에서 커서가 몰래 이동하면 닫았을 때 다른 팀이 선택돼 있다.
+    #[test]
+    fn the_stats_overlay_consumes_navigation_keys() {
+        let mut app = App::new(Default::default());
+        app.tab = Tab::Standings;
+        app.apply(Update::Standings(vec![
+            standing_with_games(1, 94),
+            standing_with_games(2, 94),
+        ]));
+        app.selected = 0;
+        app.on_key(KeyCode::Enter);
+
+        app.on_key(KeyCode::Down);
+        assert_eq!(app.selected, 0, "오버레이 뒤에서 커서가 움직였다");
+    }
+
+    /// 폴링으로 순위가 갱신돼 배열이 재정렬돼도 보고 있던 팀이 유지된다 —
+    /// 인덱스가 아니라 rank로 들고 있는 이유다(v0.18 seq와 같은 원리).
+    #[test]
+    fn the_open_team_survives_a_standings_refresh_that_reorders_the_table() {
+        let mut app = App::new(Default::default());
+        app.tab = Tab::Standings;
+        app.apply(Update::Standings(vec![
+            standing_with_games(1, 94),
+            standing_with_games(2, 94),
+        ]));
+        app.selected = 1; // 2위를 펼친다
+        app.on_key(KeyCode::Enter);
+        assert_eq!(app.team_stats_rank, Some(2));
+
+        // 갱신: 순서가 바뀌어 같은 인덱스가 다른 팀을 가리키게 된다.
+        app.apply(Update::Standings(vec![
+            standing_with_games(2, 95),
+            standing_with_games(1, 95),
+        ]));
+        assert_eq!(
+            app.team_stats_target().map(|s| s.rank),
+            Some(2),
+            "갱신 후 다른 팀으로 바뀌었다"
+        );
+    }
+
+    fn standing_with_games(rank: u16, games: u16) -> crate::model::Standing {
+        crate::model::Standing {
+            rank,
+            team: crate::model::Team {
+                code: "SS".into(),
+                name: format!("팀{rank}"),
+            },
+            games,
+            wins: 50,
+            losses: 40,
+            draws: 2,
+            win_rate: 0.556,
+            game_behind: 0.0,
+            last_five: "WWLLD".into(),
+            streak: "2패".into(),
+            stats: crate::model::TeamStats {
+                avg: 0.276,
+                era: 4.06,
+                ..Default::default()
+            },
+        }
+    }
+    /// 경기 전 팀에서는 오버레이가 뜨지 않고 **키도 잠기지 않는다**. 판정이
+    /// 두 곳(열기·소비)에 흩어져 있으면 "화면은 없는데 입력만 먹히는" 상태가
+    /// 생긴다 — 조건을 team_stats_target 하나로 모아 막는다.
+    #[test]
+    fn a_team_before_its_first_game_neither_opens_nor_locks_input() {
+        let mut app = App::new(Default::default());
+        app.tab = Tab::Standings;
+        app.apply(Update::Standings(vec![
+            standing_with_games(1, 0),
+            standing_with_games(2, 0),
+        ]));
+        app.selected = 0;
+
+        app.on_key(KeyCode::Enter);
+        assert!(app.team_stats_target().is_none(), "성적이 열렸다");
+
+        // 입력이 잠기지 않았는지: 커서가 그대로 움직여야 한다.
+        app.on_key(KeyCode::Down);
+        assert_eq!(app.selected, 1, "화면도 없는데 입력이 잠겼다");
     }
 }

@@ -194,6 +194,38 @@ pub struct TeamStat {
     #[serde(default, deserialize_with = "lenient_string")]
     pub continuous_game_result: String,
     #[serde(default, deserialize_with = "lenient_float")]
+    pub offense_hra: f32,
+    #[serde(default, deserialize_with = "lenient_float")]
+    pub offense_obp: f32,
+    #[serde(default, deserialize_with = "lenient_float")]
+    pub offense_slg: f32,
+    #[serde(default, deserialize_with = "lenient_float")]
+    pub offense_ops: f32,
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub offense_run: u16,
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub offense_rbi: u16,
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub offense_hr: u16,
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub offense_sb: u16,
+    #[serde(default, deserialize_with = "lenient_float")]
+    pub defense_era: f32,
+    #[serde(default, deserialize_with = "lenient_float")]
+    pub defense_whip: f32,
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub defense_qs: u16,
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub defense_save: u16,
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub defense_hold: u16,
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub defense_kk: u16,
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub defense_hr: u16,
+    #[serde(default, deserialize_with = "lenient_int")]
+    pub defense_err: u16,
+    #[serde(default, deserialize_with = "lenient_float")]
     pub wra: f32,
     #[serde(default, deserialize_with = "lenient_float")]
     pub game_behind: f32,

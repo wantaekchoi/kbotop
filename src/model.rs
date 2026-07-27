@@ -327,6 +327,35 @@ pub struct Standing {
     /// 건너뛴다** — SSG `WWWWD`가 4승, NC `WWLLD`가 2패인 게 그 증거다(KBO 관례).
     /// 그래서 이 값을 last_five에서 계산하지 않고 응답 값을 그대로 쓴다.
     pub streak: String,
+    /// 팀 시즌 성적(v0.24). 순위 응답이 팀마다 64개 필드를 주는데 순위·승패만
+    /// 쓰고 있었다. 별도 구조체로 묶은 이유: v0.23에서 `Game`에 4필드를 늘렸을 때
+    /// 손으로 만든 테스트 픽스처 24곳이 한꺼번에 깨졌다 — 여기 필드가 더 늘어도
+    /// `Standing` 리터럴은 이 한 줄만 신경 쓰면 된다.
+    pub stats: TeamStats,
+}
+
+/// 팀 시즌 성적. 전부 응답 원값이며 결측은 0이다 — 0과 "기록 없음"을 구분할 수
+/// 없으므로 화면은 `Standing::games == 0`(경기 전)일 때 아예 보여주지 않는다.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TeamStats {
+    // 타격
+    pub avg: f32,
+    pub obp: f32,
+    pub slg: f32,
+    pub ops: f32,
+    pub runs: u16,
+    pub rbi: u16,
+    pub homers: u16,
+    pub steals: u16,
+    // 투구·수비
+    pub era: f32,
+    pub whip: f32,
+    pub quality_starts: u16,
+    pub saves: u16,
+    pub holds: u16,
+    pub strikeouts: u16,
+    pub homers_allowed: u16,
+    pub errors: u16,
 }
 
 #[cfg(test)]

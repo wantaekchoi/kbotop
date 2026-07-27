@@ -18,7 +18,7 @@ Set Padding 24
 Set TypingSpeed 55ms
 
 Hide
-Type "HOME=$(mktemp -d) kbotop --date 2026-07-19 --team kt --lang en"
+Type "HOME=$(mktemp -d) kbotop --date 2026-07-19 --team ssg --lang en"
 Enter
 Show
 
@@ -43,15 +43,9 @@ Type "["
 Sleep 700ms
 Type "["
 Sleep 700ms
-Type "["
-Sleep 700ms
-Type "["
-Sleep 700ms
-Type "["
-Sleep 700ms
 Sleep 800ms
 
-# v0.20~: 그 이닝(9회, 타석 10개)의 첫 타석에서 한 번 더 누르면 앞 이닝을 받아온다
+# v0.20~: 그 이닝(9회, 타석 7개)의 첫 타석에서 한 번 더 누르면 앞 이닝을 받아온다
 # — "8회 불러오는 중"이 잠깐 뜨고, 이어서 8회 타석이 목록 앞에 붙는다
 Type "["
 Sleep 2600ms
@@ -117,6 +111,12 @@ Sleep 1200ms
 # standings (bracket tab)
 Tab
 Sleep 2600ms
+
+# v0.24: Enter on a standings row opens that team's season stats
+Enter
+Sleep 3000ms
+Escape
+Sleep 900ms
 
 Type "q"
 Sleep 600ms

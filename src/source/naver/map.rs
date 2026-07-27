@@ -90,6 +90,24 @@ pub fn standings_from_json(json: &str) -> Result<Vec<Standing>> {
             game_behind: t.game_behind,
             last_five: t.last_five_games.clone(),
             streak: t.continuous_game_result.clone(),
+            stats: crate::model::TeamStats {
+                avg: t.offense_hra,
+                obp: t.offense_obp,
+                slg: t.offense_slg,
+                ops: t.offense_ops,
+                runs: t.offense_run,
+                rbi: t.offense_rbi,
+                homers: t.offense_hr,
+                steals: t.offense_sb,
+                era: t.defense_era,
+                whip: t.defense_whip,
+                quality_starts: t.defense_qs,
+                saves: t.defense_save,
+                holds: t.defense_hold,
+                strikeouts: t.defense_kk,
+                homers_allowed: t.defense_hr,
+                errors: t.defense_err,
+            },
         })
         .collect();
     out.sort_by_key(|s| s.rank);

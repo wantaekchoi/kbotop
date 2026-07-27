@@ -107,3 +107,50 @@ fn missing_streak_fields_degrade_to_empty_strings() {
     assert!(rows[0].last_five.is_empty());
     assert!(rows[0].streak.is_empty());
 }
+
+/// v0.24: 팀 시즌 성적이 파싱된다. 응답이 팀마다 64개 필드를 주는데 v0.23까지
+/// 순위·승패·최근5만 쓰고 나머지를 버리고 있었다.
+#[test]
+fn parses_team_season_stats() {
+    const STANDINGS: &str = include_str!("fixtures/standings_2026_streaks.json");
+    let rows = standings_from_json(STANDINGS).unwrap();
+    let samsung = rows.iter().find(|r| r.team.name == "삼성").expect("삼성");
+
+    // 타격: 실응답 실측값(2026-07-27 기준)
+    assert!((samsung.stats.avg - 0.27632).abs() < 1e-4);
+    assert!((samsung.stats.ops - 0.77616).abs() < 1e-4);
+    assert_eq!(samsung.stats.homers, 81);
+    assert_eq!(samsung.stats.steals, 71);
+    assert_eq!(samsung.stats.runs, 533);
+
+    // 투구·수비
+    assert!((samsung.stats.era - 4.05861).abs() < 1e-4);
+    assert!((samsung.stats.whip - 1.37201).abs() < 1e-4);
+    assert_eq!(samsung.stats.quality_starts, 40);
+    assert_eq!(samsung.stats.saves, 28);
+    assert_eq!(samsung.stats.holds, 58);
+    assert_eq!(samsung.stats.errors, 54);
+
+    // 열 팀 모두 성적이 실려야 한다 — 한 팀만 비면 화면에서 그 팀만 빈 상자가 된다.
+    assert!(
+        rows.iter().all(|r| r.stats.era > 0.0 && r.stats.avg > 0.0),
+        "성적이 빈 팀이 있다: {:?}",
+        rows.iter()
+            .filter(|r| r.stats.era == 0.0)
+            .map(|r| &r.team.name)
+            .collect::<Vec<_>>()
+    );
+}
+
+/// 성적 필드가 통째로 없는 응답(시즌 개막 전 등)에서도 파싱이 죽지 않고
+/// 0으로 저하한다. 화면은 `games == 0`으로 판단해 오버레이를 열지 않는다.
+#[test]
+fn missing_stat_fields_degrade_to_zero() {
+    let json = r#"{"result":{"seasonTeamStats":[
+        {"ranking":1,"teamId":"LG","teamName":"LG","gameCount":0,"winGameCount":0,
+         "loseGameCount":0,"drawnGameCount":0,"wra":0.0,"gameBehind":0.0}
+    ]}}"#;
+    let rows = standings_from_json(json).unwrap();
+    assert_eq!(rows[0].games, 0);
+    assert_eq!(rows[0].stats, kbotop::model::TeamStats::default());
+}

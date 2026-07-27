@@ -14,6 +14,7 @@ pub mod sideview;
 pub mod standings;
 pub mod strikezone;
 pub mod teamlinks;
+pub mod teamstats;
 pub mod text;
 pub mod theme;
 pub mod tips;
@@ -125,6 +126,12 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     if app.settings.is_some() {
         settings::render(f, f.area(), app);
+    }
+
+    // 팀 성적(v0.24) — 순위 탭 전용이고 on_key가 열려 있는 동안 다른 오버레이
+    // 오픈을 막으므로 겹치지 않는다.
+    if app.team_stats_target().is_some() {
+        teamstats::render(f, f.area(), app);
     }
 
     // 뉴스 목록은 기사보다 아래 층 — 기사가 목록 위에 겹쳐 열릴 수 있으므로
@@ -286,6 +293,7 @@ mod tests {
             game_behind: 0.0,
             last_five: String::new(),
             streak: String::new(),
+            stats: Default::default(),
         }]));
         let text = render_to_string(&app);
         assert!(text.contains("KIA"));
@@ -306,6 +314,7 @@ mod tests {
             game_behind: 0.0,
             last_five: String::new(),
             streak: String::new(),
+            stats: Default::default(),
         }
     }
 
@@ -396,6 +405,7 @@ mod tests {
             game_behind: 0.0,
             last_five: String::new(),
             streak: String::new(),
+            stats: Default::default(),
         }]));
         let games_text = render_to_string(&app);
         app.tab = Tab::Standings;
