@@ -1,4 +1,4 @@
-# kbotop demo (English) — v0.19: play-by-play linked to the pitch view (j/k picks a
+# kbotop demo (English) — v0.20: rewind past inning boundaries ([ pulls in the previous inning),
 # line, its pitch shows in the zone), rewind ([ ] at-bats),
 # live pitch nav (side/zone), in-app news list (n), settings (S), theme presets, tabs.
 # (2026-07-19 Kiwoom 9:9 Hanwha, last at-bat, 7 pitches)
@@ -32,9 +32,22 @@ Sleep 1500ms
 # rewind (v0.18): `[` steps back through past at-bats — the play-by-play, zone and
 # side view follow. The relay response already carried this; we used to discard it.
 Type "["
-Sleep 1600ms
+Sleep 900ms
 Type "["
-Sleep 1800ms
+Sleep 900ms
+Type "["
+Sleep 900ms
+Type "["
+Sleep 900ms
+Type "["
+Sleep 1200ms
+
+# v0.20: 그 이닝(11회, 타석 6개)의 첫 타석에서 한 번 더 누르면 앞 이닝을 받아온다
+# — "10회 불러오는 중"이 잠깐 뜨고, 이어서 10회 타석이 목록 앞에 붙는다
+Type "["
+Sleep 2600ms
+Type "["
+Sleep 2000ms
 
 # j/k: stepping through the play-by-play shows that pitch in the zone/side view
 # — on a result line, the pitch that produced it stays on screen

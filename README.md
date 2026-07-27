@@ -7,7 +7,7 @@
 [![crates.io](https://img.shields.io/crates/v/kbotop?style=flat-square)](https://crates.io/crates/kbotop)
 [![Release](https://img.shields.io/github/v/release/wantaekchoi/kbotop?style=flat-square)](https://github.com/wantaekchoi/kbotop/releases)
 [![Built with Ratatui](https://img.shields.io/badge/built%20with-ratatui-1c1c1c?style=flat-square)](https://ratatui.rs)
-[![License: Unlicense OR MIT](https://img.shields.io/badge/license-Unlicense%20OR%20MIT-blue?style=flat-square)](LICENSE)
+[![License: Unlicense](https://img.shields.io/badge/license-Unlicense-blue?style=flat-square)](LICENSE)
 [![Downloads](https://img.shields.io/crates/d/kbotop?style=flat-square)](https://crates.io/crates/kbotop)
 [![CI](https://img.shields.io/github/actions/workflow/status/wantaekchoi/kbotop/ci.yml?style=flat-square&label=CI)](https://github.com/wantaekchoi/kbotop/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/wantaekchoi/kbotop/branch/main/graph/badge.svg)](https://codecov.io/gh/wantaekchoi/kbotop)
@@ -59,8 +59,8 @@ Vim 스타일로 움직입니다. 최신 키 목록은 앱 안 `?` 도움말이 
 - 구단 공홈·굿즈몰 열기: `o`
 - 뉴스 목록 열기: `n` (목록에서 `Enter`로 기사 읽기)
 - 투구 하나씩 보기: `Left` / `Right` (라이브 뷰)
-- 이전/다음 타석 돌려보기: `[` / `]` (라이브 뷰)
-- 문자중계 줄 커서 이동: `j` / `k` (라이브 뷰)
+- 이전/다음 타석 돌려보기: `[` / `]` (라이브 뷰) — 그 이닝의 첫 타석에서 한 번 더 누르면 지난 이닝을 받아옵니다
+- 문자중계 줄 커서 이동: `j` / `k`, 맨 위/맨 아래는 `gg` / `G` (라이브 뷰)
 - 도움말: `?`
 - 종료: `q`
 
@@ -80,9 +80,7 @@ Vim 스타일로 움직입니다. 최신 키 목록은 앱 안 `?` 도움말이 
 
 ## 라이선스
 
-[Unlicense 또는 MIT](LICENSE) 중 원하는 쪽을 고르면 됩니다. 조건 없이 쓸 수
-있도록 Unlicense(퍼블릭 도메인)를 두되, 퍼블릭 도메인 헌정을 받아들이지 못하는
-조직을 위해 MIT도 함께 남깁니다.
+[Unlicense](LICENSE) — 퍼블릭 도메인입니다. 조건 없이 쓰세요.
 
 바이너리에 링크된 오픈소스의 라이선스 고지는 [THIRD-PARTY.md](THIRD-PARTY.md)에
 있습니다.

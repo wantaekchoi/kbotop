@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::model::{Game, GameStatus, LiveState, NewsItem, Standing};
+use crate::model::{AtBat, Game, GameStatus, LiveState, NewsItem, Standing};
 use crate::source::{DataSource, NewsSource};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
@@ -26,6 +26,14 @@ pub enum Update {
     /// 하단 팁 목록 런타임 갱신본(부가 기능). 시작 시 1회만 시도하며, 실패·기각은
     /// 조용히 임베드 폴백으로 남는다 — 뉴스와 동일하게 Update::Error로 보내지 않는다.
     Tips(Vec<String>),
+    /// 과거 이닝의 타석들(v0.20 되감기). Live와 같은 이유로 게임 id를 함께 실어,
+    /// 화면을 옮긴 뒤 도착한 이전 게임의 느린 응답이 새 게임에 섞이지 않게 한다.
+    /// 빈 목록도 그대로 보낸다 — 호출부가 "그 이닝은 없다"로 캐시해 재요청을 멈춘다.
+    Inning {
+        game_id: String,
+        inning: u8,
+        at_bats: Vec<AtBat>,
+    },
 }
 
 /// App → 폴러 방향 명령.
@@ -37,6 +45,13 @@ pub enum Command {
     SetDate(String),
     /// 라이브 폴 주기 런타임 전환(하한 3s는 수신부가 보장).
     SetLivePoll(u64),
+    /// 과거 이닝 요청(v0.20 되감기). 되감기 경계에서 사용자가 한 번 더 누를 때만
+    /// 나가는 단발 요청이라 시간 게이트를 두지 않는다 — 중복 억제는 App이 캐시와
+    /// 요청 중 플래그로 한다(폴링이 아니라 사용자 조작이 트리거이므로 홍수가 없다).
+    FetchInning {
+        game: Game,
+        inning: u8,
+    },
     Shutdown,
 }
 
@@ -181,6 +196,24 @@ pub fn spawn(
                     Command::SetLivePoll(s) => {
                         live_poll_secs = s.max(3);
                         next_live = Instant::now();
+                    }
+                    Command::FetchInning { game, inning } => {
+                        let _ = tx.send(Update::Fetching);
+                        match call_source(|| source.at_bats_of_inning(&game, inning)) {
+                            Ok(at_bats) => {
+                                let _ = tx.send(Update::Inning {
+                                    game_id: game.id.clone(),
+                                    inning,
+                                    at_bats,
+                                });
+                            }
+                            // 실패는 Update::Error로 알리되 캐시를 채우지 않는다 —
+                            // 다시 눌러 재시도할 수 있어야 한다(일시적 네트워크 실패로
+                            // 그 이닝을 영영 못 보게 만들면 안 된다).
+                            Err(e) => {
+                                let _ = tx.send(Update::Error(e.to_string()));
+                            }
+                        }
                     }
                     Command::Shutdown => return,
                 }
@@ -606,6 +639,7 @@ mod tests {
                 Update::Fetching => {}
                 Update::News(_) => {}
                 Update::Tips(_) => {}
+                Update::Inning { .. } => {}
             }
         }
 

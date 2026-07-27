@@ -50,6 +50,10 @@ pub struct Labels {
     pub standings_current: &'static str,
     pub title_live: &'static str, // 완성형 " ... "
     pub title_relay: &'static str,
+    /// 과거 이닝을 받아오는 동안 문자중계 블록 타이틀에 덧붙이는 문구(v0.20).
+    /// `{}` 자리에 이닝 번호가 들어간다 — 어느 이닝을 기다리는지 보여야
+    /// 사용자가 "멈춘 건지 받는 중인지"를 구분한다.
+    pub loading_inning: &'static str,
     /// 돌려보기(v0.18) 중 라이브 타이틀 대신 쓰는 접두("Rewind"/"돌려보기") —
     /// 과거 타석의 이닝·타자명과 함께 조합해 라이브와 헷갈리지 않게 한다.
     pub rewind_label: &'static str,
@@ -176,6 +180,7 @@ pub const EN: Labels = Labels {
     standings_current: "(current)",
     title_live: " Live ",
     title_relay: " Play-by-play ",
+    loading_inning: "loading inning {}",
     rewind_label: "Rewind",
     title_zone: " Zone ",
     title_side: " Side ",
@@ -240,8 +245,8 @@ pub const EN: Labels = Labels {
         "Back       Esc",
         "Switch tab Tab / F5",
         "Pitch      Left / Right (live view)",
-        "Rewind     [ / ] (live view)",
-        "Relay      j / k (live view)",
+        "Rewind     [ / ] (live view, loads past innings)",
+        "Relay      j / k, gg / G (live view)",
         "Options    F2 (date) / F9 (team/poll)",
         "Links/News o / n",
         "Quit       q / F10",
@@ -292,6 +297,7 @@ pub const KO: Labels = Labels {
     standings_current: "(현재)",
     title_live: " 중계 ",
     title_relay: " 문자중계 ",
+    loading_inning: "{}회 불러오는 중",
     rewind_label: "돌려보기",
     title_zone: " 존 ",
     title_side: " 측면 ",
@@ -356,8 +362,8 @@ pub const KO: Labels = Labels {
         "뒤로        Esc",
         "탭 전환     Tab / F5",
         "투구 보기   좌우 방향키 (중계 화면)",
-        "돌려보기    [ / ] (중계 화면)",
-        "중계 커서   j / k (중계 화면)",
+        "돌려보기    [ / ] (중계 화면, 지난 이닝까지)",
+        "중계 커서   j / k · gg / G (중계 화면)",
         "옵션        F2 (날짜) / F9 (팀·주기)",
         "링크/뉴스   o / n",
         "종료        q / F10",
@@ -408,6 +414,7 @@ pub const JA: Labels = Labels {
     standings_current: "(現在)",
     title_live: " 中継 ",
     title_relay: " 実況 ",
+    loading_inning: "{}回を読み込み中",
     rewind_label: "巻き戻し",
     title_zone: " ゾーン ",
     title_side: " 側面 ",
@@ -472,8 +479,8 @@ pub const JA: Labels = Labels {
         "戻る        Esc",
         "タブ切替    Tab / F5",
         "投球確認    Left / Right (中継画面)",
-        "巻き戻し    [ / ] (中継画面)",
-        "実況        j / k (中継画面)",
+        "巻き戻し    [ / ] (中継画面·前の回まで)",
+        "実況        j / k · gg / G (中継画面)",
         "オプション  F2 (日付) / F9 (チーム·間隔)",
         "リンク/ニュース  o / n",
         "終了        q / F10",

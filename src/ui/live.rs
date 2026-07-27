@@ -121,7 +121,7 @@ fn render_scoreline(f: &mut Frame, area: Rect, vm: &LiveVm) {
 /// 짝이다. VM으로 올리면 위젯이 내부적으로 하는 일을 밖에서 한 번 더 흉내 내는
 /// 중복이 된다.
 fn render_relay(f: &mut Frame, area: Rect, vm: &LiveVm) {
-    let (rows, title) = (&vm.relay_rows, vm.relay_title);
+    let (rows, title) = (&vm.relay_rows, vm.relay_title.as_str());
     match vm.relay_cursor {
         Some(idx) => {
             let items: Vec<ListItem> = rows.iter().map(|row| ListItem::new(row.clone())).collect();

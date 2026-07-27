@@ -371,6 +371,40 @@ fn name_of(id: &str, home: &Option<Lineup>, away: &Option<Lineup>) -> String {
     String::new()
 }
 
+/// 응답의 textRelays에서 타석 목록을 만든다(오래된→최신).
+///
+/// 라이브 경로(`live_from_relay`)와 과거 이닝 경로(`at_bats_from_relay`)가 이
+/// 함수를 공유한다 — 두 경로가 술어를 따로 들면 같은 타석이 한쪽에서는 잡히고
+/// 다른 쪽에서는 빠져 목록을 이을 때 구멍이 생긴다(v0.18에서 `current` 선택과
+/// at_bats 구성을 같은 술어로 묶은 것과 같은 이유).
+fn at_bats_of(text_relays: &[TextRelay]) -> Vec<AtBat> {
+    let mut at_bats: Vec<AtBat> = text_relays
+        .iter()
+        .filter(|t| is_at_bat_worthy(t))
+        .map(at_bat_of)
+        .collect();
+    at_bats.reverse(); // 응답 원문(최신→오래된)을 오래된→최신으로.
+    at_bats
+}
+
+/// `?inning=N` 응답에서 **그 이닝의 타석만** 뽑는다(v0.20 "과거 이닝 돌려보기").
+///
+/// 스코어보드·카운트·투수/타자는 일부러 버린다. 실측상 `currentGameState`는 어느
+/// 이닝을 요청해도 **현재** 값이라(요청이 3회여도 `inn`은 9), 그걸 과거 이닝 화면에
+/// 섞으면 "한 화면이 두 상황을 말하는" v0.18의 결함이 그대로 재현된다. 과거 이닝에서
+/// 확실한 것은 그 이닝에 실제로 일어난 타석뿐이다.
+///
+/// 범위 밖 이닝은 200 + 빈 `textRelays`로 오므로(실측 `?inning=99`) 빈 목록을
+/// 돌려준다 — 에러가 아니어야 호출부가 "그 이닝은 없다"로 캐시해 재요청을 멈춘다.
+pub fn at_bats_from_relay(json: &str) -> Result<Vec<AtBat>> {
+    let env: ApiEnvelope<RelayResult> = serde_json::from_str(json)?;
+    let trd: TextRelayData = env
+        .result
+        .and_then(|r| r.text_relay_data)
+        .ok_or_else(|| crate::error::Error::Data("no textRelayData".into()))?;
+    Ok(at_bats_of(&trd.text_relays))
+}
+
 pub fn live_from_relay(json: &str, home: Team, away: Team) -> Result<LiveState> {
     let env: ApiEnvelope<RelayResult> = serde_json::from_str(json)?;
     let trd: TextRelayData = env
@@ -414,13 +448,7 @@ pub fn live_from_relay(json: &str, home: Team, away: Team) -> Result<LiveState> 
     // 시작 직후, 아직 첫 타자도 안내되지 않음) 여기는 비지만, 그 경우
     // current_pitches도 항상 비어 있으므로(진행-외 항목은 pts_options가
     // 없다) 서로 어긋나지 않는다.
-    let mut at_bats: Vec<AtBat> = trd
-        .text_relays
-        .iter()
-        .filter(|t| is_at_bat_worthy(t))
-        .map(at_bat_of)
-        .collect();
-    at_bats.reverse(); // 응답 원문(최신→오래된)을 오래된→최신으로.
+    let at_bats = at_bats_of(&trd.text_relays);
 
     // 다음 타자: 공격 팀 라인업에서 현재 타자의 batOrder를 찾아 다음 타순
     // (9→1 순환)의 첫 항목을 고른다. 교체로 같은 batOrder가 여럿이면 첫

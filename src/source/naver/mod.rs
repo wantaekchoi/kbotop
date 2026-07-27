@@ -2,7 +2,7 @@ pub mod dto;
 pub mod map;
 
 use crate::error::Result;
-use crate::model::{Game, LiveState, Standing};
+use crate::model::{AtBat, Game, LiveState, Standing};
 use crate::source::DataSource;
 
 const BASE: &str = "https://api-gw.sports.naver.com";
@@ -76,6 +76,17 @@ impl DataSource for NaverSource {
     fn live(&self, game: &Game) -> Result<LiveState> {
         let url = format!("{}/schedule/games/{}/relay", self.base, game.id);
         map::live_from_relay(&self.get(&url)?, game.home.clone(), game.away.clone())
+    }
+
+    fn at_bats_of_inning(&self, game: &Game, inning: u8) -> Result<Vec<AtBat>> {
+        // 같은 relay 엔드포인트에 이닝만 얹는다. 응답 스키마는 기본 호출과 동일하고
+        // 요청한 이닝의 초·말이 모두 담긴다(실측). 범위 밖 이닝은 200 + 빈 배열이라
+        // 에러 경로를 타지 않는다.
+        let url = format!(
+            "{}/schedule/games/{}/relay?inning={inning}",
+            self.base, game.id
+        );
+        map::at_bats_from_relay(&self.get(&url)?)
     }
 
     fn standings(&self, year: u16) -> Result<Vec<Standing>> {
@@ -283,6 +294,25 @@ mod tests {
         let src = NaverSource::with_base(server.base_url());
         let live = src.live(&dummy_game()).unwrap();
         assert!(!live.current_pitches.is_empty());
+    }
+
+    /// 과거 이닝 경로는 요청 URL에 `?inning=N`을 실어야 하고(이게 없으면 서버가
+    /// 마지막 이닝을 주므로 되감기가 제자리를 맴돈다), 응답에서 그 이닝의 타석을
+    /// 뽑아야 한다. 실응답 fixture(`?inning=3`)로 양쪽을 함께 본다.
+    #[test]
+    fn at_bats_of_inning_requests_that_inning_and_parses_its_at_bats() {
+        const INN3: &str = include_str!("../../../tests/fixtures/relay_20260726LGHH_inn3.json");
+        let server = LocalServer::spawn("HTTP/1.1 200 OK", INN3);
+        let src = NaverSource::with_base(server.base_url());
+        let at_bats = src.at_bats_of_inning(&dummy_game(), 3).unwrap();
+
+        let req = server.recv_request().expect("no request captured");
+        let first_line = req.lines().next().unwrap_or_default();
+        assert!(
+            first_line.contains("/relay?inning=3"),
+            "inning was not asked for: {first_line}"
+        );
+        assert_eq!(at_bats.len(), 8);
     }
 
     #[test]

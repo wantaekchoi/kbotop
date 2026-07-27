@@ -1,5 +1,7 @@
 use crate::config::Config;
-use crate::model::{Game, GameStatus, LiveState, NewsItem, Standing};
+use std::collections::BTreeMap;
+
+use crate::model::{AtBat, Game, GameStatus, LiveState, NewsItem, Standing};
 use crate::poller::Update;
 use crossterm::event::KeyCode;
 
@@ -158,6 +160,15 @@ pub struct App {
     /// 하이라이트 없이 보여준다). live_atbat_sel이 가리키는 at-bat 안에서만
     /// 유효 — at-bat을 바꾸면(`[`/`]`) 함께 리셋된다.
     pub live_relay_cursor: Option<usize>,
+    /// 받아 둔 과거 이닝(v0.20 "과거 이닝 돌려보기"). 키는 이닝 번호, 값은 그
+    /// 이닝의 타석들. 끝난 이닝은 더 바뀌지 않으므로 한 번만 받는다 — **현재 이닝은
+    /// 넣지 않는다**(폴링이 계속 갱신하는 값이라 캐시하면 화면이 그 시점에 멈춘다).
+    /// 빈 값도 캐시한다: "받아 봤더니 타석이 없더라"를 기억해야 같은 이닝을 무한히
+    /// 다시 묻지 않는다. 게임을 바꾸면(enter_live) 통째로 비운다.
+    pub past_innings: BTreeMap<u8, Vec<AtBat>>,
+    /// 지금 받아오는 중인 이닝(None = 요청 없음). 되감기는 한 번에 한 이닝씩만
+    /// 거슬러 가므로 하나면 충분하다. 화면에는 "N회 불러오는 중"으로 나간다.
+    pub fetching_inning: Option<u8>,
     /// 응원 팀 KBO 코드(main이 --team/config favorite_team 별칭을 해석해 주입).
     /// UI 테마 액센트와 헤더 응원 배지에 쓴다.
     pub fav_code: Option<String>,
@@ -228,6 +239,8 @@ impl App {
             live_pitch_sel: None,
             live_atbat_sel: None,
             live_relay_cursor: None,
+            past_innings: BTreeMap::new(),
+            fetching_inning: None,
             fav_code: None,
             now_secs: 0,
             last_update_secs: None,
@@ -449,6 +462,8 @@ impl App {
                 // 돌려보기(v0.18): 이전/다음 타석. `]`로 최신까지 다시 따라오면
                 // live_atbat_sel을 None으로 되돌려 "라이브 추종" 모드로 복귀한다
                 // (그래야 그 뒤 폴링에서 새 타석이 자동으로 따라와진다).
+                // 이닝 경계 요청은 이 블록이 &self.screen을 놓은 뒤에 건다.
+                let mut want_earlier_inning = false;
                 if let Screen::Live { state: Some(s), .. } = &self.screen {
                     let len = s.at_bats.len();
                     // M-2: `no`가 결측이면 seq가 전부 0(또는 다른 값)으로 뭉개져
@@ -464,6 +479,13 @@ impl App {
                             .live_atbat_sel
                             .and_then(|seq| s.at_bats.iter().position(|ab| ab.seq == seq))
                             .unwrap_or(last);
+                        // 맨 앞 타석에서 `[`를 한 번 더: 그 앞 이닝을 받아온다(v0.20).
+                        // 응답은 현재 이닝만 담으므로, 여기서 멈추면 되감기가 이닝
+                        // 경계에 갇힌다 — 늦게 접속한 사람이 앞 이닝을 따라잡는 게
+                        // 이 기능의 원래 목적이다.
+                        if key == KeyCode::Char('[') && cur == 0 {
+                            want_earlier_inning = true;
+                        }
                         let next = if key == KeyCode::Char('[') {
                             cur.saturating_sub(1)
                         } else {
@@ -479,11 +501,22 @@ impl App {
                         self.live_relay_cursor = None;
                     }
                 }
+                if want_earlier_inning {
+                    self.request_earlier_inning();
+                }
                 self.pending_g = false;
             }
             KeyCode::Char('g') => {
                 if self.pending_g {
-                    self.selected = 0;
+                    // 라이브 화면에서 `j`/`k`가 문자중계 커서를 잡고 있으므로
+                    // `gg`/`G`도 같은 축의 양끝이어야 한다(v0.18 최종 리뷰 Minor).
+                    // 그전까지 이 둘은 화면에 보이지도 않는 목록 선택을 움직였고,
+                    // 그래서 문자중계 맨 위/맨 아래로 점프할 방법이 아예 없었다.
+                    if self.is_live_screen() {
+                        self.jump_relay_cursor(false);
+                    } else {
+                        self.selected = 0;
+                    }
                     self.pending_g = false;
                 } else {
                     self.pending_g = true;
@@ -491,7 +524,11 @@ impl App {
                 return false;
             }
             KeyCode::Char('G') => {
-                self.selected = self.current_len().saturating_sub(1);
+                if self.is_live_screen() {
+                    self.jump_relay_cursor(true);
+                } else {
+                    self.selected = self.current_len().saturating_sub(1);
+                }
                 self.pending_g = false;
             }
             KeyCode::Enter => {
@@ -587,6 +624,29 @@ impl App {
         self.live_pitch_sel = pitch;
     }
 
+    fn is_live_screen(&self) -> bool {
+        matches!(self.screen, Screen::Live { state: Some(_), .. })
+    }
+
+    /// `gg`/`G` — 문자중계 커서를 그 타석의 첫 줄/마지막 줄로 보낸다. 한 줄씩
+    /// 가는 `j`/`k`와 같은 축이고, 투구 선택도 같은 규칙으로 함께 따라온다.
+    fn jump_relay_cursor(&mut self, to_end: bool) {
+        let Screen::Live { state: Some(s), .. } = &self.screen else {
+            return;
+        };
+        let Some(last) = s
+            .active_relay_lines(self.live_atbat_sel)
+            .len()
+            .checked_sub(1)
+        else {
+            return; // 줄이 없으면 세울 자리도 없다(무동작 — j/k와 같다).
+        };
+        let idx = if to_end { last } else { 0 };
+        let pitch = s.pitch_at_relay_line(self.live_atbat_sel, idx);
+        self.live_relay_cursor = Some(idx);
+        self.live_pitch_sel = pitch;
+    }
+
     /// `←`/`→` — 보고 있는 타석(live_atbat_sel — 과거일 수도 있음)의 투구를
     /// 하나씩 짚어보고, **그 투구의 문자중계 줄로 커서를 옮긴다**(v0.19 연동의
     /// 반대 방향). 순환 없음; 선택 없음 = 전체 보기, `→`는 처음부터 `←`는
@@ -636,6 +696,73 @@ impl App {
         self.live_pitch_sel = None;
         self.live_atbat_sel = None;
         self.live_relay_cursor = None;
+        // 받아 둔 과거 이닝은 그 경기의 것이다 — 다른 경기로 들고 가면 남의 타석이
+        // 목록에 섞인다. 같은 경기로 다시 들어오는 경우도 함께 비우는 쪽을 택했다
+        // (재요청 비용은 이닝 하나뿐이고, 어긋난 캐시를 들고 있는 위험이 더 크다).
+        self.past_innings.clear();
+        self.fetching_inning = None;
+    }
+
+    /// 라벨("T9"/"B9"/"Inn 9")에서 이닝 번호를 뽑는다. 0이나 숫자 없음은 None —
+    /// `inn`이 결측일 때 파서가 만드는 "Inn 0"을 실재하는 이닝으로 오인하면
+    /// 0회를 요청하게 된다.
+    fn inning_number_of(label: &str) -> Option<u8> {
+        let digits: String = label.chars().filter(char::is_ascii_digit).collect();
+        digits.parse::<u8>().ok().filter(|n| *n > 0)
+    }
+
+    /// 지금 화면에 있는 가장 이른 타석보다 한 이닝 앞을 요청 대상으로 잡는다.
+    /// 이미 받아 둔 이닝은 건너뛴다 — 타석이 0건이던 이닝(캐시에 빈 값으로 남는다)에서
+    /// 같은 번호를 무한히 다시 묻지 않기 위해서다.
+    fn earlier_inning_target(&self) -> Option<u8> {
+        let Screen::Live { state: Some(s), .. } = &self.screen else {
+            return None;
+        };
+        let first = s
+            .at_bats
+            .first()
+            .and_then(|ab| Self::inning_number_of(&ab.inning_label))?;
+        let mut target = first.checked_sub(1)?;
+        while target >= 1 && self.past_innings.contains_key(&target) {
+            target -= 1;
+        }
+        (target >= 1).then_some(target)
+    }
+
+    /// 앞 이닝 요청을 예약한다. 실제 전송은 run() 루프가 `fetching_inning` 변화를
+    /// 보고 수행한다(App은 채널을 모른다 — watched_game과 동일 패턴).
+    /// 이미 요청이 떠 있으면 아무것도 하지 않는다: 되감기는 한 번에 한 이닝씩 간다.
+    fn request_earlier_inning(&mut self) {
+        if self.fetching_inning.is_some() {
+            return;
+        }
+        self.fetching_inning = self.earlier_inning_target();
+    }
+
+    /// 받아 둔 과거 이닝을 라이브 타석 목록 앞에 잇는다.
+    ///
+    /// 정렬·중복 판정 축은 `AtBat::seq`(응답의 `no`)다 — 실측상 경기 전체에 걸쳐
+    /// 유일·연속이라 이닝을 가로질러도 한 축으로 선다. **겹치면 라이브 쪽이 이긴다**:
+    /// 기본 `/relay`와 `?inning=<현재 이닝>`은 같은 데이터를 주는데(실측), 캐시본은
+    /// 그 시점에 멈춰 있고 라이브는 폴링으로 계속 갱신되기 때문이다.
+    fn merge_past_innings(past: &BTreeMap<u8, Vec<AtBat>>, live: &mut LiveState) {
+        if past.is_empty() {
+            return;
+        }
+        let live_seqs: std::collections::HashSet<i64> =
+            live.at_bats.iter().map(|ab| ab.seq).collect();
+        let mut merged: Vec<AtBat> = past
+            .values()
+            .flatten()
+            .filter(|ab| !live_seqs.contains(&ab.seq))
+            .cloned()
+            .collect();
+        merged.extend(live.at_bats.iter().cloned());
+        merged.sort_by_key(|ab| ab.seq);
+        // 캐시끼리 겹치는 일은 없어야 하지만(이닝별로 구간이 갈린다), 남으면 선택이
+        // seq로 고정되는 규칙이 깨지므로 여기서 막는다.
+        merged.dedup_by_key(|ab| ab.seq);
+        live.at_bats = merged;
     }
 
     /// 옵션 픽커 Enter: 현재 pane·커서의 항목을 적용하고 닫는다.
@@ -942,13 +1069,39 @@ impl App {
                                 }
                             }
                         }
+                        let mut l = l;
+                        Self::merge_past_innings(&self.past_innings, &mut l);
                         *state = Some(l);
                     }
+                }
+            }
+            Update::Inning {
+                game_id,
+                inning,
+                at_bats,
+            } => {
+                // Live와 같은 이유로 game id를 확인한다 — 화면을 옮긴 뒤 도착한
+                // 이전 게임의 응답이 지금 보는 경기에 남의 타석을 섞으면 안 된다.
+                let matches_screen =
+                    matches!(&self.screen, Screen::Live { game, .. } if game.id == game_id);
+                if matches_screen {
+                    self.past_innings.insert(inning, at_bats);
+                    if let Screen::Live { state: Some(s), .. } = &mut self.screen {
+                        Self::merge_past_innings(&self.past_innings, s);
+                    }
+                }
+                // 요청한 그 이닝이 왔을 때만 푼다. 다른 이닝의 뒤늦은 응답이
+                // 진행 중인 요청 표시를 지우면 로딩이 사라진 채로 대기하게 된다.
+                if self.fetching_inning == Some(inning) {
+                    self.fetching_inning = None;
                 }
             }
             Update::Error(e) => {
                 self.last_error = Some(e);
                 self.stale = true;
+                // 실패한 요청의 로딩 표시는 걷는다 — 캐시는 채우지 않으므로 사용자가
+                // 다시 눌러 재시도할 수 있다.
+                self.fetching_inning = None;
             }
             // compiler-mandated exhaustiveness arms; Fetching/News/Tips는 위 early return이
             // 전부 처리한다. unreachable!()로 두면 미래 리팩토링(early return 제거)이 곧바로
@@ -2387,5 +2540,287 @@ mod tests {
         let before = app.lang;
         app.on_key(KeyCode::Right);
         assert_ne!(app.lang, before, "language cycles");
+    }
+    // ---- v0.20: 과거 이닝 돌려보기 -------------------------------------------------
+
+    /// 모든 타석이 같은 이닝(`T{inning}`)에 속한 라이브 화면. 실제 응답이 그렇다 —
+    /// `/relay`는 마지막 이닝 하나만 담는다.
+    fn live_app_in_inning(inning: u8, n: usize) -> App {
+        let mut app = live_app_with_at_bats(n);
+        if let Screen::Live { state: Some(s), .. } = &mut app.screen {
+            for ab in &mut s.at_bats {
+                ab.inning_label = format!("T{inning}");
+            }
+            s.inning_label = format!("T{inning}");
+        }
+        app
+    }
+
+    fn at_bat(seq: i64, inning: u8, batter: &str) -> crate::model::AtBat {
+        crate::model::AtBat {
+            seq,
+            batter_name: batter.into(),
+            inning_label: format!("T{inning}"),
+            relay_lines: vec![crate::model::RelayLine::plain(format!("{batter}-line"))],
+            pitches: vec![crate::model::Pitch {
+                order: 1,
+                ..Default::default()
+            }],
+        }
+    }
+
+    /// 되감기가 이닝 경계에 닿으면 그 앞 이닝을 예약한다. 이게 없으면 `[`는
+    /// 현재 이닝 첫 타석에서 멈추고, 늦게 접속한 사람은 앞 이닝을 볼 방법이 없다.
+    #[test]
+    fn rewinding_past_the_first_at_bat_asks_for_the_previous_inning() {
+        let mut app = live_app_in_inning(5, 3);
+        assert_eq!(app.fetching_inning, None);
+
+        app.on_key(KeyCode::Char('[')); // 최신 → 가운데
+        app.on_key(KeyCode::Char('[')); // → 맨 앞
+        assert_eq!(app.fetching_inning, None, "아직 경계에 닿지 않았다");
+
+        app.on_key(KeyCode::Char('[')); // 경계에서 한 번 더
+        assert_eq!(app.fetching_inning, Some(4), "앞 이닝(4회)을 요청해야 한다");
+    }
+
+    /// 1회에서는 더 갈 데가 없다 — 0회를 요청하면 안 된다.
+    #[test]
+    fn rewinding_past_the_first_inning_requests_nothing() {
+        let mut app = live_app_in_inning(1, 2);
+        for _ in 0..5 {
+            app.on_key(KeyCode::Char('['));
+        }
+        assert_eq!(app.fetching_inning, None);
+    }
+
+    /// 요청이 떠 있는 동안 계속 눌러도 요청은 하나다(되감기는 한 이닝씩 간다).
+    #[test]
+    fn repeated_presses_while_a_request_is_in_flight_do_not_change_the_target() {
+        let mut app = live_app_in_inning(5, 1);
+        app.on_key(KeyCode::Char('['));
+        assert_eq!(app.fetching_inning, Some(4));
+        app.on_key(KeyCode::Char('['));
+        app.on_key(KeyCode::Char('['));
+        assert_eq!(
+            app.fetching_inning,
+            Some(4),
+            "in-flight 요청이 바뀌면 안 된다"
+        );
+    }
+
+    /// 도착한 과거 이닝은 캐시에 들어가고 화면 목록 **앞에** seq 순으로 붙는다.
+    #[test]
+    fn an_arriving_past_inning_is_prepended_in_seq_order() {
+        let mut app = live_app_in_inning(5, 3); // seq 100,101,102
+        app.apply(Update::Inning {
+            game_id: "g".into(),
+            inning: 4,
+            at_bats: vec![at_bat(98, 4, "earlier-a"), at_bat(99, 4, "earlier-b")],
+        });
+
+        let Screen::Live { state: Some(s), .. } = &app.screen else {
+            panic!("expected live screen");
+        };
+        let seqs: Vec<i64> = s.at_bats.iter().map(|ab| ab.seq).collect();
+        assert_eq!(seqs, vec![98, 99, 100, 101, 102]);
+        assert_eq!(app.fetching_inning, None, "도착했으면 로딩 표시를 푼다");
+        assert!(app.past_innings.contains_key(&4));
+    }
+
+    /// 겹치는 seq는 라이브 쪽이 이긴다 — 기본 `/relay`와 `?inning=<현재 이닝>`은
+    /// 같은 데이터를 주는데(실측), 캐시본은 그 시점에 멈춰 있고 라이브는 폴링으로
+    /// 계속 갱신된다. 캐시가 이기면 화면이 과거로 되돌아간다.
+    #[test]
+    fn on_a_seq_collision_the_live_copy_wins_over_the_cached_one() {
+        let mut app = live_app_in_inning(5, 1); // seq 100 하나, batter0
+        app.apply(Update::Inning {
+            game_id: "g".into(),
+            inning: 4,
+            at_bats: vec![at_bat(100, 4, "stale-copy"), at_bat(99, 4, "earlier")],
+        });
+
+        let Screen::Live { state: Some(s), .. } = &app.screen else {
+            panic!("expected live screen");
+        };
+        assert_eq!(
+            s.at_bats.iter().map(|ab| ab.seq).collect::<Vec<_>>(),
+            vec![99, 100]
+        );
+        assert_eq!(
+            s.at_bats.last().unwrap().batter_name,
+            "batter0",
+            "겹친 seq는 라이브 쪽이 남아야 한다"
+        );
+    }
+
+    /// 캐시는 이어지는 라이브 폴링에도 살아남아야 한다. 폴러가 주는 LiveState는
+    /// 늘 현재 이닝만 담으므로, 병합하지 않으면 다음 폴링 한 번에 되감아 둔
+    /// 과거 이닝이 화면에서 사라진다.
+    #[test]
+    fn a_later_live_poll_keeps_the_cached_past_innings() {
+        let mut app = live_app_in_inning(5, 2);
+        app.apply(Update::Inning {
+            game_id: "g".into(),
+            inning: 4,
+            at_bats: vec![at_bat(99, 4, "earlier")],
+        });
+
+        // 폴러의 다음 응답: 현재 이닝만 담긴 새 상태.
+        let fresh = match &app.screen {
+            Screen::Live { state: Some(s), .. } => {
+                let mut fresh = s.clone();
+                fresh.at_bats.retain(|ab| ab.seq >= 100);
+                fresh
+            }
+            _ => panic!("expected live screen"),
+        };
+        app.apply(Update::Live("g".into(), fresh));
+
+        let Screen::Live { state: Some(s), .. } = &app.screen else {
+            panic!("expected live screen");
+        };
+        assert!(
+            s.at_bats.iter().any(|ab| ab.seq == 99),
+            "라이브 폴링이 과거 이닝을 지웠다: {:?}",
+            s.at_bats.iter().map(|ab| ab.seq).collect::<Vec<_>>()
+        );
+    }
+
+    /// 타석이 0건인 이닝도 "받아 봤다"로 캐시한다 — 그러지 않으면 같은 이닝을
+    /// 무한히 다시 묻는다. 다음 요청은 그 앞 이닝으로 내려간다.
+    #[test]
+    fn an_empty_inning_is_remembered_and_the_next_request_skips_it() {
+        let mut app = live_app_in_inning(5, 1);
+        app.on_key(KeyCode::Char('['));
+        assert_eq!(app.fetching_inning, Some(4));
+        app.apply(Update::Inning {
+            game_id: "g".into(),
+            inning: 4,
+            at_bats: vec![],
+        });
+        assert_eq!(app.fetching_inning, None);
+
+        app.on_key(KeyCode::Char('['));
+        assert_eq!(
+            app.fetching_inning,
+            Some(3),
+            "빈 이닝을 건너뛰고 그 앞을 묻는다"
+        );
+    }
+
+    /// 화면을 옮긴 뒤 도착한 이전 경기의 응답이 지금 보는 경기에 섞이면 안 된다.
+    #[test]
+    fn a_past_inning_for_another_game_is_ignored() {
+        let mut app = live_app_in_inning(5, 2);
+        app.apply(Update::Inning {
+            game_id: "other-game".into(),
+            inning: 4,
+            at_bats: vec![at_bat(99, 4, "stranger")],
+        });
+
+        let Screen::Live { state: Some(s), .. } = &app.screen else {
+            panic!("expected live screen");
+        };
+        assert!(s.at_bats.iter().all(|ab| ab.seq >= 100));
+        assert!(app.past_innings.is_empty());
+    }
+
+    /// 다른 경기로 들어가면 캐시를 비운다 — 남의 타석이 목록에 섞이지 않게.
+    #[test]
+    fn entering_another_game_clears_the_inning_cache() {
+        let mut app = live_app_in_inning(5, 2);
+        app.apply(Update::Inning {
+            game_id: "g".into(),
+            inning: 4,
+            at_bats: vec![at_bat(99, 4, "earlier")],
+        });
+        assert!(!app.past_innings.is_empty());
+
+        app.enter_live(game("other-game"));
+        assert!(app.past_innings.is_empty());
+        assert_eq!(app.fetching_inning, None);
+    }
+
+    /// 요청이 실패하면 로딩 표시는 걷되 캐시는 채우지 않는다 — 다시 눌러
+    /// 재시도할 수 있어야 한다(일시적 네트워크 실패로 그 이닝을 영영 못 보면 안 된다).
+    #[test]
+    fn a_failed_inning_request_clears_the_spinner_and_stays_retryable() {
+        let mut app = live_app_in_inning(5, 1);
+        app.on_key(KeyCode::Char('['));
+        assert_eq!(app.fetching_inning, Some(4));
+
+        app.apply(Update::Error("boom".into()));
+        assert_eq!(app.fetching_inning, None);
+        assert!(app.past_innings.is_empty());
+
+        app.on_key(KeyCode::Char('['));
+        assert_eq!(
+            app.fetching_inning,
+            Some(4),
+            "같은 이닝을 다시 시도할 수 있어야 한다"
+        );
+    }
+
+    /// "Inn 0"(응답의 inn이 결측일 때 파서가 만드는 라벨)을 실재 이닝으로 오인해
+    /// 0회를 요청하면 안 된다.
+    #[test]
+    fn an_unknown_inning_label_does_not_produce_a_request() {
+        let mut app = live_app_with_at_bats(2);
+        if let Screen::Live { state: Some(s), .. } = &mut app.screen {
+            for ab in &mut s.at_bats {
+                ab.inning_label = "Inn 0".into();
+            }
+        }
+        for _ in 0..3 {
+            app.on_key(KeyCode::Char('['));
+        }
+        assert_eq!(app.fetching_inning, None);
+    }
+
+    /// 라이브 화면의 `gg`/`G`는 문자중계 커서의 양끝으로 간다(v0.18 리뷰 Minor).
+    /// 그전까지 이 둘은 화면에 보이지도 않는 목록 선택을 움직여, 문자중계 맨 위/
+    /// 맨 아래로 점프할 방법이 없었다.
+    #[test]
+    fn gg_and_shift_g_move_the_relay_cursor_in_the_live_view() {
+        let mut app = live_app_with_at_bats(2); // 타석마다 relay_lines 2줄
+        assert_eq!(app.live_relay_cursor, None);
+
+        app.on_key(KeyCode::Char('g'));
+        app.on_key(KeyCode::Char('g'));
+        assert_eq!(app.live_relay_cursor, Some(0), "gg는 첫 줄로");
+
+        app.on_key(KeyCode::Char('G'));
+        assert_eq!(app.live_relay_cursor, Some(1), "G는 마지막 줄로");
+    }
+
+    /// 목록 화면에서는 기존 동작 그대로다 — 라이브에서만 축이 바뀐다.
+    #[test]
+    fn gg_and_shift_g_still_move_the_list_selection_outside_the_live_view() {
+        let mut app = App::new(Default::default());
+        app.games = vec![game("a"), game("b"), game("c")];
+        app.selected = 1;
+
+        app.on_key(KeyCode::Char('G'));
+        assert_eq!(app.selected, 2);
+        assert_eq!(app.live_relay_cursor, None);
+
+        app.on_key(KeyCode::Char('g'));
+        app.on_key(KeyCode::Char('g'));
+        assert_eq!(app.selected, 0);
+    }
+
+    /// `G`로 간 줄이 투구 줄이면 그 투구가 함께 선택된다 — `j`/`k`와 같은 규칙
+    /// (v0.19 연동). 커서만 옮기고 투구를 그대로 두면 두 선택이 다른 사건을 가리킨다.
+    #[test]
+    fn jumping_the_relay_cursor_also_moves_the_pitch_selection() {
+        let mut app = live_app_with_at_bats(1); // 마지막 줄(line-0-b)이 투구 줄
+        app.on_key(KeyCode::Char('G'));
+        assert_eq!(app.live_relay_cursor, Some(1));
+        assert_eq!(
+            app.live_pitch_sel,
+            Some(0),
+            "투구 줄이면 그 투구가 함께 선택된다"
+        );
     }
 }

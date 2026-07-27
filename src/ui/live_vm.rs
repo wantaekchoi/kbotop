@@ -122,7 +122,10 @@ pub(crate) struct LiveVm<'a> {
     /// 이 클램프(`idx.min(len-1)`)는 렌더에 있었다(리뷰 I-1). 렌더는 이제 범위
     /// 밖 인덱스를 걱정할 필요가 없다.
     pub relay_cursor: Option<usize>,
-    pub relay_title: &'static str,
+    /// 문자중계 블록 타이틀. 과거 이닝을 받아오는 중이면 어느 이닝을 기다리는지
+    /// 덧붙는다(v0.20) — 되감기가 경계에서 멈춘 것처럼 보이지 않게 한다. 그래서
+    /// 정적 라벨이 아니라 조립된 String이다.
+    pub relay_title: String,
     /// strikezone 등 VM을 거치지 않는 형제 위젯에 그대로 넘겨줄 라벨
     /// 테이블(통과값). `render()`가 로딩 문구에도 라벨이 필요해 자체적으로
     /// `app.labels()`를 부르므로, 이 필드가 없으면 성공 경로에서 같은 정적
@@ -261,7 +264,14 @@ impl<'a> LiveVm<'a> {
             selected_pitch,
             relay_rows,
             relay_cursor,
-            relay_title: l.title_relay,
+            relay_title: match app.fetching_inning {
+                Some(inning) => format!(
+                    "{}— {} ",
+                    l.title_relay,
+                    l.loading_inning.replace("{}", &inning.to_string())
+                ),
+                None => l.title_relay.to_string(),
+            },
             labels: l,
         })
     }

@@ -355,6 +355,9 @@ fn main() -> Result<()> {
     // 매 tick 변화를 감지해 대신 보낸다.
     let mut sent_date = date_for_app;
     let mut sent_poll = live_poll_secs;
+    // 과거 이닝 요청은 App이 fetching_inning으로 예약하고 여기서 폴러에 통지한다
+    // (App은 채널을 모른다 — watched_game/SetDate와 동일 패턴).
+    let mut sent_inning: Option<u8> = None;
 
     let res = run(
         &mut term,
@@ -366,6 +369,7 @@ fn main() -> Result<()> {
         &term_signal,
         &mut sent_date,
         &mut sent_poll,
+        &mut sent_inning,
     );
 
     // 터미널 복구는 run()의 성공 여부와 무관하게 항상 실행한다 — 복구 먼저, 에러 전파는 그 다음.
@@ -406,6 +410,7 @@ fn run(
     term_signal: &AtomicBool,
     sent_date: &mut String,
     sent_poll: &mut u64,
+    sent_inning: &mut Option<u8>,
 ) -> Result<()> {
     // 팀 지정 시 첫 Games 수신 후 자동 진입 처리 플래그. `--team`이 없으면
     // config.toml의 favorite_team을 대신 쓴다 — 그러지 않으면 config 파일로만
@@ -485,6 +490,17 @@ fn run(
         if app.poll_choice != *sent_poll {
             let _ = tx_cmd.send(Command::SetLivePoll(app.poll_choice));
             *sent_poll = app.poll_choice;
+        }
+        // 되감기가 이닝 경계에 닿아 App이 앞 이닝을 예약했으면 여기서 한 번만 보낸다.
+        // 응답이 오면 App이 fetching_inning을 None으로 되돌리므로 같은 이닝을
+        // 다시 예약해도(사용자가 또 눌러도) 새 요청으로 나간다.
+        if app.fetching_inning != *sent_inning {
+            if let Some(inning) = app.fetching_inning {
+                if let Some(g) = app.watched_game().cloned() {
+                    let _ = tx_cmd.send(Command::FetchInning { game: g, inning });
+                }
+            }
+            *sent_inning = app.fetching_inning;
         }
         // Standings 탭이 떠 있는 동안은 조건 없이 매 tick RefreshStandings를 보낸다.
         // 이전엔 `standings.is_empty()`일 때만 보내, 최초 로드 이후엔 W/L·GB가

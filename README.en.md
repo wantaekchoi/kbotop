@@ -7,7 +7,7 @@
 [![crates.io](https://img.shields.io/crates/v/kbotop?style=flat-square)](https://crates.io/crates/kbotop)
 [![Release](https://img.shields.io/github/v/release/wantaekchoi/kbotop?style=flat-square)](https://github.com/wantaekchoi/kbotop/releases)
 [![Built with Ratatui](https://img.shields.io/badge/built%20with-ratatui-1c1c1c?style=flat-square)](https://ratatui.rs)
-[![License: Unlicense OR MIT](https://img.shields.io/badge/license-Unlicense%20OR%20MIT-blue?style=flat-square)](LICENSE)
+[![License: Unlicense](https://img.shields.io/badge/license-Unlicense-blue?style=flat-square)](LICENSE)
 [![Downloads](https://img.shields.io/crates/d/kbotop?style=flat-square)](https://crates.io/crates/kbotop)
 [![CI](https://img.shields.io/github/actions/workflow/status/wantaekchoi/kbotop/ci.yml?style=flat-square&label=CI)](https://github.com/wantaekchoi/kbotop/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/wantaekchoi/kbotop/branch/main/graph/badge.svg)](https://codecov.io/gh/wantaekchoi/kbotop)
@@ -59,8 +59,8 @@ Vim-style navigation; the in-app `?` help is the source of truth.
 - Team links (official site / goods shop): `o`
 - Open the news list: `n` (then `Enter` on an item to read it)
 - Inspect pitches: `Left` / `Right` (live view)
-- Rewind to a previous/next at-bat: `[` / `]` (live view)
-- Move the play-by-play cursor: `j` / `k` (live view)
+- Rewind to a previous/next at-bat: `[` / `]` (live view) — press again at the first at-bat of an inning to pull in the inning before it
+- Move the play-by-play cursor: `j` / `k`, or `gg` / `G` for the ends (live view)
 - Help: `?`
 - Quit: `q`
 
@@ -80,9 +80,7 @@ News comes from each publisher's own RSS feed, showing only the headline and a s
 
 ## License
 
-[Unlicense or MIT](LICENSE), whichever you prefer. The Unlicense is there so
-the code can be used without conditions; MIT is kept alongside it for
-organizations that cannot accept a public-domain dedication.
+[The Unlicense](LICENSE) — public domain. Use it without conditions.
 
 Licenses of the open source linked into kbotop binaries are reproduced in
 [THIRD-PARTY.md](THIRD-PARTY.md).

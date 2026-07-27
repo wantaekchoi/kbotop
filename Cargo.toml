@@ -1,12 +1,12 @@
 [package]
 name = "kbotop"
-version = "0.19.0"
+version = "0.20.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Watch KBO baseball in your terminal, with strike-zone pitch tracking."
 repository = "https://github.com/wantaekchoi/kbotop"
 homepage = "https://github.com/wantaekchoi/kbotop"
-license = "Unlicense OR MIT"
+license = "Unlicense"
 readme = "README.en.md"
 keywords = ["kbo", "baseball", "tui", "terminal", "scoreboard"]
 categories = ["command-line-utilities"]

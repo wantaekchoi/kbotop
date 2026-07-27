@@ -1,8 +1,11 @@
 use kbotop::error::Error;
 use kbotop::model::Team;
-use kbotop::source::naver::map::live_from_relay;
+use kbotop::source::naver::map::{at_bats_from_relay, live_from_relay};
 
 const RELAY: &str = include_str!("fixtures/relay_20260719KTLG.json");
+/// `?inning=3` 실응답(2026-07-26 LG:한화). 기본 `/relay`가 마지막 이닝만 주는 것과
+/// 달리 요청한 이닝의 초·말이 모두 담긴다(실측 `no` 22~31, 투구 25).
+const RELAY_INN3: &str = include_str!("fixtures/relay_20260726LGHH_inn3.json");
 
 fn team(c: &str, n: &str) -> Team {
     Team {
@@ -206,5 +209,64 @@ fn missing_text_relay_data_is_a_data_error_not_a_config_error() {
     assert!(
         !err.to_string().starts_with("config error:"),
         "unexpected config-error framing: {err}"
+    );
+}
+
+/// `?inning=N` 응답에서 그 이닝의 타석만 뽑는다. 이 경로는 스코어보드·카운트를
+/// 쓰지 않는다 — 실측상 `currentGameState`는 어느 이닝을 요청해도 **현재** 값이라
+/// 과거 이닝 화면에 섞으면 "한 화면이 두 상황을 말하는" v0.18의 결함이 재현된다.
+#[test]
+fn at_bats_from_a_past_inning_response_carry_that_innings_sequence_and_pitches() {
+    let at_bats = at_bats_from_relay(RELAY_INN3).unwrap();
+
+    // fixture 실측: textRelays 10블록 중 타석으로 볼 항목 8개, no 22~31 구간.
+    assert_eq!(
+        at_bats.len(),
+        8,
+        "at-bats parsed from the inning-3 response"
+    );
+
+    let seqs: Vec<i64> = at_bats.iter().map(|ab| ab.seq).collect();
+    let mut sorted = seqs.clone();
+    sorted.sort_unstable();
+    assert_eq!(
+        seqs, sorted,
+        "at-bats must run oldest→newest like live_from_relay"
+    );
+    assert!(
+        seqs.iter().all(|s| (22..=31).contains(s)),
+        "seqs outside the inning-3 block: {seqs:?}"
+    );
+
+    // 과거 이닝에도 투구 추적이 실려 온다 — 존·측면 뷰가 그대로 산다.
+    let pitches: usize = at_bats.iter().map(|ab| ab.pitches.len()).sum();
+    assert!(pitches > 0, "no pitch tracking in the past-inning response");
+
+    // 그 이닝의 타석이므로 이닝 라벨이 3회여야 한다(초/말 양쪽이 섞여 온다).
+    assert!(
+        at_bats.iter().all(|ab| ab.inning_label.contains('3')),
+        "unexpected inning labels: {:?}",
+        at_bats
+            .iter()
+            .map(|ab| &ab.inning_label)
+            .collect::<Vec<_>>()
+    );
+}
+
+/// 범위 밖 이닝(`?inning=99`)은 200에 빈 textRelays로 온다(실측). 에러가 아니라
+/// 빈 목록이어야 호출부가 "그 이닝은 없다"로 캐시해 재요청을 멈출 수 있다.
+#[test]
+fn an_empty_inning_response_yields_no_at_bats_instead_of_an_error() {
+    let json = r#"{"result":{"textRelayData":{"textRelays":[]}}}"#;
+    assert!(at_bats_from_relay(json).unwrap().is_empty());
+}
+
+/// textRelayData 자체가 없는 응답은 live_from_relay와 같은 이유로 Error::Data다.
+#[test]
+fn at_bats_from_relay_reports_missing_text_relay_data_as_a_data_error() {
+    let err = at_bats_from_relay(r#"{"result":{}}"#).unwrap_err();
+    assert!(
+        matches!(err, Error::Data(_)),
+        "expected Error::Data, got: {err:?}"
     );
 }

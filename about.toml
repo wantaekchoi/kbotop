@@ -28,4 +28,4 @@ ignore-build-dependencies = true
 ignore-dev-dependencies = true
 
 [kbotop]
-accepted = ["Unlicense", "MIT"]
+accepted = ["Unlicense"]
