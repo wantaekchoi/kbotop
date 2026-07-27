@@ -93,7 +93,7 @@ pub fn draw(f: &mut Frame, app: &App) {
                 Span::styled(l.tip_label, Style::default().add_modifier(Modifier::DIM)),
                 Span::styled(
                     text::ellipsize(
-                        tips::pick(&app.tips_override, app.now_secs),
+                        tips::pick(&app.tips_override, app.lang, app.now_secs),
                         width.saturating_sub(text::display_width(l.tip_label)),
                     ),
                     Style::default().add_modifier(Modifier::DIM),

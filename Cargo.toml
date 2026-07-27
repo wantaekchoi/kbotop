@@ -1,6 +1,6 @@
 [package]
 name = "kbotop"
-version = "0.20.0"
+version = "0.21.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Watch KBO baseball in your terminal, with strike-zone pitch tracking."
@@ -16,6 +16,8 @@ categories = ["command-line-utilities"]
 include = [
     "src/**",
     "data/tips.txt",
+    "data/tips.en.txt",
+    "data/tips.ja.txt",
     "LICENSE",
     "README.md",
     "README.en.md",

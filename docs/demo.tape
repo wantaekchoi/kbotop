@@ -17,7 +17,7 @@ Set Padding 24
 Set TypingSpeed 55ms
 
 Hide
-Type "HOME=$(mktemp -d) kbotop --date 2026-07-19 --team kiwoom --lang ko"
+Type "HOME=$(mktemp -d) kbotop --date 2026-07-19 --team doosan --lang ko"
 Enter
 Show
 
@@ -31,18 +31,23 @@ Sleep 1500ms
 # 돌려보기(v0.18): `[`로 지나간 타석을 되감는다 — 그 타석의 문자중계·존·측면이
 # 함께 따라온다. 중계에 이미 실려 오던 데이터인데 지금까진 그리지 않고 버렸다.
 Type "["
-Sleep 900ms
+Sleep 800ms
 Type "["
-Sleep 900ms
+Sleep 800ms
 Type "["
-Sleep 900ms
+Sleep 800ms
 Type "["
-Sleep 900ms
+Sleep 800ms
 Type "["
-Sleep 1200ms
+Sleep 800ms
+Type "["
+Sleep 800ms
+Type "["
+Sleep 800ms
+Sleep 800ms
 
-# v0.20: 그 이닝(11회, 타석 6개)의 첫 타석에서 한 번 더 누르면 앞 이닝을 받아온다
-# — "10회 불러오는 중"이 잠깐 뜨고, 이어서 10회 타석이 목록 앞에 붙는다
+# v0.20~: 그 이닝(9회, 타석 8개)의 첫 타석에서 한 번 더 누르면 앞 이닝을 받아온다
+# — "8회 불러오는 중"이 잠깐 뜨고, 이어서 8회 타석이 목록 앞에 붙는다
 Type "["
 Sleep 2600ms
 Type "["

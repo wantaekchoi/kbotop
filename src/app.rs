@@ -1,5 +1,5 @@
 use crate::config::Config;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::model::{AtBat, Game, GameStatus, LiveState, NewsItem, Standing};
 use crate::poller::Update;
@@ -160,12 +160,20 @@ pub struct App {
     /// 하이라이트 없이 보여준다). live_atbat_sel이 가리키는 at-bat 안에서만
     /// 유효 — at-bat을 바꾸면(`[`/`]`) 함께 리셋된다.
     pub live_relay_cursor: Option<usize>,
-    /// 받아 둔 과거 이닝(v0.20 "과거 이닝 돌려보기"). 키는 이닝 번호, 값은 그
-    /// 이닝의 타석들. 끝난 이닝은 더 바뀌지 않으므로 한 번만 받는다 — **현재 이닝은
-    /// 넣지 않는다**(폴링이 계속 갱신하는 값이라 캐시하면 화면이 그 시점에 멈춘다).
-    /// 빈 값도 캐시한다: "받아 봤더니 타석이 없더라"를 기억해야 같은 이닝을 무한히
-    /// 다시 묻지 않는다. 게임을 바꾸면(enter_live) 통째로 비운다.
-    pub past_innings: BTreeMap<u8, Vec<AtBat>>,
+    /// 받아 둔 과거 이닝(v0.20). **경기 id → 이닝 번호 → 그 이닝의 타석들**(v0.21).
+    ///
+    /// 끝난 이닝은 더 바뀌지 않으므로 한 번만 받는다 — **현재 이닝은 넣지 않는다**
+    /// (폴링이 계속 갱신하는 값이라 캐시하면 화면이 그 시점에 멈춘다). 빈 값도
+    /// 캐시한다: "받아 봤더니 타석이 없더라"를 기억해야 같은 이닝을 무한히 다시
+    /// 묻지 않는다.
+    ///
+    /// v0.20은 화면을 옮길 때마다 통째로 비웠다(남의 타석이 섞이는 걸 막으려고).
+    /// v0.21은 **키가 경기 id라 섞일 수 없으므로** 비우지 않는다 — 나갔다 같은
+    /// 경기로 돌아오면 되감아 둔 이닝이 그대로 있다. 낡은 캐시가 안전한 이유는
+    /// 여기 들어오는 게 늘 "화면 최전방 이닝 − 1", 즉 이미 지난 이닝이기 때문이다.
+    /// 상한은 두지 않는다: 하루 5경기를 다 돌아도 경기당 9이닝 남짓이고, 상한
+    /// 로직이 버는 것보다 "언제 버릴지" 판단이 틀릴 위험이 크다.
+    pub past_innings: HashMap<String, BTreeMap<u8, Vec<AtBat>>>,
     /// 지금 받아오는 중인 이닝(None = 요청 없음). 되감기는 한 번에 한 이닝씩만
     /// 거슬러 가므로 하나면 충분하다. 화면에는 "N회 불러오는 중"으로 나간다.
     pub fetching_inning: Option<u8>,
@@ -239,7 +247,7 @@ impl App {
             live_pitch_sel: None,
             live_atbat_sel: None,
             live_relay_cursor: None,
-            past_innings: BTreeMap::new(),
+            past_innings: HashMap::new(),
             fetching_inning: None,
             fav_code: None,
             now_secs: 0,
@@ -696,11 +704,18 @@ impl App {
         self.live_pitch_sel = None;
         self.live_atbat_sel = None;
         self.live_relay_cursor = None;
-        // 받아 둔 과거 이닝은 그 경기의 것이다 — 다른 경기로 들고 가면 남의 타석이
-        // 목록에 섞인다. 같은 경기로 다시 들어오는 경우도 함께 비우는 쪽을 택했다
-        // (재요청 비용은 이닝 하나뿐이고, 어긋난 캐시를 들고 있는 위험이 더 크다).
-        self.past_innings.clear();
+        // past_innings는 비우지 않는다(v0.21) — 경기 id로 나뉘어 있어 남의 타석이
+        // 섞일 수 없고, 나갔다 돌아오면 되감아 둔 이닝이 그대로 있어야 한다.
+        // fetching_inning은 화면에 딸린 상태라 리셋한다.
         self.fetching_inning = None;
+    }
+
+    /// 그 경기에 대해 받아 둔 이닝들. 없으면 빈 맵을 빌려준다 — 호출부가 매번
+    /// Option을 풀지 않게 한다.
+    pub fn cached_innings_of(&self, game_id: &str) -> &BTreeMap<u8, Vec<AtBat>> {
+        static EMPTY: std::sync::LazyLock<BTreeMap<u8, Vec<AtBat>>> =
+            std::sync::LazyLock::new(BTreeMap::new);
+        self.past_innings.get(game_id).unwrap_or(&EMPTY)
     }
 
     /// 라벨("T9"/"B9"/"Inn 9")에서 이닝 번호를 뽑는다. 0이나 숫자 없음은 None —
@@ -715,15 +730,20 @@ impl App {
     /// 이미 받아 둔 이닝은 건너뛴다 — 타석이 0건이던 이닝(캐시에 빈 값으로 남는다)에서
     /// 같은 번호를 무한히 다시 묻지 않기 위해서다.
     fn earlier_inning_target(&self) -> Option<u8> {
-        let Screen::Live { state: Some(s), .. } = &self.screen else {
+        let Screen::Live {
+            game,
+            state: Some(s),
+        } = &self.screen
+        else {
             return None;
         };
         let first = s
             .at_bats
             .first()
             .and_then(|ab| Self::inning_number_of(&ab.inning_label))?;
+        let cached = self.cached_innings_of(&game.id);
         let mut target = first.checked_sub(1)?;
-        while target >= 1 && self.past_innings.contains_key(&target) {
+        while target >= 1 && cached.contains_key(&target) {
             target -= 1;
         }
         (target >= 1).then_some(target)
@@ -1070,7 +1090,10 @@ impl App {
                             }
                         }
                         let mut l = l;
-                        Self::merge_past_innings(&self.past_innings, &mut l);
+                        let cached = self.past_innings.get(&id);
+                        if let Some(past) = cached {
+                            Self::merge_past_innings(past, &mut l);
+                        }
                         *state = Some(l);
                     }
                 }
@@ -1085,9 +1108,15 @@ impl App {
                 let matches_screen =
                     matches!(&self.screen, Screen::Live { game, .. } if game.id == game_id);
                 if matches_screen {
-                    self.past_innings.insert(inning, at_bats);
-                    if let Screen::Live { state: Some(s), .. } = &mut self.screen {
-                        Self::merge_past_innings(&self.past_innings, s);
+                    self.past_innings
+                        .entry(game_id.clone())
+                        .or_default()
+                        .insert(inning, at_bats);
+                    let cached = self.past_innings.get(&game_id).cloned();
+                    if let (Some(past), Screen::Live { state: Some(s), .. }) =
+                        (cached, &mut self.screen)
+                    {
+                        Self::merge_past_innings(&past, s);
                     }
                 }
                 // 요청한 그 이닝이 왔을 때만 푼다. 다른 이닝의 뒤늦은 응답이
@@ -2625,7 +2654,7 @@ mod tests {
         let seqs: Vec<i64> = s.at_bats.iter().map(|ab| ab.seq).collect();
         assert_eq!(seqs, vec![98, 99, 100, 101, 102]);
         assert_eq!(app.fetching_inning, None, "도착했으면 로딩 표시를 푼다");
-        assert!(app.past_innings.contains_key(&4));
+        assert!(app.cached_innings_of("g").contains_key(&4));
     }
 
     /// 겹치는 seq는 라이브 쪽이 이긴다 — 기본 `/relay`와 `?inning=<현재 이닝>`은
@@ -2723,23 +2752,135 @@ mod tests {
             panic!("expected live screen");
         };
         assert!(s.at_bats.iter().all(|ab| ab.seq >= 100));
-        assert!(app.past_innings.is_empty());
+        assert!(
+            app.past_innings.is_empty(),
+            "다른 경기의 응답은 캐시에도 안 들어간다"
+        );
     }
 
-    /// 다른 경기로 들어가면 캐시를 비운다 — 남의 타석이 목록에 섞이지 않게.
+    /// 라이브를 나갔다 **같은 경기로** 돌아오면 되감아 둔 이닝이 그대로 있어야 한다
+    /// (v0.21). v0.20까지는 enter_live가 캐시를 통째로 비워 매번 다시 받았다.
     #[test]
-    fn entering_another_game_clears_the_inning_cache() {
+    fn returning_to_the_same_game_keeps_its_cached_innings() {
         let mut app = live_app_in_inning(5, 2);
         app.apply(Update::Inning {
             game_id: "g".into(),
             inning: 4,
             at_bats: vec![at_bat(99, 4, "earlier")],
         });
-        assert!(!app.past_innings.is_empty());
+
+        app.enter_live(game("g")); // 목록으로 나갔다 같은 경기로 재진입
+        assert!(
+            app.cached_innings_of("g").contains_key(&4),
+            "같은 경기로 돌아왔는데 캐시가 비었다"
+        );
+        assert_eq!(
+            app.fetching_inning, None,
+            "요청 중 표시는 화면 상태라 리셋한다"
+        );
+    }
+
+    /// **재진입 시나리오 전체**: 되감아 8회를 받아 둔 뒤 목록으로 나갔다가 같은
+    /// 경기로 다시 들어오면, 첫 폴링(Update::Live)에서 8회가 다시 붙어 있어야 한다.
+    ///
+    /// 실행 확인이 여기서 애매했다 — PTY 캡처가 프레임 diff라 중간 화면을 놓쳐
+    /// "8회로 넘어갔는지"를 눈으로 확정하지 못했다. 그래서 그 지점을 값으로 고정한다.
+    /// 이 테스트가 없으면 `enter_live` → `Update::Live` 경로에서 병합이 빠져도
+    /// 나머지 테스트는 전부 통과한다.
+    #[test]
+    fn reentering_the_same_game_restores_the_cached_innings_on_the_next_poll() {
+        let mut app = live_app_in_inning(9, 2); // 9회 타석 seq 100·101
+        app.apply(Update::Inning {
+            game_id: "g".into(),
+            inning: 8,
+            at_bats: vec![at_bat(98, 8, "eighth-a"), at_bat(99, 8, "eighth-b")],
+        });
+
+        // 목록으로 나갔다가(Screen::List) 같은 경기로 재진입 — state는 None으로 리셋된다.
+        app.screen = Screen::List;
+        app.enter_live(game("g"));
+        assert!(
+            matches!(app.screen, Screen::Live { state: None, .. }),
+            "재진입 직후에는 아직 상태가 없다"
+        );
+
+        // 폴러의 첫 응답: 늘 그렇듯 현재 이닝(9회)만 담겨 온다.
+        let mut fresh = match &live_app_in_inning(9, 2).screen {
+            Screen::Live { state: Some(s), .. } => s.clone(),
+            _ => panic!("expected live screen"),
+        };
+        fresh.at_bats.retain(|ab| ab.seq >= 100);
+        app.apply(Update::Live("g".into(), fresh));
+
+        let Screen::Live { state: Some(s), .. } = &app.screen else {
+            panic!("expected live screen");
+        };
+        assert_eq!(
+            s.at_bats.iter().map(|ab| ab.seq).collect::<Vec<_>>(),
+            vec![98, 99, 100, 101],
+            "재진입 후 첫 폴링에서 받아 둔 8회가 붙지 않았다"
+        );
+
+        // 그러면 맨 앞 타석은 8회이므로, 거기서 `[`를 더 눌러도 8회를 다시 묻지 않는다.
+        app.live_atbat_sel = Some(98);
+        app.on_key(KeyCode::Char('['));
+        assert_eq!(
+            app.fetching_inning,
+            Some(7),
+            "8회가 캐시에 있는데 또 요청했다"
+        );
+    }
+
+    /// 다른 경기의 캐시는 서로 섞이지 않는다. v0.20은 `clear()`로 막았고
+    /// v0.21은 키가 경기 id라 **구조적으로** 섞일 수 없다.
+    #[test]
+    fn each_game_keeps_its_own_inning_cache() {
+        let mut app = live_app_in_inning(5, 2);
+        app.apply(Update::Inning {
+            game_id: "g".into(),
+            inning: 4,
+            at_bats: vec![at_bat(99, 4, "earlier")],
+        });
 
         app.enter_live(game("other-game"));
-        assert!(app.past_innings.is_empty());
-        assert_eq!(app.fetching_inning, None);
+        assert!(
+            app.cached_innings_of("other-game").is_empty(),
+            "다른 경기가 남의 캐시를 물려받았다"
+        );
+        assert!(
+            app.cached_innings_of("g").contains_key(&4),
+            "원래 경기의 캐시까지 사라졌다"
+        );
+    }
+
+    /// 다른 경기의 캐시가 화면 목록에 섞여 들어오면 안 된다 — 병합은 지금 보는
+    /// 경기의 맵만 본다.
+    #[test]
+    fn another_games_cache_does_not_leak_into_the_merged_list() {
+        let mut app = live_app_in_inning(5, 2); // 경기 "g", seq 100·101
+        app.apply(Update::Inning {
+            game_id: "g".into(),
+            inning: 4,
+            at_bats: vec![at_bat(99, 4, "earlier")],
+        });
+
+        // 다른 경기로 옮기고, 그 경기의 라이브 상태가 도착한다.
+        app.enter_live(game("other-game"));
+        let mut fresh = match &live_app_in_inning(3, 1).screen {
+            Screen::Live { state: Some(s), .. } => s.clone(),
+            _ => panic!("expected live screen"),
+        };
+        fresh.at_bats = vec![at_bat(500, 3, "other-batter")];
+        app.apply(Update::Live("other-game".into(), fresh));
+
+        let Screen::Live { state: Some(s), .. } = &app.screen else {
+            panic!("expected live screen");
+        };
+        assert_eq!(
+            s.at_bats.iter().map(|ab| ab.seq).collect::<Vec<_>>(),
+            vec![500],
+            "다른 경기의 캐시가 섞였다"
+        );
     }
 
     /// 요청이 실패하면 로딩 표시는 걷되 캐시는 채우지 않는다 — 다시 눌러
@@ -2752,7 +2893,10 @@ mod tests {
 
         app.apply(Update::Error("boom".into()));
         assert_eq!(app.fetching_inning, None);
-        assert!(app.past_innings.is_empty());
+        assert!(
+            app.cached_innings_of("g").is_empty(),
+            "실패는 캐시를 채우지 않는다"
+        );
 
         app.on_key(KeyCode::Char('['));
         assert_eq!(

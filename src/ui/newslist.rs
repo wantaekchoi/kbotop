@@ -204,19 +204,27 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .zip(ages.iter())
         .map(|(n, age)| {
-            let title = super::text::ellipsize(&n.title, inner_width.saturating_sub(reserved));
+            // 칼럼 정렬(v0.21): 자른 뒤 **예약한 폭까지 채운다**. v0.20까지는
+            // `reserved`로 폭을 계산해 놓고 제목을 그 폭으로 채우지 않아,
+            // 제목이 짧으면 매체명·경과가 통째로 왼쪽으로 당겨졌다(실측:
+            // 짧은 제목 행과 긴 제목 행에서 매체명 시작 칸이 서로 달랐다).
+            // 폭 계산의 의도가 칼럼 정렬이었는데 렌더가 그걸 실현하지 않던
+            // 자기모순이다. age 칼럼의 pad는 줄 끝이라 여전히 화면 효과가
+            // 없지만(v0.18 리뷰 Minor), 정렬을 만드는 건 앞의 두 칸이다.
+            let title_width = inner_width.saturating_sub(reserved);
+            let title = super::text::ellipsize(&n.title, title_width);
+            let title = pad_to_width(&title, title_width);
             let source = super::text::ellipsize(&n.source, source_width);
+            let source = pad_to_width(&source, source_width);
             let mut spans = vec![
                 Span::raw(title),
                 Span::raw(GAP),
                 Span::styled(source, Style::default().add_modifier(Modifier::DIM)),
             ];
             if show_age {
-                // ellipsize로 상한 안에 안전하게 자른 뒤(고정폭 상한을 혹시
-                // 넘는 극단값 대비), pad_to_width로 왼쪽 정렬 고정폭 렌더 —
-                // 자릿수가 다른 age 문자열끼리도 칸이 흔들리지 않는다.
+                // 마지막 칼럼이라 오른쪽 여백은 화면에 나타나지 않는다 —
+                // 여기서는 자르기만 한다(v0.18 리뷰 Minor: 여기 pad는 무효).
                 let age_text = super::text::ellipsize(age.as_deref().unwrap_or(""), age_width);
-                let age_text = pad_to_width(&age_text, age_width);
                 spans.push(Span::raw(GAP));
                 spans.push(Span::styled(
                     age_text,
@@ -693,6 +701,49 @@ mod tests {
         assert!(
             a_counts.iter().all(|(_, c)| *c == first),
             "title truncation length must be identical across every age boundary: {a_counts:?}"
+        );
+    }
+    /// 제목 길이가 달라도 매체명·경과 칸이 **같은 칸에서 시작**한다(v0.21).
+    ///
+    /// v0.20까지는 `reserved`로 폭을 예약해 놓고 제목을 그 폭까지 채우지 않아,
+    /// 짧은 제목 행에서 뒷 칼럼이 통째로 왼쪽으로 당겨졌다. 폭 계산의 의도가
+    /// 칼럼 정렬인데 렌더가 그걸 실현하지 않던 자기모순이었다. 이 테스트는
+    /// 화면 문자열이 아니라 **칼럼 시작 좌표**를 직접 본다.
+    #[test]
+    fn source_and_age_columns_line_up_regardless_of_title_length() {
+        let mut app = crate::app::App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        app.now_secs = 1_800_000_000;
+        app.news = vec![
+            crate::model::NewsItem {
+                title: "짧은 제목".into(),
+                url: "u".into(),
+                source: "스포츠조선".into(),
+                summary: String::new(),
+                published: "20260727100000".into(),
+            },
+            crate::model::NewsItem {
+                title: "아주 긴 제목이 여기에 계속 이어져서 칼럼을 밀어냅니다 정말로".into(),
+                url: "u".into(),
+                source: "일간스포츠".into(),
+                summary: String::new(),
+                published: "20260726100000".into(),
+            },
+        ];
+        app.news_list = Some(crate::app::NewsListState { cursor: 0 });
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 12)).unwrap();
+        term.draw(|f| render(f, f.area(), &app)).unwrap();
+        let buf = term.backend().buffer();
+
+        // 각 행에서 매체명 첫 글자가 놓인 x를 찾는다.
+        let col_of = |y: u16, needle: char| -> Option<u16> {
+            (0..100u16).find(|x| buf[(*x, y)].symbol().starts_with(needle))
+        };
+        let short_row = col_of(2, '스').expect("스포츠조선 not rendered");
+        let long_row = col_of(3, '일').expect("일간스포츠 not rendered");
+        assert_eq!(
+            short_row, long_row,
+            "제목 길이에 따라 매체명 칸이 밀렸다 (짧은 행 x={short_row}, 긴 행 x={long_row})"
         );
     }
 }

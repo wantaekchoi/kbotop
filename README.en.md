@@ -2,16 +2,13 @@
 
 # kbotop
 
-**A terminal viewer for live KBO baseball**: scores, text play-by-play, and strike-zone pitch tracking, updating in place.
+**KBO baseball in your terminal** — scores, text play-by-play, strike-zone pitch tracking.
 
 [![crates.io](https://img.shields.io/crates/v/kbotop?style=flat-square)](https://crates.io/crates/kbotop)
 [![Release](https://img.shields.io/github/v/release/wantaekchoi/kbotop?style=flat-square)](https://github.com/wantaekchoi/kbotop/releases)
-[![Built with Ratatui](https://img.shields.io/badge/built%20with-ratatui-1c1c1c?style=flat-square)](https://ratatui.rs)
-[![License: Unlicense](https://img.shields.io/badge/license-Unlicense-blue?style=flat-square)](LICENSE)
-[![Downloads](https://img.shields.io/crates/d/kbotop?style=flat-square)](https://crates.io/crates/kbotop)
 [![CI](https://img.shields.io/github/actions/workflow/status/wantaekchoi/kbotop/ci.yml?style=flat-square&label=CI)](https://github.com/wantaekchoi/kbotop/actions/workflows/ci.yml)
+[![License: Unlicense](https://img.shields.io/badge/license-Unlicense-blue?style=flat-square)](LICENSE)
 [![codecov](https://codecov.io/gh/wantaekchoi/kbotop/branch/main/graph/badge.svg)](https://codecov.io/gh/wantaekchoi/kbotop)
-[![MSRV](https://img.shields.io/badge/MSRV-1.88-blue?style=flat-square)](https://www.rust-lang.org)
 
 ![demo](docs/demo.en.gif)
 
@@ -19,13 +16,9 @@
 
 </div>
 
-## Introduction
+Leave it open and the score, count, runners, and play-by-play stay current. For a game in progress it draws each pitch in the strike zone, so you get location and speed, not just the line score.
 
-`kbotop` is an interactive viewer for KBO (Korea Baseball Organization) games. It shows today's games as a live, self-refreshing dashboard: the score, the count, the runners, and the text play-by-play, all updating in place while you watch.
-
-For a game in progress it draws each pitch in the strike zone from Naver's pitch-tracking data, so you see location and speed, not just the line score.
-
-No API key. A single static binary.
+No API key, one static binary.
 
 ## Install
 
@@ -36,7 +29,7 @@ cargo install kbotop
 # Homebrew
 brew install wantaekchoi/tap/kbotop
 
-# prebuilt binary (macOS arm64/x64, Linux)
+# prebuilt binary (macOS arm64/x64, Linux, Windows)
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/releases/latest/download/kbotop-installer.sh | sh
 ```
 
@@ -46,41 +39,26 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/rele
 kbotop                    # today's games
 kbotop --team lg          # straight into your team's live game
 kbotop --date yesterday   # also: YYYY-MM-DD, YYYYMMDD, today, tomorrow, +N, -N
-kbotop --lang en          # UI language (default: auto by locale, ko/en/ja)
+kbotop --lang en          # ko / en / ja (default: auto by locale)
 ```
 
-Vim-style navigation; the in-app `?` help is the source of truth.
+Vim-style keys. Press `?` in the app for the full list.
 
-- Move: `j` / `k` or arrow keys
-- Open live view: `Enter`
-- Games / Standings: `Tab`
-- Date picker: `F2`
-- Settings screen (team / language / poll interval / theme): `F9` (alias `S`)
-- Team links (official site / goods shop): `o`
-- Open the news list: `n` (then `Enter` on an item to read it)
-- Inspect pitches: `Left` / `Right` (live view)
-- Rewind to a previous/next at-bat: `[` / `]` (live view) — press again at the first at-bat of an inning to pull in the inning before it
-- Move the play-by-play cursor: `j` / `k`, or `gg` / `G` for the ends (live view)
-- Help: `?`
-- Quit: `q`
-
-Three languages are supported: Korean, English, and 日本語 (ko/en/ja). The UI auto-detects your locale by default; switch it with `--lang` or from the F9 settings screen at any time.
+- List: `Enter` live view · `Tab` games/standings · `F2` date · `F9` settings · `o` team links · `n` news
+- Live: `←`/`→` pitches · `[`/`]` rewind at-bats (press again at an inning's first at-bat to pull in the inning before it) · `j`/`k` and `gg`/`G` play-by-play cursor
 
 ## Configuration
 
-`$XDG_CONFIG_HOME/kbotop/config.toml`, falling back to `~/.config/kbotop/config.toml`. Change your favorite team, language, poll interval, and theme from the `F9` settings screen — each change is saved to this file immediately and survives a restart.
+`$XDG_CONFIG_HOME/kbotop/config.toml`, falling back to `~/.config/kbotop/config.toml`. Change your team, language, poll interval, and theme from the `F9` screen. Each change saves right away.
 
-Themes combine a preset (`default` / `high-contrast` / `mono`) with an accent source (your team's color, a named color, or none). `mono` uses no color at all, so it stays fully readable for colorblind users and on monochrome terminals.
+A theme is a preset (`default` / `high-contrast` / `mono`) plus an accent color. `mono` uses no color at all, so it stays readable on monochrome terminals.
 
 ## Disclaimer
 
-A fan-made, unofficial tool. Data comes from Naver Sports' public (unofficial) endpoints, and all rights to it belong to the KBO and Naver. For personal, non-commercial use; we respond promptly to any rights-holder request.
+A fan-made, unofficial tool. Data comes from Naver Sports' public (unofficial) endpoints, and the rights to it belong to the KBO and Naver. For personal, non-commercial use. I act on any rights-holder request promptly.
 
-News comes from each publisher's own RSS feed, showing only the headline and a short excerpt; the full text is left to the original-source link. Article copyright belongs to each publisher and reporter.
+News comes from each publisher's RSS feed: the headline and a short excerpt only. Follow the link for the full article.
 
 ## License
 
-[The Unlicense](LICENSE) — public domain. Use it without conditions.
-
-Licenses of the open source linked into kbotop binaries are reproduced in
-[THIRD-PARTY.md](THIRD-PARTY.md).
+[The Unlicense](LICENSE) — public domain. Dependency license notices are in [THIRD-PARTY.md](THIRD-PARTY.md).

@@ -2,16 +2,13 @@
 
 # kbotop
 
-**터미널에서 보는 KBO 프로야구 라이브 뷰어** — 스코어, 문자중계, 스트라이크존 투구 추적이 화면 안에서 계속 갱신됩니다.
+**터미널에서 보는 KBO 프로야구** — 스코어, 문자중계, 스트라이크존 투구 추적.
 
 [![crates.io](https://img.shields.io/crates/v/kbotop?style=flat-square)](https://crates.io/crates/kbotop)
 [![Release](https://img.shields.io/github/v/release/wantaekchoi/kbotop?style=flat-square)](https://github.com/wantaekchoi/kbotop/releases)
-[![Built with Ratatui](https://img.shields.io/badge/built%20with-ratatui-1c1c1c?style=flat-square)](https://ratatui.rs)
-[![License: Unlicense](https://img.shields.io/badge/license-Unlicense-blue?style=flat-square)](LICENSE)
-[![Downloads](https://img.shields.io/crates/d/kbotop?style=flat-square)](https://crates.io/crates/kbotop)
 [![CI](https://img.shields.io/github/actions/workflow/status/wantaekchoi/kbotop/ci.yml?style=flat-square&label=CI)](https://github.com/wantaekchoi/kbotop/actions/workflows/ci.yml)
+[![License: Unlicense](https://img.shields.io/badge/license-Unlicense-blue?style=flat-square)](LICENSE)
 [![codecov](https://codecov.io/gh/wantaekchoi/kbotop/branch/main/graph/badge.svg)](https://codecov.io/gh/wantaekchoi/kbotop)
-[![MSRV](https://img.shields.io/badge/MSRV-1.88-blue?style=flat-square)](https://www.rust-lang.org)
 
 ![demo](docs/demo.gif)
 
@@ -19,13 +16,9 @@
 
 </div>
 
-## 소개
+터미널에 띄워 두면 점수·볼카운트·주자·문자중계가 알아서 갱신됩니다. 진행 중인 경기는 공 하나하나를 스트라이크존에 그려 로케이션과 구속까지 보여줍니다.
 
-`kbotop`은 KBO 프로야구를 터미널에서 보는 인터랙티브 뷰어입니다. 오늘의 경기를 라이브 대시보드로 보여줍니다. 점수, 볼카운트, 주자, 문자중계가 한 화면에서 알아서 갱신됩니다.
-
-경기가 진행 중이면 네이버 투구 추적 데이터로 공 하나하나를 스트라이크존에 그려 줍니다. 라인스코어만이 아니라 로케이션과 구속까지 보입니다.
-
-API 키가 필요 없습니다. 정적 바이너리 하나로 동작합니다.
+API 키는 필요 없고, 바이너리 하나로 돕니다.
 
 ## 설치
 
@@ -36,7 +29,7 @@ cargo install kbotop
 # Homebrew
 brew install wantaekchoi/tap/kbotop
 
-# 미리 빌드된 바이너리 (macOS arm64/x64, Linux)
+# 미리 빌드된 바이너리 (macOS arm64/x64, Linux, Windows)
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/releases/latest/download/kbotop-installer.sh | sh
 ```
 
@@ -44,43 +37,28 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/rele
 
 ```sh
 kbotop                    # 오늘 경기
-kbotop --team lg          # 내 팀 라이브 경기로 바로 진입
-kbotop --date yesterday   # 다른 날짜: YYYY-MM-DD, YYYYMMDD, today, tomorrow, +N, -N
-kbotop --lang en          # UI 언어 (기본: 로케일 자동, ko/en/ja)
+kbotop --team lg          # 내 팀 라이브 경기로 바로
+kbotop --date yesterday   # YYYY-MM-DD, YYYYMMDD, today, tomorrow, +N, -N
+kbotop --lang en          # ko / en / ja (기본: 로케일 자동)
 ```
 
-Vim 스타일로 움직입니다. 최신 키 목록은 앱 안 `?` 도움말이 기준입니다.
+키는 Vim 스타일입니다. 전체 목록은 앱에서 `?`를 누르면 나옵니다.
 
-- 이동: `j` / `k` 또는 방향키
-- 라이브 뷰 열기: `Enter`
-- 경기 / 순위 전환: `Tab`
-- 날짜 픽커: `F2`
-- 설정 화면(응원 팀·언어·폴링 주기·테마): `F9` (별칭 `S`)
-- 구단 공홈·굿즈몰 열기: `o`
-- 뉴스 목록 열기: `n` (목록에서 `Enter`로 기사 읽기)
-- 투구 하나씩 보기: `Left` / `Right` (라이브 뷰)
-- 이전/다음 타석 돌려보기: `[` / `]` (라이브 뷰) — 그 이닝의 첫 타석에서 한 번 더 누르면 지난 이닝을 받아옵니다
-- 문자중계 줄 커서 이동: `j` / `k`, 맨 위/맨 아래는 `gg` / `G` (라이브 뷰)
-- 도움말: `?`
-- 종료: `q`
-
-한국어·English·日本語 3개 언어(ko/en/ja)를 지원합니다. 기본은 로케일 자동 감지이며, `--lang`이나 F9 설정 화면에서 즉시 바꿀 수 있습니다.
+- 목록: `Enter` 라이브 진입 · `Tab` 경기/순위 · `F2` 날짜 · `F9` 설정 · `o` 구단 링크 · `n` 뉴스
+- 라이브: `←`/`→` 투구 · `[`/`]` 타석 되감기(이닝 첫 타석에서 한 번 더 누르면 지난 이닝) · `j`/`k`와 `gg`/`G` 문자중계 커서
 
 ## 설정
 
-`$XDG_CONFIG_HOME/kbotop/config.toml` (없으면 `~/.config/kbotop/config.toml`). `F9` 설정 화면에서 응원 팀·언어·폴링 주기·테마를 고르면 그 즉시 이 파일에 저장되어 재시작해도 유지됩니다.
+`$XDG_CONFIG_HOME/kbotop/config.toml`, 없으면 `~/.config/kbotop/config.toml`. `F9` 화면에서 응원 팀·언어·폴링 주기·테마를 바꾸면 바로 저장됩니다.
 
-테마는 프리셋(`default`/`high-contrast`/`mono`)과 액센트 소스(응원 팀 색/명명색/색 없음)를 조합해 고릅니다. `mono`는 색을 전혀 쓰지 않아 색맹이거나 흑백 터미널에서도 온전히 읽힙니다.
+프리셋(`default`/`high-contrast`/`mono`)을 고르고 액센트 색을 얹는 식입니다. `mono`는 색을 아예 쓰지 않아 흑백 터미널에서도 읽힙니다.
 
 ## 고지
 
-팬이 만든 비공식 도구입니다. 데이터는 네이버 스포츠의 공개(비공식) 엔드포인트에서 가져오며, 데이터의 모든 권리는 KBO와 네이버에 있습니다. 개인·비상업 용도로만 사용해 주세요. 권리자가 요청하면 즉시 조치합니다.
+팬이 만든 비공식 도구입니다. 데이터는 네이버 스포츠의 공개(비공식) 엔드포인트에서 가져오며, 권리는 KBO와 네이버에 있습니다. 개인·비상업 용도로 써 주세요. 권리자 요청이 있으면 바로 조치합니다.
 
-뉴스는 각 언론사가 배포하는 RSS에서 헤드라인과 짧은 발췌만 받아 보여주고, 본문 전체는 원문 링크로 넘깁니다. 기사의 저작권은 각 언론사와 기자에게 있습니다.
+뉴스는 각 언론사 RSS에서 헤드라인과 짧은 발췌만 받아 보여주고, 본문은 원문 링크로 넘깁니다.
 
 ## 라이선스
 
-[Unlicense](LICENSE) — 퍼블릭 도메인입니다. 조건 없이 쓰세요.
-
-바이너리에 링크된 오픈소스의 라이선스 고지는 [THIRD-PARTY.md](THIRD-PARTY.md)에
-있습니다.
+[Unlicense](LICENSE) — 퍼블릭 도메인입니다. 의존성 라이선스 고지는 [THIRD-PARTY.md](THIRD-PARTY.md)에 있습니다.

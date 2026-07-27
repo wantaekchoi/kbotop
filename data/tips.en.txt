@@ -1,0 +1,27 @@
+# kbotop bottom-bar tips (English) — one tip per line. '#' lines and blank lines are ignored.
+# Plain statements of baseball rules and KBO conventions, written from scratch.
+#
+# Deliberately shorter than the Korean file: tips are for newcomers, so accuracy matters
+# more than count, and each line has to be maintained in every language.
+# Keep every line under 75 display columns (a test enforces this).
+
+Three strikes is a strikeout; four balls is a walk.
+The strike zone spans home plate, from the knees to the mid-torso.
+A foul counts as a strike, but never as the third one.
+A runner off the base is out on a tag; on a force, the base tag does it.
+The pitcher must throw inside the pitch clock or a ball is added.
+ERA is the runs a pitcher allows per nine innings, errors excluded.
+WHIP is walks plus hits allowed, divided by innings pitched.
+Nine innings; a tie goes to extras.
+The home team bats last, in the bottom of each inning.
+A sacrifice fly scores a runner and is not charged to the average.
+The designated hitter bats for the pitcher and never fields.
+A double play retires two runners on one batted ball.
+The count reads balls first: "2-1" is two balls, one strike.
+KBO plays 144 games; the top five reach the postseason.
+Runners left on base still charge to the pitcher who put them there.
+A balk is an illegal pitching motion; every runner advances a base.
+An infield fly is an automatic out with runners on and under two outs.
+A hold goes to a reliever who protects a lead without finishing.
+Pitch types here come from the tracking data in the broadcast feed.
+A quality start is six innings or more with three earned runs or fewer.
