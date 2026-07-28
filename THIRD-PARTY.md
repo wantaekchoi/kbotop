@@ -4,6 +4,10 @@ kbotop 바이너리에는 아래 오픈소스가 정적으로 링크되어 있�
 라이선스 전문을 그대로 싣습니다. kbotop 자체의 라이선스는 `LICENSE`를 보세요.
 
 이 파일은 `scripts/third-party.sh`로 생성합니다(의존성이 바뀌면 재생성).
+`kbotop --license`로도 같은 내용을 볼 수 있습니다.
+
+MPL-2.0으로 배포되는 구성요소(`option-ext`)의 **소스 코드**는 아래 각 항목에
+링크된 저장소에서 받을 수 있습니다. MPL-2.0 §3.2(a)가 요구하는 고지입니다.
 
 ## Apache License 2.0
 
@@ -731,7 +735,7 @@ DEALINGS IN THE SOFTWARE.
 
 ## MIT License
 
-- [either 1.16.0](https://github.com/rayon-rs/either)
+- [either 1.17.0](https://github.com/rayon-rs/either)
 - [itertools 0.14.0](https://github.com/rust-itertools/itertools)
 
 ```
@@ -767,7 +771,7 @@ DEALINGS IN THE SOFTWARE.
 
 - [heck 0.5.0](https://github.com/withoutboats/heck)
 - [unicode-segmentation 1.13.3](https://github.com/unicode-rs/unicode-segmentation)
-- [unicode-width 0.2.0](https://github.com/unicode-rs/unicode-width)
+- [unicode-width 0.2.2](https://github.com/unicode-rs/unicode-width)
 
 ```
 Copyright (c) 2015 The Rust Project Developers
@@ -1023,36 +1027,6 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
-
-```
-
-## MIT License
-
-- [redox_syscall 0.5.18](https://gitlab.redox-os.org/redox-os/syscall)
-
-```
-Copyright (c) 2017 Redox OS Developers
-
-MIT License
-
-Permission is hereby granted, free of charge, to any person obtaining
-a copy of this software and associated documentation files (the
-&quot;Software&quot;), to deal in the Software without restriction, including
-without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to
-permit persons to whom the Software is furnished to do so, subject to
-the following conditions:
-
-The above copyright notice and this permission notice shall be
-included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ```
 
@@ -1433,7 +1407,7 @@ DEALINGS IN THE SOFTWARE.
 
 ## MIT License
 
-- [rustls-pki-types 1.15.0](https://github.com/rustls/pki-types)
+- [rustls-pki-types 1.15.1](https://github.com/rustls/pki-types)
 
 ```
 Copyright (c) 2023 Dirkjan Ochtman &lt;dirkjan@ochtman.nl&gt;
@@ -1994,35 +1968,6 @@ SOFTWARE.
 
 ## MIT License
 
-- [libredox 0.1.18](https://gitlab.redox-os.org/redox-os/libredox.git)
-
-```
-MIT License
-
-Copyright (c) 2023 4lDO2
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the &quot;Software&quot;), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-```
-
-## MIT License
-
 - [line-clipping 0.3.7](https://github.com/ratatui/line-clipping)
 
 ```
@@ -2080,49 +2025,8 @@ SOFTWARE.
 
 ## MIT License
 
-- [kbotop 0.15.0](https://github.com/wantaekchoi/kbotop)
-
-```
-MIT License
-
-Copyright (c) 2026 wantaekchoi
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the &quot;Software&quot;), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-```
-
-## MIT License
-
-- [winapi-i686-pc-windows-gnu 0.4.0](https://github.com/retep998/winapi-rs)
-- [winapi-x86_64-pc-windows-gnu 0.4.0](https://github.com/retep998/winapi-rs)
 - [windows-link 0.2.1](https://github.com/microsoft/windows-rs)
-- [windows-sys 0.52.0](https://github.com/microsoft/windows-rs)
 - [windows-sys 0.61.2](https://github.com/microsoft/windows-rs)
-- [windows-targets 0.52.6](https://github.com/microsoft/windows-rs)
-- [windows_aarch64_gnullvm 0.52.6](https://github.com/microsoft/windows-rs)
-- [windows_aarch64_msvc 0.52.6](https://github.com/microsoft/windows-rs)
-- [windows_i686_gnu 0.52.6](https://github.com/microsoft/windows-rs)
-- [windows_i686_gnullvm 0.52.6](https://github.com/microsoft/windows-rs)
-- [windows_i686_msvc 0.52.6](https://github.com/microsoft/windows-rs)
-- [windows_x86_64_gnu 0.52.6](https://github.com/microsoft/windows-rs)
-- [windows_x86_64_gnullvm 0.52.6](https://github.com/microsoft/windows-rs)
-- [windows_x86_64_msvc 0.52.6](https://github.com/microsoft/windows-rs)
 
 ```
 MIT License
@@ -2286,7 +2190,6 @@ SOFTWARE.
 - [thiserror-impl 2.0.19](https://github.com/dtolnay/thiserror)
 - [thiserror 2.0.19](https://github.com/dtolnay/thiserror)
 - [unicode-ident 1.0.24](https://github.com/dtolnay/unicode-ident)
-- [wasi 0.11.1+wasi-snapshot-preview1](https://github.com/bytecodealliance/wasi)
 - [zmij 1.0.23](https://github.com/dtolnay/zmij)
 
 ```
@@ -2552,36 +2455,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-```
-
-## MIT License
-
-- [redox_users 0.5.2](https://gitlab.redox-os.org/redox-os/users)
-
-```
-The MIT License (MIT)
-
-Copyright (c) 2017 Jose Narvaez
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the &quot;Software&quot;), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
 
 ```
 
@@ -3110,6 +2983,44 @@ SPDX-License-Identifier: Unicode-3.0
 
 Portions of ICU4X may have been adapted from ICU4C and/or ICU4J.
 ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation and others.
+
+```
+
+## The Unlicense
+
+- [kbotop 0.27.1](https://github.com/wantaekchoi/kbotop)
+
+```
+kbotop is released into the public domain under the Unlicense.
+
+Third-party code linked into kbotop binaries keeps its own license — see
+THIRD-PARTY.md.
+
+&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;
+The Unlicense
+&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;&#x3D;
+
+This is free and unencumbered software released into the public domain.
+
+Anyone is free to copy, modify, publish, use, compile, sell, or distribute this
+software, either in source code form or as a compiled binary, for any purpose,
+commercial or non-commercial, and by any means.
+
+In jurisdictions that recognize copyright laws, the author or authors of this
+software dedicate any and all copyright interest in the software to the public
+domain. We make this dedication for the benefit of the public at large and to
+the detriment of our heirs and successors. We intend this dedication to be an
+overt act of relinquishment in perpetuity of all present and future rights to
+this software under copyright law.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+For more information, please refer to &lt;https://unlicense.org/&gt;
 
 ```
 

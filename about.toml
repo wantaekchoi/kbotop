@@ -23,7 +23,18 @@ accepted = [
     "WTFPL",
 ]
 
-# 워크스페이스 자기 자신은 제외(우리 라이선스는 LICENSE 파일에 있다).
+# 실제로 배포하는 타깃만 본다. 이게 없으면 빌드하지도 않는 redox·wasi·
+# windows-gnu 크레이트까지 고지에 섞여, 고지가 빌드 그래프와 맞는지 대조할 수
+# 없게 된다(dist-workspace.toml의 targets와 같은 목록을 유지할 것).
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+]
+
+# kbotop 자신도 고지에 포함된다(퍼블릭 도메인이라는 사실을 함께 싣는다).
 ignore-build-dependencies = true
 ignore-dev-dependencies = true
 

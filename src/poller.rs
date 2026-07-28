@@ -112,7 +112,7 @@ fn backoff_delay(base: Duration, errors: u32) -> Duration {
 /// 폴링 스레드: 명령을 받아 주기적으로 소스를 호출하고 Update를 보낸다.
 /// `live_poll_secs`는 라이브 뷰(relay) 폴링 주기다 — 설계 문서의 "라이브 뷰: 5초
 /// 주기(설정 가능, 하한 3초)"에 해당하며, 호출자가 `Config::effective_poll_secs()`로
-/// 하한을 적용해 넘긴다. `standings_poll_secs`는 순위표 갱신 게이트로, 운영
+/// 하한을 적용해 넘긴다. `poll.standings_secs`는 순위표 갱신 게이트로, 운영
 /// 호출자는 `STANDINGS_POLL_SECS`(90s)를 넘기고, 테스트는 더 짧은 값을 넣어
 /// "게이트 경과 후 재개"를 실시간 대기 없이 가깝게 검증한다. games(60s) 주기는
 /// 설계상 설정 대상이 아니므로 그대로 하드코딩을 유지한다.
@@ -122,19 +122,29 @@ fn backoff_delay(base: Duration, errors: u32) -> Duration {
 /// `GameStatus::Final`이면(데이터가 더 바뀌지 않으므로) live 기본 주기 대신
 /// `FINAL_LIVE_POLL_SECS`(30s)를 쓴다 — Live/Suspended는 기존처럼
 /// `live_poll_secs` 그대로 사용한다.
+/// 폴링 동작 설정. 셋 다 프로세스 시작 시 정해져 스레드로 넘어간다.
+#[derive(Debug, Clone, Copy)]
+pub struct PollConfig {
+    pub live_secs: u64,
+    pub standings_secs: u64,
+    /// 원격 팁을 받아올지. **한국어 화면에서만 쓰이는 데이터**라
+    /// (`ui::tips::pick`), 다른 언어에서는 받아 봐야 버린다 — 버릴 응답을 위해
+    /// 저자 저장소로 요청을 보내는 셈이라 아예 안 보낸다.
+    pub want_tips: bool,
+}
+
 pub fn spawn(
     source: Arc<dyn DataSource>,
     news_source: Arc<dyn NewsSource>,
     date: String,
     rx: Receiver<Command>,
     tx: Sender<Update>,
-    live_poll_secs: u64,
-    standings_poll_secs: u64,
+    poll: PollConfig,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         // F2 픽커의 SetDate/SetLivePoll이 이 값들을 런타임에 재할당한다.
         let mut date = date;
-        let mut live_poll_secs = live_poll_secs;
+        let mut live_poll_secs = poll.live_secs;
         let mut watching: Option<Game> = None;
         let mut next_games = Instant::now();
         let mut next_live = Instant::now();
@@ -181,7 +191,7 @@ pub fn spawn(
                                     let _ = tx.send(Update::Error(e.to_string()));
                                 }
                             }
-                            next_standings = now + Duration::from_secs(standings_poll_secs);
+                            next_standings = now + Duration::from_secs(poll.standings_secs);
                         }
                         // 게이트 이전 중복 요청은 조용히 버린다(이미 하나 처리 중/직후) —
                         // 탭이 Standings인 동안 main이 매 tick 재전송해도 실제 fetch는
@@ -234,7 +244,7 @@ pub fn spawn(
                 }
                 next_games = now + backoff_delay(Duration::from_secs(60), games_errors);
             }
-            if !tips_done {
+            if !tips_done && poll.want_tips {
                 // 시작 후 첫 games 폴링이 나간 다음에야 1회 시도 — 실패·기각은
                 // 조용히 임베드 폴백(부가 기능이 본 기능에 관여 금지).
                 tips_done = true;
@@ -331,8 +341,11 @@ mod tests {
             "2026-07-19".into(),
             rx_cmd,
             tx_up,
-            5,
-            STANDINGS_POLL_SECS,
+            PollConfig {
+                live_secs: 5,
+                standings_secs: STANDINGS_POLL_SECS,
+                want_tips: true,
+            },
         );
 
         // main.rs가 Standings 탭이 떠 있는 동안 매 tick(~100ms) 재전송하는 상황을
@@ -378,8 +391,11 @@ mod tests {
             "2026-07-19".into(),
             rx_cmd,
             tx_up,
-            5,
-            STANDINGS_POLL_SECS,
+            PollConfig {
+                live_secs: 5,
+                standings_secs: STANDINGS_POLL_SECS,
+                want_tips: true,
+            },
         );
 
         // 첫 메시지는 호출 직전 스피너용 Fetching이므로 건너뛰고, 패닉이
@@ -425,8 +441,11 @@ mod tests {
             "2026-07-19".into(),
             rx_cmd,
             tx_up,
-            5,
-            1,
+            PollConfig {
+                live_secs: 5,
+                standings_secs: 1,
+                want_tips: true,
+            },
         );
 
         let _ = tx_cmd.send(Command::RefreshStandings);
@@ -481,8 +500,11 @@ mod tests {
             "2026-07-19".into(),
             rx_cmd,
             tx_up,
-            5,
-            STANDINGS_POLL_SECS,
+            PollConfig {
+                live_secs: 5,
+                standings_secs: STANDINGS_POLL_SECS,
+                want_tips: true,
+            },
         );
         let mut first_data = None;
         for _ in 0..4 {
@@ -628,8 +650,11 @@ mod tests {
             "2026-07-19".into(),
             rx_cmd,
             tx_up,
-            1,
-            STANDINGS_POLL_SECS,
+            PollConfig {
+                live_secs: 1,
+                standings_secs: STANDINGS_POLL_SECS,
+                want_tips: true,
+            },
         );
 
         let _ = tx_cmd.send(Command::WatchGame(sample_game("a", GameStatus::Live)));
@@ -704,8 +729,11 @@ mod tests {
             "2026-07-19".into(),
             rx_cmd,
             tx_up,
-            5,
-            STANDINGS_POLL_SECS,
+            PollConfig {
+                live_secs: 5,
+                standings_secs: STANDINGS_POLL_SECS,
+                want_tips: true,
+            },
         );
         let first = rx_up.recv_timeout(Duration::from_secs(2)).expect("update");
         assert!(
@@ -733,8 +761,11 @@ mod tests {
             "2026-07-19".into(),
             rx_cmd,
             tx_up,
-            1,
-            STANDINGS_POLL_SECS,
+            PollConfig {
+                live_secs: 1,
+                standings_secs: STANDINGS_POLL_SECS,
+                want_tips: true,
+            },
         );
         let _ = tx_cmd.send(Command::WatchGame(sample_game("a", GameStatus::Final)));
 
@@ -781,8 +812,11 @@ mod tests {
             "2026-07-19".into(),
             rx_cmd,
             tx_up,
-            5,
-            STANDINGS_POLL_SECS,
+            PollConfig {
+                live_secs: 5,
+                standings_secs: STANDINGS_POLL_SECS,
+                want_tips: true,
+            },
         );
         std::thread::sleep(Duration::from_millis(300)); // 첫 폴링(60s 게이트 시작)
         let _ = tx_cmd.send(Command::SetDate("2026-05-29".into()));
@@ -795,6 +829,64 @@ mod tests {
             seen.contains(&"2026-05-29".to_string()),
             "SetDate must trigger an immediate refetch with the new date, got {seen:?}"
         );
+        drop(rx_up);
+    }
+
+    /// **한국어가 아니면 원격 팁을 아예 안 받는다.**
+    ///
+    /// 그 데이터는 한국어 화면에서만 쓰인다(`ui::tips::pick`). 다른 언어에서도
+    /// 받아 오면 **버릴 응답을 위해** 저자 저장소로 요청이 나가는 셈이고, 그
+    /// 요청에는 IP·UA·버전이 실린다.
+    #[test]
+    fn tips_are_not_fetched_when_the_ui_is_not_korean() {
+        struct CountingTips(Arc<AtomicUsize>);
+        impl DataSource for CountingTips {
+            fn games(&self, _d: &str) -> Result<Vec<Game>> {
+                Ok(vec![])
+            }
+            fn live(&self, _g: &Game) -> Result<LiveState> {
+                Err(Error::Config("unused".into()))
+            }
+            fn standings(&self, _y: u16) -> Result<Vec<Standing>> {
+                Err(Error::Config("unused".into()))
+            }
+            fn tips(&self) -> Result<Vec<String>> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(vec!["팁".into()])
+            }
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let source: Arc<dyn DataSource> = Arc::new(CountingTips(calls.clone()));
+        let (tx_cmd, rx_cmd) = mpsc::channel::<Command>();
+        let (tx_up, rx_up) = mpsc::channel::<Update>();
+        let handle = spawn(
+            source,
+            Arc::new(NoNews),
+            "2026-07-19".into(),
+            rx_cmd,
+            tx_up,
+            PollConfig {
+                live_secs: 5,
+                standings_secs: STANDINGS_POLL_SECS,
+                want_tips: false, // 한국어가 아니다
+            },
+        );
+        // 첫 games 업데이트까지 기다린다 — 팁은 그 직후에 나갈 자리였다.
+        for _ in 0..4 {
+            match rx_up.recv_timeout(Duration::from_secs(2)) {
+                Ok(Update::Games(_)) => break,
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+        std::thread::sleep(Duration::from_millis(120));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "한국어가 아닌데 원격 팁을 받아 왔다"
+        );
+        let _ = tx_cmd.send(Command::Shutdown);
+        let _ = handle.join();
         drop(rx_up);
     }
 }

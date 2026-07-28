@@ -26,7 +26,8 @@ fn status_of(g: &ScheduleGame) -> GameStatus {
 pub fn games_from_schedule(json: &str) -> Result<Vec<Game>> {
     let env: ApiEnvelope<ScheduleResult> = serde_json::from_str(json)?;
     let result = env.result.unwrap_or(ScheduleResult { games: vec![] });
-    Ok(result
+    let received = result.games.len();
+    let games: Vec<Game> = result
         .games
         .iter()
         .filter_map(|g| {
@@ -65,7 +66,20 @@ pub fn games_from_schedule(json: &str) -> Result<Vec<Game>> {
                 broadcast: g.broad_channel.clone(),
             })
         })
-        .collect())
+        .collect();
+    // **한 건도 못 알아본 건 "경기 없는 날"과 다르다.**
+    //
+    // 위 filter_map은 필드가 빠진 레코드 하나를 건너뛰라고 있는 것이지, 응답
+    // 스키마가 바뀌었을 때 조용히 빈 목록을 내라고 있는 게 아니다. 그런데
+    // 필드명이 바뀌면 전 레코드가 같은 경로로 사라지고, 화면에는 "예정된 경기가
+    // 없습니다"가 뜬다 — stale 배지도, 에러도 없이. 우천취소로 다 취소된 날과
+    // 구분이 안 되니 앱이 사용자에게 거짓말을 하는 셈이다.
+    if received > 0 && games.is_empty() {
+        return Err(crate::error::Error::Data(format!(
+            "schedule had {received} games but none could be read - the response shape may have changed"
+        )));
+    }
+    Ok(games)
 }
 
 pub fn standings_from_json(json: &str) -> Result<Vec<Standing>> {
@@ -1283,5 +1297,30 @@ mod tests {
         assert_eq!(live.at_bats[0].batter_name, "안현민");
         // 안내 없이 pts만 있는 항목은 이름을 알 수 없으므로 빈 문자열.
         assert_eq!(live.at_bats[1].batter_name, "");
+    }
+    /// **전 레코드를 못 읽으면 "경기 없음"이 아니라 에러다.**
+    ///
+    /// 필드 하나가 빠진 레코드 한 건을 건너뛰는 것과, 스키마가 바뀌어 전부
+    /// 못 읽는 것은 전혀 다른 상황인데 예전에는 둘 다 빈 목록이 됐다. 화면에는
+    /// "예정된 경기가 없습니다"만 뜨고 stale 배지도 에러도 없어서, 사용자는
+    /// 오늘 경기가 없는 줄 안다.
+    #[test]
+    fn a_schedule_we_cannot_read_at_all_is_an_error_not_an_empty_day() {
+        let renamed = r#"{"result":{"games":[
+            {"gameIdentifier":"20260719HTSK02026","homeTeam":"SK","awayTeam":"HT"},
+            {"gameIdentifier":"20260719KTLG02026","homeTeam":"LG","awayTeam":"KT"}
+        ]}}"#;
+        let out = games_from_schedule(renamed);
+        assert!(
+            out.is_err(),
+            "두 건 다 못 읽었는데 조용히 빈 목록을 냈다: {out:?}"
+        );
+    }
+
+    /// 진짜로 경기가 없는 날은 여전히 빈 목록이다(위 방어가 과하지 않은지).
+    #[test]
+    fn a_genuinely_empty_day_is_still_empty_not_an_error() {
+        let empty = r#"{"result":{"games":[]}}"#;
+        assert_eq!(games_from_schedule(empty).unwrap().len(), 0);
     }
 }

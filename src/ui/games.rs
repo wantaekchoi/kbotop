@@ -76,7 +76,10 @@ fn status_tag(status: GameStatus, l: &Labels, preset: &str) -> (&'static str, St
         ),
         GameStatus::Scheduled => (l.tag_sched, theme::status_fg(preset, Color::Yellow)),
         GameStatus::Final => (l.tag_fin, theme::status_fg(preset, Color::Gray)),
-        GameStatus::Canceled => (l.tag_cancel, theme::status_fg(preset, Color::DarkGray)),
+        // DarkGray(#555)는 검은 배경에서 대비가 2.82:1로 WCAG 비텍스트 최소치(3:1)에도
+        // 못 미친다 — 어두운 터미널에서 취소 태그가 배경에 묻힌다. Gray로 올린다
+        // (이 프로젝트가 액센트에서 black/white를 배제한 것과 같은 "배경 무관" 기준).
+        GameStatus::Canceled => (l.tag_cancel, theme::status_fg(preset, Color::Gray)),
         GameStatus::Suspended => (l.tag_susp, theme::status_fg(preset, Color::Magenta)),
     }
 }
@@ -180,12 +183,12 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMa
                 Cell::from(Span::styled(tag, tag_style)),
                 Cell::from(Span::styled(
                     g.away.name.as_str(),
-                    team_badge_style(&g.away.code),
+                    team_badge_style(&app.theme_preset, &g.away.code),
                 )),
                 Cell::from(score),
                 Cell::from(Span::styled(
                     g.home.name.as_str(),
-                    team_badge_style(&g.home.code),
+                    team_badge_style(&app.theme_preset, &g.home.code),
                 )),
                 Cell::from(status_cell),
             ];

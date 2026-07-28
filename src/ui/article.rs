@@ -208,7 +208,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     if !item.source.is_empty() {
         lines.push(Line::from(Span::styled(
             item.source.clone(),
-            Style::default().add_modifier(Modifier::DIM),
+            Style::default().add_modifier(super::theme::dim(&app.theme_preset)),
         )));
     }
     lines.push(Line::from(""));

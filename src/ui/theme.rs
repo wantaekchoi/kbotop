@@ -39,6 +39,12 @@ fn relative_luminance(c: Color) -> f32 {
         Color::White => (255, 255, 255),
         Color::Black => (0, 0, 0),
         Color::Gray => (128, 128, 128),
+        // DarkGray는 ANSI "bright black"(xterm 8번, #555555)이다. 이걸 몰라서
+        // Gray와 같은 값으로 계산하는 바람에, 대비를 재 봐도 실제보다 밝게
+        // 나왔다 — 취소 태그가 검은 배경에서 안 읽히는 걸 못 잡은 이유다.
+        Color::DarkGray => (85, 85, 85),
+        // 나머지 명명색은 터미널 팔레트가 정하므로 우리가 알 수 없다. 중간
+        // 회색으로 가정한다(어느 배경에서도 최악은 아닌 값).
         _ => (128, 128, 128),
     };
     0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b)
@@ -81,7 +87,14 @@ pub fn contrast_fg(bg: Color) -> Color {
 
 /// 팀명 배지 스타일: 팀 컬러 배경 + 대비 글자색 + 굵게.
 /// 어두운 팀 컬러(예 두산 남색)도 배경으로 쓰면 대비 글자색 덕에 잘 보인다.
-pub fn team_badge_style(code: &str) -> Style {
+pub fn team_badge_style(preset: &str, code: &str) -> Style {
+    // mono는 색을 안 쓴다. 배지는 팀 컬러가 데이터라 오래 예외로 뒀지만,
+    // README 두 판이 "mono는 색을 아예 쓰지 않아 흑백 터미널에서도 읽힙니다"라고
+    // 약속한다 — 공개 약속 쪽을 따른다. 반전만으로도 "여기가 배지"라는 건 남고,
+    // 팀 이름은 어차피 글자로 적혀 있다(색이 유일한 단서였던 적이 없다).
+    if preset == "mono" {
+        return Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED);
+    }
     let bg = team_color(code);
     Style::default()
         .bg(bg)
@@ -160,10 +173,48 @@ fn hex_color(s: &str) -> Option<Color> {
 /// 걷어낸다 — "mono는 색 span 0"을 accent 지점 밖의 chrome까지 확장한다.
 /// 팀 배지(team_badge_style)는 데이터라 이 함수를 거치지 않는다(예외 유지).
 pub fn status_fg(preset: &str, color: Color) -> Style {
-    if preset == "mono" {
-        Style::default()
+    match preset {
+        "mono" => Style::default(),
+        HIGH_CONTRAST => Style::default().fg(boost(color)),
+        _ => Style::default().fg(color),
+    }
+}
+
+/// 고대비 프리셋 이름. 설정 화면·config에 쓰이는 값과 같은 문자열이다.
+pub const HIGH_CONTRAST: &str = "high-contrast";
+
+/// 고대비에서 **흐린 회색을 터미널 기본 전경색으로 올린다.**
+///
+/// v0.27까지 `high-contrast`는 이름만 있고 아무 일도 하지 않았다 — 렌더 어디에도
+/// 분기가 없어 `default`와 한 셀도 다르지 않았는데, 설정 화면에는 "고대비"로
+/// 떠 있었다. 저시력 사용자에게 거짓 옵션을 판 셈이다.
+///
+/// 왜 회색이냐면, 안 읽히는 게 거기부터이기 때문이다. `DarkGray`(#555)는 검은
+/// 배경에서 대비가 **2.82:1**로 WCAG의 비텍스트 최소치(3:1)에도 못 미치고,
+/// `Gray`(#808080)는 흰 배경에서 3.95:1로 AA(4.5:1)에 못 미친다.
+///
+/// 올리는 대상이 `White`가 아니라 `Reset`인 이유: 이 프로젝트는 액센트 명명색에서
+/// black/white를 배제했다(밝은 배경에서 흰 글자는 안 보인다). `Reset`은 터미널이
+/// 자기 배경에 맞춰 고른 전경색이라 **어느 배경에서든 최대 대비**다.
+///
+/// 상태를 나타내는 색(빨강=진행 중, 초록=종료 등)은 건드리지 않는다 — 그건
+/// 정보이고, 고대비가 정보를 지워서는 안 된다.
+fn boost(color: Color) -> Color {
+    match color {
+        Color::Gray | Color::DarkGray => Color::Reset,
+        other => other,
+    }
+}
+
+/// 흐리게 그릴 때 쓰는 수식자. **고대비에서는 흐리게 하지 않는다.**
+///
+/// `Modifier::DIM`은 터미널이 전경색을 어둡게 낮추는 것이라, 저시력 사용자에게는
+/// 회색과 같은 문제를 일으킨다. 여섯 군데가 이 수식자를 직접 쓰고 있었다.
+pub fn dim(preset: &str) -> Modifier {
+    if preset == HIGH_CONTRAST {
+        Modifier::empty()
     } else {
-        Style::default().fg(color)
+        Modifier::DIM
     }
 }
 
@@ -186,10 +237,10 @@ pub fn status_fg(preset: &str, color: Color) -> Style {
 /// 아래 status_color_reset_still_draws_a_braille_marker_on_canvas가 이를
 /// 코드로 못박는다.
 pub fn status_color(preset: &str, color: Color) -> Color {
-    if preset == "mono" {
-        Color::Reset
-    } else {
-        color
+    match preset {
+        "mono" => Color::Reset,
+        HIGH_CONTRAST => boost(color),
+        _ => color,
     }
 }
 
@@ -232,7 +283,7 @@ mod tests {
 
     #[test]
     fn team_badge_sets_team_bg_and_contrasting_fg() {
-        let style = team_badge_style("OB"); // 어두운 남색
+        let style = team_badge_style("default", "OB"); // 어두운 남색
         assert_eq!(style.bg, Some(team_color("OB")));
         assert_eq!(style.fg, Some(Color::White));
     }
@@ -478,5 +529,29 @@ mod tests {
         ] {
             assert_eq!(accent_for("default", weird, None), None, "{weird:?}");
         }
+    }
+    /// **chrome 고정색도 어느 배경에서든 읽혀야 한다.**
+    ///
+    /// 팀 배지는 `every_team_badge_meets_wcag_aa_contrast`가 보는데, 상태 태그·
+    /// 시계 같은 chrome 고정색은 아무도 안 봤다. 취소 태그가 `DarkGray`(#555)라
+    /// 검은 배경에서 2.82:1이었다 — 비텍스트 최소치 3:1에도 못 미친다.
+    #[test]
+    fn chrome_grays_stay_legible_on_both_backgrounds() {
+        // chrome이 쓰는 무채색은 양쪽 배경 모두에서 비텍스트 최소치를 넘어야 한다.
+        let on_dark = contrast_ratio(Color::Gray, Color::Black);
+        let on_light = contrast_ratio(Color::Gray, Color::White);
+        assert!(
+            on_dark >= 3.0,
+            "Gray가 어두운 배경에서 {on_dark:.2}:1 — 3:1 미만"
+        );
+        assert!(
+            on_light >= 3.0,
+            "Gray가 밝은 배경에서 {on_light:.2}:1 — 3:1 미만"
+        );
+        // DarkGray는 이 기준을 못 넘는다 — 그래서 chrome에서 뺐다.
+        assert!(
+            contrast_ratio(Color::DarkGray, Color::Black) < 3.0,
+            "DarkGray가 기준을 넘게 됐다면 위 판단을 다시 봐야 한다"
+        );
     }
 }

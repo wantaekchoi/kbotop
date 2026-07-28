@@ -90,7 +90,10 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMa
     // 배경 무관 가독을 위해 named color/reverse만 쓰고 팀컬러 fg는 쓰지 않는다(v0.5).
     if let Some(code) = app.fav_code.as_deref() {
         counts_spans.push(Span::raw("   "));
-        counts_spans.push(Span::styled(format!(" {code} "), team_badge_style(code)));
+        counts_spans.push(Span::styled(
+            format!(" {code} "),
+            team_badge_style(&app.theme_preset, code),
+        ));
         counts_spans.push(Span::styled(
             " GO!",
             Style::default().add_modifier(Modifier::BOLD),
@@ -117,7 +120,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMa
     let counts = Line::from(counts_spans);
 
     let active = Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD);
-    let inactive = Style::default().add_modifier(Modifier::DIM);
+    let inactive = Style::default().add_modifier(theme::dim(&app.theme_preset));
     // 활성 탭은 브래킷으로도 표시한다: 반전이 미묘한 터미널·색각 사용자도
     // 텍스트만으로 현재 탭을 읽을 수 있다(v0.2 Tab UX fix). 라벨 폭을
     // 활성/비활성 동일하게 맞춰 토글 시 우측 요소가 흔들리지 않게 한다.

@@ -44,6 +44,9 @@ pub struct Labels {
     /// 상태와 안 맞았다).
     pub hint_latest: &'static str,
     pub error_prefix: &'static str,
+    /// 설정 파일을 못 읽었을 때 띄우는 문구(v0.28). 뒤에 파서 메시지가 붙는다.
+    /// 이 상태에서는 저장도 막으므로 "고칠 때까지 안 건드린다"는 뜻까지 담는다.
+    pub config_broken: &'static str,
     // 블록 타이틀 조각
     pub title_games: &'static str,     // " {t} {date} " 조합
     pub title_standings: &'static str, // " {t} {year} {current} "
@@ -213,6 +216,7 @@ pub const EN: Labels = Labels {
     hint_relay: "Relay",
     hint_latest: "Latest",
     error_prefix: " ERROR: ",
+    config_broken: " config.toml could not be read, using defaults (not overwriting it): ",
     title_games: "Games",
     title_standings: "Standings",
     standings_current: "(current)",
@@ -319,7 +323,7 @@ pub const EN: Labels = Labels {
         "Pitch      Left / Right (live view)",
         "Rewind     [ / ] (live view, loads past innings)",
         "Relay      j / k, gg / G (live view)",
-        "Options    F2 (date) / F9 (team/poll)",
+        "Options    F2 (date) / F9 (settings)",
         "Links/News o / n",
         "Mouse      click / wheel (click again to open)",
         "Quit       q / F10",
@@ -365,6 +369,7 @@ pub const KO: Labels = Labels {
     hint_relay: "중계",
     hint_latest: "최신",
     error_prefix: " 오류: ",
+    config_broken: " 설정 파일을 못 읽어 기본값으로 실행합니다(파일은 그대로 둡니다): ",
     title_games: "경기",
     title_standings: "순위",
     standings_current: "(현재)",
@@ -471,7 +476,7 @@ pub const KO: Labels = Labels {
         "투구 보기   좌우 방향키 (중계 화면)",
         "돌려보기    [ / ] (중계 화면, 지난 이닝까지)",
         "중계 커서   j / k · gg / G (중계 화면)",
-        "옵션        F2 (날짜) / F9 (팀·주기)",
+        "옵션        F2 (날짜) / F9 (설정)",
         "링크/뉴스   o / n",
         "마우스      클릭·휠 (다시 클릭하면 열기)",
         "종료        q / F10",
@@ -517,6 +522,7 @@ pub const JA: Labels = Labels {
     hint_relay: "実況",
     hint_latest: "最新",
     error_prefix: " エラー: ",
+    config_broken: " 設定ファイルを読めず既定値で動作します(ファイルはそのまま): ",
     title_games: "試合",
     title_standings: "順位",
     standings_current: "(現在)",
@@ -623,9 +629,9 @@ pub const JA: Labels = Labels {
         "投球確認    Left / Right (中継画面)",
         "巻き戻し    [ / ] (中継画面·前の回まで)",
         "実況        j / k · gg / G (中継画面)",
-        "オプション  F2 (日付) / F9 (チーム·間隔)",
+        "オプション  F2 (日付) / F9 (設定)",
         "リンク/ニュース  o / n",
-        "マウス      クリック·ホイール操作",
+        "マウス      クリック·ホイール(再クリックで開く)",
         "終了        q / F10",
     ],
     pane_date: "日付",
@@ -783,6 +789,42 @@ mod tests {
                 l.news_age_min_suffix,
                 l.news_age_hour_suffix,
                 l.news_age_day_suffix,
+                l.config_broken,
+                l.loading_inning,
+                l.set_mouse,
+                l.on,
+                l.off,
+                l.title_matchup,
+                l.matchup_batter,
+                l.matchup_pitcher,
+                l.matchup_career,
+                l.matchup_innings,
+                l.matchup_hits,
+                l.matchup_pitches,
+                l.title_team_stats,
+                l.team_stats_hint,
+                l.stats_batting,
+                l.stats_pitching,
+                l.stat_avg,
+                l.stat_obp,
+                l.stat_slg,
+                l.stat_ops,
+                l.stat_runs,
+                l.stat_rbi,
+                l.stat_hr,
+                l.stat_sb,
+                l.stat_era,
+                l.stat_whip,
+                l.stat_qs,
+                l.stat_save,
+                l.stat_hold,
+                l.stat_so,
+                l.stat_hr_allowed,
+                l.stat_err,
+                l.col_starters,
+                l.col_venue,
+                l.col_last_five,
+                l.col_streak,
             ] {
                 assert!(!s.trim().is_empty());
             }
@@ -798,7 +840,7 @@ mod tests {
     fn footer_assembly_is_width_safe_in_all_languages() {
         use crate::ui::footer::{assemble_hints, HintItem};
         use crate::ui::text::display_width;
-        for l in [&KO, &EN] {
+        for l in [&KO, &EN, &JA] {
             let items = [
                 HintItem {
                     key: "F1",
@@ -843,7 +885,7 @@ mod tests {
     /// 탭 라벨: 활성 "[ t ]"과 비활성 "  t  "의 폭이 언어별로 동일(레이아웃 불변).
     #[test]
     fn tab_labels_keep_symmetric_width_per_language() {
-        for l in [&KO, &EN] {
+        for l in [&KO, &EN, &JA] {
             for t in [l.tab_games, l.tab_standings] {
                 assert_eq!(
                     display_width(&format!("[ {t} ]")),
@@ -894,5 +936,46 @@ mod tests {
         uniq.sort_unstable();
         uniq.dedup();
         assert_eq!(uniq.len(), names.len(), "display names must be distinct");
+    }
+    /// **완전성 검사가 실제로 모든 라벨을 보는가.**
+    ///
+    /// `every_label_is_nonempty_in_all_languages`는 필드를 손으로 나열한다.
+    /// 그래서 v0.23 이후 추가된 라벨 서른다섯 개(팀 성적 16종, 대결 블록 7종,
+    /// 마우스 3종 …)가 **한 번도 검사받지 않았다** — 빈 문자열로 번역해 두어도
+    /// 아무도 몰랐다. 나열을 자동화할 수는 없으니, 나열이 빠짐없는지를 검사한다.
+    #[test]
+    fn the_completeness_check_covers_every_label_field() {
+        const SRC: &str = include_str!("i18n.rs");
+        let struct_start = SRC.find("pub struct Labels {").expect("struct를 못 찾았다");
+        let struct_end = struct_start + SRC[struct_start..].find("\n}").expect("끝을 못 찾았다");
+        let fields: Vec<&str> = SRC[struct_start..struct_end]
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("pub "))
+            .filter(|l| l.contains("&'static str,")) // 배열(help_lines)은 별도 테스트가 본다
+            .filter_map(|l| l.split(':').next())
+            .map(str::trim)
+            .collect();
+        assert!(fields.len() > 80, "필드 파싱이 깨졌다: {}", fields.len());
+
+        let fn_start = SRC
+            .find("fn every_label_is_nonempty_in_all_languages()")
+            .expect("완전성 테스트를 못 찾았다");
+        let fn_end = fn_start
+            + SRC[fn_start..]
+                .find("\n    }")
+                .expect("함수 끝을 못 찾았다");
+        let body = &SRC[fn_start..fn_end];
+
+        let missing: Vec<&str> = fields
+            .iter()
+            .filter(|f| !body.contains(&format!("l.{f},")))
+            .copied()
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "완전성 검사가 빠뜨린 라벨 {}개: {:?}",
+            missing.len(),
+            missing
+        );
     }
 }

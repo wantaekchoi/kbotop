@@ -8,8 +8,8 @@ use anyhow::Result;
 use clap::Parser;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseButton,
-        MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers, MouseButton, MouseEventKind,
     },
     execute,
     terminal::{
@@ -57,6 +57,14 @@ struct Cli {
     // clap이 플래그로 오인한다(미주 전체가 여기 해당) — 실사용 검증에서 잡힘.
     #[arg(long, allow_hyphen_values = true)]
     tz: Option<String>,
+    /// Print third-party license notices and exit.
+    ///
+    /// 정적 링크 배포물은 의존성의 저작권 표시·라이선스 전문을 함께 배포해야
+    /// 한다. 그 고지는 릴리스 아카이브에만 들어 있어서, Homebrew·curl 인스톨러·
+    /// `cargo install`로 받은 사람은 **바이너리만 갖고 고지는 못 받는다**.
+    /// 파일을 따라다니게 하는 대신 바이너리가 스스로 뱉게 한다.
+    #[arg(long)]
+    license: bool,
 }
 
 /// 언어 결정: CLI > config > env(LC_ALL→LANG, "ko"/"ja" 접두) > En.
@@ -140,8 +148,21 @@ fn resolve_date(input: &str, today_days: i64) -> Result<String, String> {
             let n: i64 = rest
                 .parse()
                 .map_err(|_| format!("day offset too large: {s}"))?;
-            let sign = if s.starts_with('-') { -1 } else { 1 };
-            return Ok(format_civil(today_days + sign * n));
+            let sign: i64 = if s.starts_with('-') { -1 } else { 1 };
+            // checked_*로 막는다. 디버그 빌드는 패닉하고 릴리스는 조용히
+            // 랩어라운드해 **엉뚱한 날짜로 요청이 나갔다**(둘 다 나쁘다).
+            // 그리고 넘치지 않더라도 연도가 네 자리를 벗어나면 거절한다 —
+            // `format_civil`은 "2737907008958-07-04" 같은 문자열도 군말 없이
+            // 만들어 주고, 그게 그대로 URL에 실린다.
+            let days = sign
+                .checked_mul(n)
+                .and_then(|d| today_days.checked_add(d))
+                .ok_or_else(|| format!("day offset too large: {s}"))?;
+            let out = format_civil(days);
+            if !is_four_digit_year(&out) {
+                return Err(format!("day offset too large: {s}"));
+            }
+            return Ok(out);
         }
     }
     let bytes = s.as_bytes();
@@ -191,7 +212,13 @@ fn init_terminal() -> Result<Tui> {
         original_hook(info);
     }));
 
-    enable_raw_mode()?;
+    // TTY가 아니면 여기서 먼저 걸린다. 그대로 두면 `Error: Device not configured
+    // (os error 6)`가 나가는데, `kbotop | less`나 CI에서 그걸 보는 사람은 원인을
+    // 짐작할 수 없다 — 인자 오류가 `kbotop: ...`으로 나가는 것과 접두사도 다르다.
+    if let Err(e) = enable_raw_mode() {
+        eprintln!("kbotop: needs an interactive terminal (could not enter raw mode: {e})");
+        std::process::exit(2);
+    }
 
     // 이후 단계가 실패하면 이미 켜둔 raw mode/alternate screen을 되돌린 뒤
     // 에러를 반환한다 — 그러지 않으면 main()이 `?`로 즉시 종료돼 터미널이
@@ -210,6 +237,29 @@ fn init_terminal() -> Result<Tui> {
             Err(e.into())
         }
     }
+}
+
+/// `format_civil`이 만든 문자열이 네 자리 연도인가.
+///
+/// 이 함수는 어떤 큰 수를 줘도 문자열을 만들어 낸다("-25252734927764530-03-11").
+/// 실재하지 않는 날짜를 API에 그대로 보내지 않으려면 여기서 막아야 한다.
+fn is_four_digit_year(s: &str) -> bool {
+    let year = s.split('-').next().unwrap_or("");
+    year.len() == 4 && year.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Ctrl+C인가.
+///
+/// raw mode는 ISIG를 끄므로 **SIGINT가 아예 오지 않는다** — 그래서 시그널
+/// 핸들러도 이걸 못 잡는다. crossterm은 `Char('c')` + CONTROL로 넘겨주는데,
+/// `App::on_key`는 KeyCode만 받아 수식키를 보지 않는다. 즉 아무도 처리하지
+/// 않으면 Ctrl+C가 `_ => {}`로 떨어져 **아무 일도 일어나지 않는다**(v1.0 준비
+/// 중 pty로 실측했다 — 앱이 그대로 살아 있었다).
+///
+/// 대문자까지 보는 건 Ctrl+Shift+C를 누르는 사람이 있기 때문이다.
+fn is_interrupt(k: &KeyEvent) -> bool {
+    k.modifiers.contains(KeyModifiers::CONTROL)
+        && matches!(k.code, KeyCode::Char('c') | KeyCode::Char('C'))
 }
 
 /// 터미널을 원상 복구한다. `run()`의 성공/실패와 무관하게 항상 호출돼야 한다.
@@ -243,8 +293,9 @@ fn restore_terminal(term: &mut Tui) -> Result<()> {
 ///
 /// Windows에는 SIGTERM/SIGHUP/SIGQUIT 등가물이 없어 signal-hook 자체가
 /// 지원하지 않는다(크레이트도 Cargo.toml에서 `cfg(unix)` 전용 의존성으로
-/// 옮겨져 있다). crossterm이 raw mode에서 Ctrl+C를 일반 키 이벤트로 넘겨주므로
-/// 기존 `q`/키 종료 경로가 그대로 동작한다 — 이 플래그는 항상 false로 유지되고
+/// 옮겨져 있다). Windows에서 Ctrl+C는 run()의 `is_interrupt`가 받는다 —
+/// crossterm이 `Char('c')` + CONTROL로 넘겨주는 것을 거기서 종료로 해석한다.
+/// 이 플래그는 항상 false로 유지되고
 /// run()의 term_signal 체크가 두 플랫폼에서 동일한 타입으로 컴파일되게 하는
 /// 용도로만 존재한다.
 #[cfg(unix)]
@@ -266,7 +317,7 @@ fn install_term_signal_handler() -> Result<Arc<AtomicBool>> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let cfg = config::load();
+    let (cfg, config_error) = config::load();
 
     // KST 오늘의 epoch 일수 — kst_today()와 동일 산술(+9h) 공유.
     let today_days = {
@@ -287,11 +338,26 @@ fn main() -> Result<()> {
             }
         },
     };
+    if cli.license {
+        print!("{}", include_str!("../THIRD-PARTY.md"));
+        return Ok(());
+    }
     // 알 수 없는 --team 별칭은 조용히 무시하지 않는다(v0.1.2 리뷰 Minor).
     if let Some(alias) = cli.team.as_deref() {
         if team_code(alias).is_none() {
             eprintln!(
                 "kbotop: unknown team alias: {alias} (valid: lg kt ssg/sk nc kia/ht lotte/lt samsung/ss hanwha/hh kiwoom/wo doosan/ob)"
+            );
+            std::process::exit(2);
+        }
+    }
+    // `--tz`도 fail-fast다. resolve()는 config를 위해 관용적으로 파싱하는데,
+    // CLI 값까지 거기 얹으면 `--tz Asia/Seoul`이 조용히 무시된 채 시스템
+    // 시간대로 표시된다 — 사용자는 자기가 지정한 대로 보고 있다고 믿는다.
+    if let Some(tz) = cli.tz.as_deref() {
+        if !kbotop::localtime::is_supported_setting(tz) {
+            eprintln!(
+                "kbotop: unsupported --tz: {tz} (use auto, kst, or an offset like +09:00; IANA names such as Asia/Seoul are not supported)"
             );
             std::process::exit(2);
         }
@@ -332,11 +398,15 @@ fn main() -> Result<()> {
         date,
         rx_cmd,
         tx_up,
-        live_poll_secs,
-        poller::STANDINGS_POLL_SECS,
+        poller::PollConfig {
+            live_secs: live_poll_secs,
+            standings_secs: poller::STANDINGS_POLL_SECS,
+            want_tips: lang == kbotop::ui::i18n::Lang::Ko,
+        },
     );
 
     let mut app = App::new(cfg);
+    app.config_error = config_error;
     // 표시 시간대는 프로세스 시작 시 1회만 정한다(매 프레임 파일 I/O 금지).
     // CLI > config > TZ > /etc/localtime > KST 순서는 localtime::resolve가 담당.
     app.tz = kbotop::localtime::resolve(
@@ -565,7 +635,12 @@ fn run(
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(k) => {
-                    if k.kind == KeyEventKind::Press && app.on_key(k.code) {
+                    if k.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    // Ctrl+C가 먼저다. 이건 앱의 키 바인딩이 아니라 프로세스
+                    // 종료 요청이라 on_key로 내려보내지 않는다.
+                    if is_interrupt(&k) || app.on_key(k.code) {
                         break;
                     }
                 }
@@ -593,6 +668,52 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 큰 오프셋은 패닉하거나 엉뚱한 날짜를 만들지 않고 **거절**한다.
+    /// 디버그 빌드는 `attempt to add with overflow`로 죽었고, 릴리스는
+    /// 랩어라운드해서 조용히 이상한 날짜로 요청을 보냈다.
+    #[test]
+    fn a_huge_day_offset_is_rejected_instead_of_overflowing() {
+        for arg in [
+            "+9223372036854775807",
+            "-9223372036854775807",
+            "+999999999999",
+        ] {
+            let out = resolve_date(arg, 20_000);
+            assert!(out.is_err(), "{arg}를 거절하지 않았다: {out:?}");
+        }
+    }
+
+    /// 평범한 오프셋은 그대로 동작해야 한다(위 방어가 과하지 않은지).
+    #[test]
+    fn ordinary_day_offsets_still_work() {
+        let base = resolve_date("+0", 20_000).unwrap();
+        assert_eq!(resolve_date("today", 20_000).unwrap(), base);
+        assert!(resolve_date("-1", 20_000).unwrap() < base);
+        assert!(resolve_date("+365", 20_000).unwrap() > base);
+    }
+
+    /// Ctrl+C는 종료 요청이다. raw mode가 SIGINT를 막으므로 여기서 못 잡으면
+    /// **앱을 빠져나갈 방법이 하나 줄어든다**(pty 실측에서 실제로 안 죽었다).
+    #[test]
+    fn ctrl_c_is_an_interrupt() {
+        let ev = |c: char, m: KeyModifiers| KeyEvent::new(KeyCode::Char(c), m);
+        assert!(is_interrupt(&ev('c', KeyModifiers::CONTROL)));
+        assert!(
+            is_interrupt(&ev('C', KeyModifiers::CONTROL | KeyModifiers::SHIFT)),
+            "Ctrl+Shift+C도 종료로 친다"
+        );
+    }
+
+    /// 수식키 없는 `c`는 그냥 글자다 — 이걸 종료로 치면 미래에 `c` 바인딩을
+    /// 못 만든다.
+    #[test]
+    fn a_bare_c_is_not_an_interrupt() {
+        let ev = |c: char, m: KeyModifiers| KeyEvent::new(KeyCode::Char(c), m);
+        assert!(!is_interrupt(&ev('c', KeyModifiers::NONE)));
+        assert!(!is_interrupt(&ev('c', KeyModifiers::ALT)));
+        assert!(!is_interrupt(&ev('q', KeyModifiers::CONTROL)));
+    }
 
     #[test]
     fn kst_today_has_iso_date_shape() {

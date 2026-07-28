@@ -34,7 +34,10 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             ListItem::new(Line::from(vec![
                 Span::raw(lab),
                 Span::raw("  "),
-                Span::styled(value, Style::default().add_modifier(Modifier::DIM)),
+                Span::styled(
+                    value,
+                    Style::default().add_modifier(super::theme::dim(&app.theme_preset)),
+                ),
             ]))
         })
         .collect();

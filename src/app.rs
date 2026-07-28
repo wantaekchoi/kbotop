@@ -247,6 +247,10 @@ pub struct App {
     /// 주입한다. games/standings 선택 하이라이트가 `theme::accent_for`를 통해
     /// 이 값을 쓴다.
     pub theme_accent: String,
+    /// 설정 파일을 읽다 실패한 이유(None = 정상). 깨진 파일 위에 **덮어쓰지
+    /// 않기 위한** 플래그이기도 하다 — 그냥 기본값으로 갈아타고 저장해 버리면
+    /// 사용자의 설정이 조용히 사라진다.
+    pub config_error: Option<String>,
     /// 마우스를 쓸지(config `mouse`, F9에서 토글). main이 매 프레임 보고 캡처를
     /// 켜고 끈다 — 끈 즉시 터미널이 드래그 선택을 되찾아야 하기 때문이다.
     pub mouse: bool,
@@ -257,6 +261,7 @@ impl App {
         let mouse = config.mouse;
         App {
             config,
+            config_error: None,
             tab: Tab::Games,
             screen: Screen::List,
             games: vec![],
@@ -1049,6 +1054,15 @@ impl App {
     /// 현재 영속 대상(팀·폴링·언어·테마)을 Config로 만들어 저장한다. 실패는 삼켜
     /// settings.save_failed에 반영한다(무패닉·조용한 저하).
     fn persist(&mut self) {
+        // 읽다 실패한 파일은 건드리지 않는다. 기본값으로 갈아탄 상태를 되쓰면
+        // 사용자가 손으로 적어 둔 것들이 진짜로 사라진다 — 오타 하나 고치면
+        // 되는 상황을 복구 불가로 만드는 셈이다.
+        if self.config_error.is_some() {
+            if let Some(st) = &mut self.settings {
+                st.save_failed = true;
+            }
+            return;
+        }
         let cfg = crate::config::Config {
             favorite_team: self.fav_code.clone(),
             poll_secs: self.poll_choice,
@@ -1560,6 +1574,29 @@ mod tests {
         app.on_key(KeyCode::Char('g'));
         assert_eq!(app.selected, 2, "클릭 뒤의 g 하나가 gg로 읽혀 맨 위로 갔다");
     }
+
+    /// **깨진 설정 파일은 덮어쓰지 않는다.**
+    ///
+    /// 기본값으로 갈아탄 상태를 저장해 버리면 사용자가 손으로 적어 둔 것들이
+    /// 진짜로 사라진다 — 오타 하나 고치면 되는 상황이 복구 불가가 된다.
+    #[test]
+    fn a_broken_config_is_never_overwritten() {
+        let mut app = App::new(Default::default());
+        app.config_error = Some("invalid type: string \"yes\"".into());
+        app.settings = Some(SettingsState {
+            cursor: 0,
+            save_failed: false,
+        });
+        app.persist();
+        assert!(
+            app.settings
+                .as_ref()
+                .map(|s| s.save_failed)
+                .unwrap_or(false),
+            "저장을 막았으면 그 사실을 화면에 알려야 한다"
+        );
+    }
+
     #[test]
     fn tab_toggles_between_games_and_standings() {
         let mut app = App::new(Default::default());

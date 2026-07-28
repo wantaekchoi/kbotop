@@ -61,6 +61,23 @@ fn offset_abbrev(offset_secs: i32) -> String {
 /// 4. 전부 실패 → KST
 ///
 /// `now_secs`는 UTC epoch 초(TZif에서 "지금 적용되는" 구간을 고르는 데 쓴다).
+/// `--tz`로 받은 값이 우리가 해석할 수 있는 것인지 본다.
+///
+/// [`resolve`]는 **관용적으로** 파싱한다 — config는 영속 상태라, 모르는 값이
+/// 들어 있다고 앱이 뜨지 않으면 곤란하다. 그러나 **CLI는 fail-fast여야 한다**
+/// (`main.rs`가 `--lang`·`--team`·`--date`에 대해 이미 그렇게 한다).
+///
+/// 이 구분이 없으면 `--tz Asia/Seoul`이 **아무 말 없이 무시되고** 사용자는
+/// 자기가 지정한 시간대로 보고 있다고 믿는다. IANA 이름은 가장 흔한 표기라
+/// 실제로 밟는다.
+pub fn is_supported_setting(raw: &str) -> bool {
+    let t = raw.trim();
+    t.is_empty()
+        || t.eq_ignore_ascii_case("auto")
+        || t.eq_ignore_ascii_case("kst")
+        || parse_offset(t).is_some()
+}
+
 pub fn resolve(setting: Option<&str>, now_secs: u64) -> TimeZone {
     if let Some(s) = setting {
         let t = s.trim();

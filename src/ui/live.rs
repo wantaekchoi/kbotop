@@ -45,7 +45,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMa
         .constraints([Constraint::Length(head_h), Constraint::Min(0)])
         .split(area);
 
-    render_scoreline(f, rows[0], &vm, linescore.as_deref());
+    render_scoreline(f, rows[0], &vm, linescore.as_deref(), &app.theme_preset);
 
     // 폭이 좁거나 아직 투구 데이터가 없으면 존을 숨기고 중계에 본문 전체를 준다(우아한 저하).
     if vm.show_strike_zone(rows[1].width) {
@@ -94,10 +94,15 @@ fn render_relay_column(f: &mut Frame, area: Rect, vm: &LiveVm, hits: &mut super:
         .split(area);
     render_relay(f, rows[0], vm, hits);
 
+    // 폭이 모자라면 **정직하게 말줄임한다.** 그냥 두면 ratatui가 조용히 잘라
+    // "3피안타 82"처럼 단위가 사라진 문자열을 남긴다(`text` 모듈 doc이 금지하는
+    // 바로 그 조용한 클리핑이다). 같은 화면의 문자중계·라인스코어는 이미 폭을
+    // 받아 처리하는데 이 블록만 예외였다.
+    let inner = rows[1].width.saturating_sub(2) as usize;
     let lines: Vec<Line> = vm
         .matchup_rows
         .iter()
-        .map(|r| Line::from(r.as_str()))
+        .map(|r| Line::from(super::text::ellipsize(r, inner)))
         .collect();
     f.render_widget(
         Paragraph::new(lines).block(Block::bordered().title(vm.labels.title_matchup)),
@@ -114,16 +119,28 @@ const MATCHUP_MIN_HEIGHT: u16 = 3;
 /// 문자중계가 최소 여덟 줄은 남아야 읽을 만하다.
 const LINESCORE_MIN_HEIGHT: u16 = 16;
 
-fn render_scoreline(f: &mut Frame, area: Rect, vm: &LiveVm, linescore: Option<&[String]>) {
+fn render_scoreline(
+    f: &mut Frame,
+    area: Rect,
+    vm: &LiveVm,
+    linescore: Option<&[String]>,
+    preset: &str,
+) {
     let bold = Style::default().add_modifier(Modifier::BOLD);
     let mut spans = vec![
-        Span::styled(vm.away.name.as_str(), team_badge_style(&vm.away.code)),
+        Span::styled(
+            vm.away.name.as_str(),
+            team_badge_style(preset, &vm.away.code),
+        ),
         Span::raw(" "),
         Span::styled(vm.away_score.to_string(), bold),
         Span::raw(" : "),
         Span::styled(vm.home_score.to_string(), bold),
         Span::raw(" "),
-        Span::styled(vm.home.name.as_str(), team_badge_style(&vm.home.code)),
+        Span::styled(
+            vm.home.name.as_str(),
+            team_badge_style(preset, &vm.home.code),
+        ),
         Span::raw("   "),
         Span::raw(vm.inning_label),
     ];
@@ -156,7 +173,7 @@ fn render_scoreline(f: &mut Frame, area: Rect, vm: &LiveVm, linescore: Option<&[
         for r in rows {
             lines.push(Line::from(Span::styled(
                 r.clone(),
-                Style::default().add_modifier(Modifier::DIM),
+                Style::default().add_modifier(super::theme::dim(preset)),
             )));
         }
     }
@@ -1296,5 +1313,23 @@ mod tests {
             .flat_map(|y| (0..50).map(move |x| (x, y)))
             .any(|(x, y)| hits.at(x, y) == Some(crate::ui::hit::Zone::PitchNav));
         assert!(!has_pitch, "존이 접혔는데 투구 영역이 남아 있다");
+    }
+    /// 대결 블록도 **좁으면 정직하게 말줄임한다.**
+    ///
+    /// 폭 인자를 안 받아 ratatui가 조용히 잘랐고, "3피안타 82"처럼 단위가
+    /// 사라진 문자열이 남았다. 같은 화면의 문자중계·라인스코어는 이미 폭을
+    /// 받아 처리하는데 이 블록만 예외였다(`text` 모듈 doc이 금지하는 조용한
+    /// 클리핑이다).
+    #[test]
+    fn the_matchup_block_ellipsizes_instead_of_clipping() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        app.screen = matchup_screen();
+        // 존을 접어 문자중계 칼럼이 화면 전체를 쓰게 하고, 그 폭을 좁힌다.
+        let text = render_at(&app, 30, 30);
+        assert!(
+            text.contains('…'),
+            "좁은 폭인데 말줄임 표시가 없다 — 조용히 잘렸다:\n{text}"
+        );
     }
 }

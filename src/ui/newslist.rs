@@ -219,7 +219,10 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             let mut spans = vec![
                 Span::raw(title),
                 Span::raw(GAP),
-                Span::styled(source, Style::default().add_modifier(Modifier::DIM)),
+                Span::styled(
+                    source,
+                    Style::default().add_modifier(super::theme::dim(&app.theme_preset)),
+                ),
             ];
             if show_age {
                 // 마지막 칼럼이라 오른쪽 여백은 화면에 나타나지 않는다 —

@@ -58,20 +58,40 @@ impl Config {
 }
 
 /// TOML 문자열 → Config. 역직렬화 실패(깨진 TOML, 타입 불일치 등)는 관용적으로
-/// 기본값으로 폴백한다 — load()에서 분리해 파일 I/O 없이 이 분기를 직접 테스트할 수 있게 한다.
-fn config_from_toml_str(s: &str) -> Config {
-    toml::from_str(s).unwrap_or_default()
+/// 기본값으로 폴백하되 **왜 실패했는지 함께 돌려준다** — 부르는 쪽이 그걸 알아야
+/// 사용자에게 알리고, 무엇보다 **그 파일을 덮어쓰지 않을** 수 있다.
+fn config_from_toml_str(s: &str) -> (Config, Option<String>) {
+    match toml::from_str(s) {
+        Ok(c) => (c, None),
+        Err(e) => (Config::default(), Some(first_line(&e.to_string()))),
+    }
 }
 
-/// XDG 설정 경로에서 로드. 파일이 없거나 깨지면 기본값.
-pub fn load() -> Config {
+/// toml 에러는 여러 줄(위치 표시 포함)이라 한 줄 footer에 그대로 못 싣는다.
+fn first_line(s: &str) -> String {
+    s.lines()
+        .next()
+        .unwrap_or("invalid config")
+        .trim()
+        .to_string()
+}
+
+/// XDG 설정 경로에서 로드. 파일이 없으면 기본값(에러 아님).
+///
+/// **깨진 파일은 에러를 함께 돌려준다.** 예전에는 조용히 기본값으로 갈아탔는데,
+/// 그러면 `mouse = "yes"`처럼 타입 하나만 틀려도 `favorite_team`·`lang`·`theme`가
+/// 통째로 사라진 것처럼 보이고, 이어서 F9를 한 번 건드리면 그 기본값이 **파일에
+/// 되쓰여** 진짜로 사라진다. 사용자는 경고 한 줄 못 받는다.
+pub fn load() -> (Config, Option<String>) {
     let Some(dirs) = directories::ProjectDirs::from("", "", "kbotop") else {
-        return Config::default();
+        return (Config::default(), None);
     };
     let path = dirs.config_dir().join("config.toml");
     match std::fs::read_to_string(&path) {
         Ok(s) => config_from_toml_str(&s),
-        Err(_) => Config::default(),
+        // 파일이 없는 건 정상이다(첫 실행). 읽기 자체가 실패한 경우만 알린다.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Config::default(), None),
+        Err(e) => (Config::default(), Some(e.to_string())),
     }
 }
 
@@ -304,14 +324,14 @@ mod tests {
         // load()가 실제로 거치는 분기(toml::from_str(&s).unwrap_or_default())를
         // 파일 I/O 없이 직접 검증한다 — "깨진 TOML → panic 대신 기본값"은
         // 프로젝트 하드 제약(관용적 파싱, 패닉 금지)과 직결된다.
-        let c = config_from_toml_str("not = [valid : toml");
+        let (c, _) = config_from_toml_str("not = [valid : toml");
         assert_eq!(c.poll_secs, 5);
         assert!(c.favorite_team.is_none());
     }
 
     #[test]
     fn config_from_toml_str_parses_actual_fields() {
-        let c = config_from_toml_str("favorite_team = \"LG\"\npoll_secs = 7");
+        let (c, _) = config_from_toml_str("favorite_team = \"LG\"\npoll_secs = 7");
         assert_eq!(c.favorite_team.as_deref(), Some("LG"));
         assert_eq!(c.poll_secs, 7);
     }
@@ -327,7 +347,7 @@ mod tests {
             mouse: true,
         };
         let out = merge_into_toml("", &cfg).unwrap();
-        let back = config_from_toml_str(&out);
+        let (back, _) = config_from_toml_str(&out);
         assert_eq!(back.favorite_team.as_deref(), Some("LG"));
         assert_eq!(back.poll_secs, 7);
         assert_eq!(back.lang.as_deref(), Some("ko"));
@@ -395,10 +415,10 @@ mod tests {
 
     #[test]
     fn theme_config_defaults_and_parses() {
-        let c = config_from_toml_str("");
+        let (c, _) = config_from_toml_str("");
         assert_eq!(c.theme.preset, "default");
         assert_eq!(c.theme.accent, "team");
-        let c2 = config_from_toml_str("[theme]\npreset = \"mono\"\naccent = \"cyan\"");
+        let (c2, _) = config_from_toml_str("[theme]\npreset = \"mono\"\naccent = \"cyan\"");
         assert_eq!(c2.theme.preset, "mono");
         assert_eq!(c2.theme.accent, "cyan");
     }
@@ -581,5 +601,35 @@ mod tests {
         assert!(body.contains("mouse"), "저장 내용에 mouse가 없다:\n{body}");
         let back: Config = toml::from_str(&body).unwrap();
         assert!(!back.mouse);
+    }
+    /// **타입이 틀린 키 하나가 설정 전체를 날려서는 안 된다.**
+    ///
+    /// `mouse = "yes"`(불리언 자리에 문자열) 하나로 `favorite_team`·`lang`·
+    /// `theme`가 전부 기본값이 되고, 그 상태에서 F9를 건드리면 `persist()`가
+    /// 기본값을 파일에 되쓰면서 `favorite_team` 키를 **삭제**했다. 경고는 한 줄도
+    /// 없었다. 최소한 "왜 실패했는지"는 돌려줘야 부르는 쪽이 저장을 막고
+    /// 사용자에게 알릴 수 있다.
+    #[test]
+    fn a_single_bad_value_reports_why_instead_of_failing_silently() {
+        let (cfg, err) = config_from_toml_str(
+            "favorite_team = \"LG\"\nlang = \"ko\"\npoll_secs = 30\nmouse = \"yes\"\n",
+        );
+        assert!(err.is_some(), "깨진 설정인데 아무 말도 안 한다");
+        assert_eq!(cfg, Config::default(), "폴백은 기본값이 맞다");
+        let msg = err.unwrap();
+        assert!(
+            !msg.contains('\n'),
+            "한 줄 footer에 실을 수 있어야 한다: {msg}"
+        );
+        assert!(!msg.is_empty());
+    }
+
+    /// 멀쩡한 파일에는 에러가 붙지 않는다(위 방어가 과하지 않은지).
+    #[test]
+    fn a_valid_config_reports_no_error() {
+        let (_, err) = config_from_toml_str("favorite_team = \"LG\"\npoll_secs = 7\n");
+        assert!(err.is_none());
+        let (_, err) = config_from_toml_str("");
+        assert!(err.is_none(), "빈 파일은 정상이다");
     }
 }

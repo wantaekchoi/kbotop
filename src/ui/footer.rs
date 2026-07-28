@@ -111,15 +111,34 @@ pub fn assemble_hints(items: &[HintItem], width: usize) -> String {
 /// no-op), Standings 탭에서는 "Enter Live"를 보여주지 않는다.
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let l = app.labels();
-    let (text, style) = match &app.last_error {
-        Some(err) => (
+    // 설정 파일이 깨진 건 폴링 에러보다 먼저 알려야 한다 — 사용자가 파일을
+    // 고칠 때까지 계속 기본값으로 도는 상태이고, 그 사이 저장도 막혀 있다.
+    let shown = app
+        .config_error
+        .as_ref()
+        .map(|e| (format!("{}{e}", l.config_broken), true))
+        .or_else(|| {
+            app.last_error
+                .as_ref()
+                .map(|e| (format!("{}{e}", l.error_prefix), false))
+        });
+    let (text, style) = match &shown {
+        Some((msg, _)) => (
             // 긴 에러(HTTP 본문 조각 등)는 한 줄 footer에서 조용히 잘린다 —
             // 정직한 말줄임(§15 오버플로 정책).
-            super::text::ellipsize(&format!("{}{err}", l.error_prefix), area.width as usize),
-            Style::default()
-                .fg(Color::White)
-                .bg(Color::Red)
-                .add_modifier(Modifier::BOLD),
+            super::text::ellipsize(msg, area.width as usize),
+            // mono는 색을 안 쓴다 — 여기가 게이트를 안 거치고 흰 글자/빨간 배경을
+            // 직접 쓰고 있었다. `theme.rs`의 정책 주석은 예외를 **팀 배지 하나**로만
+            // 인정하는데 이 배너가 조용히 새고 있었고, mono 봉인 테스트는 `fg`만
+            // 보고 `bg`를 안 봐서 못 잡았다. 색이 빠져도 에러는 굵게 남아 눈에 띈다.
+            if app.theme_preset == "mono" {
+                Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
+            } else {
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Red)
+                    .add_modifier(Modifier::BOLD)
+            },
         ),
         None => {
             let items: Vec<HintItem> = match (&app.screen, app.tab) {
@@ -154,10 +173,14 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
                         label: l.hint_news,
                         core: false,
                     },
+                    // 목록에서 라이브로 들어가는 건 이 앱의 주 동작이다. 부가
+                    // 힌트로 두면 80칸에서 **영어·일본어만** 탈락해(한국어는
+                    // 73칸으로 들어간다) 같은 화면인데 언어에 따라 주 동작을
+                    // 안내받는 사람과 못 받는 사람이 갈렸다.
                     HintItem {
                         key: "Enter",
                         label: l.hint_live_key,
-                        core: false,
+                        core: true,
                     },
                     HintItem {
                         key: "q",
@@ -707,5 +730,31 @@ mod tests {
             compact.contains("도움말") && compact.contains("종료"),
             "unexpected: {text}"
         );
+    }
+    /// **80칸에서 세 언어 모두 `Enter`(라이브 진입)를 안내해야 한다.**
+    ///
+    /// 부가 힌트였을 때는 한국어(73칸)만 들어가고 영어·일본어는 탈락했다 —
+    /// 같은 화면인데 언어에 따라 주 동작을 안내받는 사람과 못 받는 사람이
+    /// 갈렸다. 80×24는 표준 터미널 크기라 흔한 경우다.
+    #[test]
+    fn the_enter_hint_survives_at_eighty_columns_in_every_language() {
+        for lang in [
+            crate::ui::i18n::Lang::Ko,
+            crate::ui::i18n::Lang::En,
+            crate::ui::i18n::Lang::Ja,
+        ] {
+            let mut app = App::new(Default::default());
+            app.lang = lang;
+            app.games_loaded = true;
+            // footer는 한 줄짜리 위젯이라 area를 그대로 주면 첫 행에 그려진다.
+            let mut term = Terminal::new(TestBackend::new(80, 1)).unwrap();
+            term.draw(|f| render(f, f.area(), &app)).unwrap();
+            let buf = term.backend().buffer();
+            let last: String = (0..80).map(|x| buf[(x, 0)].symbol().to_string()).collect();
+            assert!(
+                last.contains("Enter"),
+                "{lang:?} 80칸 footer에 Enter가 없다: {last:?}"
+            );
+        }
     }
 }

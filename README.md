@@ -16,9 +16,7 @@
 
 </div>
 
-터미널에 띄워 두면 점수·볼카운트·주자·문자중계가 알아서 갱신됩니다. 진행 중인 경기는 공 하나하나를 스트라이크존에 그려 로케이션과 구속까지 보여줍니다.
-
-API 키는 필요 없고, 바이너리 하나로 돕니다.
+띄워 두면 알아서 갱신됩니다. API 키 없이, 바이너리 하나로.
 
 ## 설치
 
@@ -34,9 +32,9 @@ brew install wantaekchoi/tap/kbotop
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wantaekchoi/kbotop/releases/latest/download/kbotop-installer.sh | sh
 ```
 
-**Windows** — [Releases](https://github.com/wantaekchoi/kbotop/releases/latest)에서 `kbotop-x86_64-pc-windows-msvc.zip`을 받아 압축을 풀고 `kbotop.exe`를 실행하세요. (Git Bash·MSYS 같은 POSIX 셸을 쓴다면 위 설치 스크립트도 그대로 동작합니다.)
+**Windows** — [Releases](https://github.com/wantaekchoi/kbotop/releases/latest)에서 `kbotop-x86_64-pc-windows-msvc.zip`을 받아 풀고 `kbotop.exe`를 실행하세요. (Git Bash·MSYS를 쓴다면 위 스크립트도 그대로 됩니다.)
 
-**cargo** (Rust 툴체인이 있다면)
+**cargo**
 
 ```sh
 cargo install kbotop
@@ -46,27 +44,33 @@ cargo install kbotop
 
 ```sh
 kbotop                    # 오늘 경기
-kbotop --team lg          # 내 팀 라이브 경기로 바로
+kbotop --team lg          # 내 팀 라이브로 바로
 kbotop --date yesterday   # YYYY-MM-DD, YYYYMMDD, today, tomorrow, +N, -N
 kbotop --lang en          # ko / en / ja (기본: 로케일 자동)
-kbotop --tz +09:00        # 표시 시간대 (기본: 시스템 자동 감지)
+kbotop --tz +09:00        # 표시 시간대 (기본: 시스템 자동)
+kbotop --license          # 정적 링크된 오픈소스 고지
 ```
 
-움직이는 방식은 Vim과 같습니다. `j`/`k`로 오르내리고 `Esc`로 물러납니다. 아래는 자주 쓰는 것만 추렸고, 전체 목록은 앱에서 `?`를 누르면 나옵니다.
+| 키 | |
+|---|---|
+| `j` `k` · `gg` `G` | 이동 |
+| `Enter` | 열기 — 경기는 라이브로, 순위는 팀 성적으로 |
+| `Tab` | 경기 ↔ 순위 |
+| `←` `→` | 투구 하나씩 (라이브) |
+| `[` `]` | 지나간 타석 되감기, 이닝 경계를 넘으면 앞 이닝을 받아옵니다 |
+| `F2` `F9` | 날짜 · 설정 |
+| `o` `n` | 구단 링크 · 뉴스 |
+| `Esc` `q` | 뒤로 · 종료 |
 
-**경기 목록에서** `Enter`를 누르면 그 경기 라이브로 들어갑니다. `Tab`으로 순위표와 오가고, `F2`로 날짜를 바꿉니다. `o`는 그 팀 구단 링크, `n`은 뉴스, `F9`는 설정입니다.
+전체 목록은 앱에서 `?`.
 
-**순위표에서** `Enter`를 누르면 그 팀의 시즌 성적이 펼쳐집니다 — 타율·OPS부터 평균자책·WHIP까지.
-
-**라이브 화면에서** `←`/`→`로 투구를 하나씩 짚어 보면 그 공이 스트라이크존과 측면 궤적에 뜹니다. `[`/`]`로는 지나간 타석을 되감고, 그 이닝의 첫 타석에서 한 번 더 누르면 **앞 이닝을 받아옵니다**. 문자중계는 `j`/`k`로 한 줄씩, `gg`/`G`로 양 끝까지 움직이며, 커서를 둔 줄의 공이 존에 함께 표시됩니다.
-
-**마우스로도 됩니다.** 탭을 누르면 그 탭으로 가고, 목록은 한 번 눌러 고른 뒤 다시 누르면 열립니다. 문자중계는 줄을 누르면 그 공이 존에 뜨고, 존 위에서 휠을 굴리면 공이 하나씩 넘어갑니다. 대신 마우스를 켜 두면 터미널의 드래그 선택이 앱으로 넘어옵니다 — 복사할 때는 **Shift를 누른 채 드래그**하거나, `F9` 설정에서 마우스를 끄면 됩니다.
+마우스도 됩니다. 클릭해 고르고 다시 클릭해 열고, 휠로 굴립니다. 대신 드래그 선택이 앱으로 넘어가니 복사할 때는 Shift를 누른 채 드래그하거나 `F9`에서 끄세요.
 
 ## 설정
 
-설정 파일은 OS 관례를 따릅니다 — Linux는 `$XDG_CONFIG_HOME/kbotop/config.toml`(없으면 `~/.config/kbotop/`), macOS는 `~/Library/Application Support/kbotop/`, Windows는 `%APPDATA%\kbotop\`. `F9` 화면에서 응원 팀·언어·폴링 주기·테마·마우스를 바꾸면 바로 저장됩니다.
+`F9`에서 바꾸면 바로 저장됩니다. 파일은 Linux `$XDG_CONFIG_HOME/kbotop/config.toml`(없으면 `~/.config/kbotop/`), macOS `~/Library/Application Support/kbotop/`, Windows `%APPDATA%\kbotop\config\`.
 
-테마는 프리셋(`default`/`high-contrast`/`mono`)에 강조색을 얹습니다. 강조색은 응원 팀 색(`team`), 미리 정해 둔 색 여섯 개, 또는 16진 값 중에서 고릅니다. 설정 화면(`F9`)에서 부르는 이름과 같습니다.
+테마는 프리셋(`default` · `high-contrast` · `mono`)에 강조색을 얹습니다.
 
 ```toml
 [theme]
@@ -78,9 +82,11 @@ accent = "#ff6600"   # team · none · cyan/green/yellow/magenta/blue/red · #rr
 
 ## 고지
 
-팬이 만든 비공식 도구입니다. 데이터는 네이버 스포츠의 공개(비공식) 엔드포인트에서 가져오며, 권리는 KBO와 네이버에 있습니다. 개인·비상업 용도로 써 주세요. 권리자 요청이 있으면 바로 조치합니다.
+팬이 만든 비공식 도구입니다. 데이터는 네이버 스포츠의 공개(비공식) 엔드포인트에서 가져오고 권리는 KBO와 네이버에 있습니다. 개인·비상업 용도로 써 주세요. 권리자 요청이 있으면 바로 조치합니다.
 
-뉴스는 각 언론사 RSS에서 헤드라인과 짧은 발췌만 받아 보여주고, 본문은 원문 링크로 넘깁니다.
+뉴스는 언론사 RSS에서 헤드라인과 짧은 발췌만 받고, 본문은 원문 링크로 넘깁니다.
+
+한국어로 실행하면 시작할 때 이 저장소에서 팁 문구 목록을 한 번 받아옵니다(하단 티커에 쓰입니다). 실패하면 앱에 내장된 목록을 씁니다. 다른 언어에서는 요청하지 않습니다.
 
 ## 라이선스
 

@@ -28,7 +28,7 @@ use crate::app::{App, Screen, Tab};
 use hit::HitMap;
 use ratatui::{
     layout::{Constraint, Direction, Layout},
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
     widgets::Paragraph,
     Frame,
@@ -86,24 +86,30 @@ pub fn draw(f: &mut Frame, app: &App, hits: &mut HitMap) {
                 format!("{} — {}", n.title, n.source)
             };
             Line::from(vec![
-                Span::styled(l.news_label, Style::default().add_modifier(Modifier::DIM)),
+                Span::styled(
+                    l.news_label,
+                    Style::default().add_modifier(theme::dim(&app.theme_preset)),
+                ),
                 Span::styled(
                     text::ellipsize(
                         &full,
                         width.saturating_sub(text::display_width(l.news_label)),
                     ),
-                    Style::default().add_modifier(Modifier::DIM),
+                    Style::default().add_modifier(theme::dim(&app.theme_preset)),
                 ),
             ])
         } else {
             Line::from(vec![
-                Span::styled(l.tip_label, Style::default().add_modifier(Modifier::DIM)),
+                Span::styled(
+                    l.tip_label,
+                    Style::default().add_modifier(theme::dim(&app.theme_preset)),
+                ),
                 Span::styled(
                     text::ellipsize(
                         tips::pick(&app.tips_override, app.lang, app.now_secs),
                         width.saturating_sub(text::display_width(l.tip_label)),
                     ),
-                    Style::default().add_modifier(Modifier::DIM),
+                    Style::default().add_modifier(theme::dim(&app.theme_preset)),
                 ),
             ])
         };
@@ -595,6 +601,140 @@ mod tests {
                 "mono chrome used a color: {:?}",
                 cell.fg
             );
+            // **배경도 본다.** fg만 보던 탓에 에러 배너의 빨간 배경(footer.rs)이
+            // 몇 릴리스 동안 새고 있었다.
+            assert!(
+                matches!(cell.bg, Color::Reset)
+                    || matches!(cell.bg, Color::White | Color::Black | Color::Gray),
+                "mono chrome used a background color: {:?}",
+                cell.bg
+            );
+        }
+    }
+
+    /// 에러가 떠 있는 화면도 mono면 무채여야 한다. 위 테스트는 에러가 없는
+    /// 화면만 봐서(그 사실을 주석으로 선언까지 해 두고) 배너를 못 봤다.
+    #[test]
+    fn mono_preset_keeps_the_error_banner_colorless() {
+        use ratatui::style::Color;
+        let mut app = App::new(Default::default());
+        app.theme_preset = "mono".into();
+        app.last_error = Some("네트워크에 못 닿는다".into());
+        let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        term.draw(|f| draw(f, &app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
+        let buf = term.backend().buffer().clone();
+        for cell in buf.content() {
+            assert!(
+                !matches!(cell.bg, Color::Red) && !matches!(cell.fg, Color::Red),
+                "mono인데 에러 배너가 빨갛다"
+            );
+        }
+    }
+
+    /// **고대비는 실제로 화면을 바꿔야 한다.**
+    ///
+    /// v0.27까지 `high-contrast`는 이름만 있었다 — 설정 화면에는 "고대비"로
+    /// 떠 있는데 렌더에 분기가 한 줄도 없어 `default`와 **한 셀도 다르지
+    /// 않았다**. 저시력 사용자에게 거짓 옵션을 판 셈이다. 그때도 테스트는 전부
+    /// 통과했다(아무도 두 프리셋을 비교하지 않았으니까).
+    #[test]
+    fn the_high_contrast_preset_actually_changes_the_screen() {
+        let cells = |preset: &str| {
+            let mut app = App::new(Default::default());
+            app.theme_preset = preset.into();
+            app.games_loaded = true;
+            app.standings_loaded = true;
+            app.last_update_secs = Some(0);
+            app.now_secs = 90; // 헤더에 "갱신 경과"(회색)가 뜨는 상태
+            let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+            term.draw(|f| draw(f, &app, &mut crate::ui::hit::HitMap::default()))
+                .unwrap();
+            let buf = term.backend().buffer().clone();
+            buf.content()
+                .iter()
+                .map(|c| format!("{:?}/{:?}/{:?}", c.fg, c.bg, c.modifier))
+                .collect::<Vec<_>>()
+        };
+        let base = cells("default");
+        let hc = cells("high-contrast");
+        let diff = base.iter().zip(hc.iter()).filter(|(a, b)| a != b).count();
+        assert!(
+            diff > 0,
+            "고대비가 default와 완전히 같다 — 옵션이 아무 일도 하지 않는다"
+        );
+    }
+
+    /// 고대비는 **회색을 없애되 상태색은 남긴다.** 색이 정보인 지점(진행 중=빨강
+    /// 등)을 지워 버리면 고대비가 아니라 정보 손실이다.
+    #[test]
+    fn the_high_contrast_preset_keeps_status_colors() {
+        use ratatui::style::Color;
+        let mut app = App::new(Default::default());
+        app.theme_preset = "high-contrast".into();
+        app.games_loaded = true;
+        let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        term.draw(|f| draw(f, &app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
+        let buf = term.backend().buffer().clone();
+        let has_status_color = buf
+            .content()
+            .iter()
+            .any(|c| matches!(c.fg, Color::Red | Color::Green | Color::Yellow));
+        assert!(has_status_color, "고대비가 상태색까지 지웠다");
+        let has_gray = buf
+            .content()
+            .iter()
+            .any(|c| matches!(c.fg, Color::Gray | Color::DarkGray));
+        assert!(!has_gray, "고대비인데 회색이 남아 있다");
+    }
+
+    /// **팀 배지까지 포함해** mono가 색을 안 쓰는지 본다.
+    ///
+    /// 기존 mono 테스트는 "팀 배지가 없는 상태(경기 없음, fav 미설정)"를 일부러
+    /// 골라 렌더했다(그 사실을 주석으로 적어 두기까지 했다). 그래서 배지가
+    /// RGB 배경을 그대로 내는 것을 몇 릴리스 동안 아무도 못 봤다 — README는
+    /// 그 내내 "색을 아예 쓰지 않아"라고 말하고 있었다.
+    #[test]
+    fn mono_preset_strips_team_badge_colors_too() {
+        use ratatui::style::Color;
+        let mut app = App::new(Default::default());
+        app.theme_preset = "mono".into();
+        app.fav_code = Some("LG".into()); // 헤더 응원 배지
+        app.games_loaded = true;
+        app.games = vec![sample_game_for_badges()];
+        let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        term.draw(|f| draw(f, &app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
+        let buf = term.backend().buffer().clone();
+        for cell in buf.content() {
+            assert!(
+                !matches!(cell.bg, Color::Rgb(..)) && !matches!(cell.fg, Color::Rgb(..)),
+                "mono인데 팀 컬러(RGB)가 남아 있다: fg={:?} bg={:?}",
+                cell.fg,
+                cell.bg
+            );
+        }
+    }
+
+    fn sample_game_for_badges() -> crate::model::Game {
+        let team = |c: &str| crate::model::Team {
+            code: c.into(),
+            name: c.into(),
+        };
+        crate::model::Game {
+            id: "g".into(),
+            start: String::new(),
+            status: crate::model::GameStatus::Live,
+            status_label: String::new(),
+            home: team("LG"),
+            away: team("OB"),
+            home_score: Some(1),
+            away_score: Some(2),
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
         }
     }
 

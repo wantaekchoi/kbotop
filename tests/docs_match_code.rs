@@ -150,3 +150,113 @@ fn the_windows_asset_name_matches_the_dist_target() {
         );
     }
 }
+
+/// 설정 파일 경로가 **실제 경로**와 맞아야 한다.
+///
+/// README 두 판이 Windows 경로를 `%APPDATA%\kbotop\`이라고 적어 뒀는데,
+/// `directories`가 실제로 쓰는 건 그 아래 `config\`까지다. 아무도 검사하지
+/// 않아 몇 릴리스를 그대로 지났다. 여기서는 **지금 이 플랫폼의 경로**만
+/// 검증할 수 있으므로, CI가 도는 리눅스와 개발 머신의 macOS가 각각 자기
+/// 몫을 본다.
+#[test]
+fn the_documented_config_path_matches_the_real_one() {
+    let path = kbotop::config::config_path().expect("설정 경로를 못 구한다");
+    let shown = path.to_string_lossy().replace('\\', "/");
+    // 홈 디렉터리는 문서에서 `~`나 환경변수로 적히므로, 그 아래 꼬리만 본다.
+    let tail: Vec<&str> = shown.rsplit('/').take(3).collect();
+    let tail = format!("{}/{}/{}", tail[2], tail[1], tail[0]);
+    for (name, doc) in [("README.md", README_KO), ("README.en.md", README_EN)] {
+        let normalized = doc.replace('\\', "/");
+        assert!(
+            normalized.contains(&tail)
+                || normalized.contains(tail.trim_end_matches("/config.toml")),
+            "{name}에 이 플랫폼의 설정 경로({tail})가 없다"
+        );
+    }
+}
+
+/// `--license`가 실제 고지를 뱉는가.
+///
+/// 이 플래그가 있는 이유는 Homebrew·curl 인스톨러·`cargo install`로 받은
+/// 사람에게 고지가 **닿지 않기 때문**이다(그 셋은 바이너리만 남긴다). 그래서
+/// 고지가 비거나 엉뚱해지면 세 채널이 통째로 의무를 못 지킨다.
+#[test]
+fn the_license_flag_prints_the_real_notice() {
+    const NOTICE: &str = include_str!("../THIRD-PARTY.md");
+    assert!(
+        NOTICE.len() > 10_000,
+        "고지가 너무 짧다: {}바이트",
+        NOTICE.len()
+    );
+    assert!(NOTICE.contains("Unlicense"), "고지에 우리 라이선스가 없다");
+    assert!(
+        NOTICE.contains("ratatui") && NOTICE.contains("crossterm"),
+        "고지에 핵심 의존성이 없다"
+    );
+}
+
+/// 고지에 적힌 **버전**이 실제 lock과 맞아야 한다.
+///
+/// 고지가 v0.15 시절에 멈춘 채 열두 릴리스를 지났고, 그동안 `either 1.16.0`처럼
+/// 낡은 버전이 적혀 있었다. "크레이트 이름이 다 있는가"만 보면 이런 드리프트를
+/// 못 잡는다 — 이름은 그대로이기 때문이다.
+///
+/// `Cargo.lock`에는 우리가 안 쓰는 플랫폼의 크레이트도 있으므로 **고지에 적힌
+/// 것만** 대조한다(고지 쪽이 배포 타깃으로 한정된 정확한 목록이다).
+#[test]
+fn the_notice_lists_the_versions_we_actually_lock() {
+    const NOTICE: &str = include_str!("../THIRD-PARTY.md");
+    const LOCK: &str = include_str!("../Cargo.lock");
+
+    // Cargo.lock: name = "x" 다음 줄에 version = "y"
+    let mut locked: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    let lines: Vec<&str> = LOCK.lines().collect();
+    for w in lines.windows(2) {
+        let (Some(name), Some(ver)) = (
+            w[0].strip_prefix("name = \"")
+                .and_then(|l| l.split('"').next()),
+            w[1].strip_prefix("version = \"")
+                .and_then(|l| l.split('"').next()),
+        ) else {
+            continue;
+        };
+        locked.entry(name).or_default().push(ver);
+    }
+    assert!(
+        locked.len() > 50,
+        "Cargo.lock 파싱이 깨졌다: {}",
+        locked.len()
+    );
+
+    // 고지: `- [name version](url)` 또는 `- name version`
+    let mut checked = 0;
+    let mut stale: Vec<String> = Vec::new();
+    for line in NOTICE.lines() {
+        let Some(rest) = line.strip_prefix("- ") else {
+            continue;
+        };
+        let inner = rest
+            .strip_prefix('[')
+            .map_or(rest, |r| r.split(']').next().unwrap_or(r));
+        let mut parts = inner.rsplitn(2, ' ');
+        let (Some(ver), Some(name)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        if name == "kbotop" {
+            continue; // 우리 버전은 Cargo.toml 쪽 테스트가 본다
+        }
+        let Some(versions) = locked.get(name) else {
+            continue; // lock에 없는 이름은 이 테스트의 관심 밖
+        };
+        checked += 1;
+        if !versions.contains(&ver) {
+            stale.push(format!("{name}: 고지 {ver} / lock {versions:?}"));
+        }
+    }
+    assert!(checked > 50, "대조한 크레이트가 너무 적다: {checked}");
+    assert!(
+        stale.is_empty(),
+        "고지가 낡았다 — `./scripts/third-party.sh`를 다시 돌려야 한다:\n{}",
+        stale.join("\n")
+    );
+}

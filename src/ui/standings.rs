@@ -69,7 +69,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMa
                 Cell::from(s.rank.to_string()),
                 Cell::from(Span::styled(
                     s.team.name.as_str(),
-                    team_badge_style(&s.team.code),
+                    team_badge_style(&app.theme_preset, &s.team.code),
                 )),
                 Cell::from(s.games.to_string()),
                 Cell::from(s.wins.to_string()),
