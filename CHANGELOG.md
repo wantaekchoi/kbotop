@@ -5,6 +5,17 @@
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-08-02
+
+노트북에 띄워 두는 앱이라는 걸 전제로 유휴 동작을 다시 봤고, 라이브 화면을 세 크기에서 실측했습니다.
+
+### Fixed
+- **구속 범례가 한 공을 두 줄로 쪼개던 것을 고쳤습니다.** "4F 143km"이 `4F`와 `143km`로 갈려 한 공의 구속이 두 개처럼 읽혔습니다(80·100·120칸 전부). 이제 항목 단위로 채우고, 자리가 모자라면 마지막에 `…`로 남은 게 있다는 것만 알립니다.
+
+### Changed
+- **가만히 있으면 화면을 다시 그리지 않습니다.** 지금까지는 0.1초마다 전체 화면을 다시 그렸는데 열에 아홉은 직전과 같은 그림이었습니다. 실측으로 유휴 12초에 5,093바이트 → 747바이트(하루 35MB → 5MB)입니다. 시계·"N초 전"은 초 단위로, 스피너는 예전 그대로 돕니다.
+- **되감기 캐시가 무한히 자라지 않습니다.** 날짜를 옮겨 다니면 그동안 본 경기가 전부 쌓였습니다. 같은 날 안에서 나갔다 돌아오면 예전처럼 그대로 있습니다.
+
 ## [0.32.0] - 2026-08-02
 
 남은 일과 백로그를 한 줄로 세워 중요도·오답 위험·1.0 차단 여부를 수고로 나눠 점수를 매기고, 상위 세 건을 골랐습니다.
@@ -356,7 +367,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.32.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.33.0...HEAD
+[0.33.0]: https://github.com/wantaekchoi/kbotop/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/wantaekchoi/kbotop/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/wantaekchoi/kbotop/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/wantaekchoi/kbotop/compare/v0.29.0...v0.30.0

@@ -159,6 +159,18 @@ fn resolve_date(input: &str, today_days: i64) -> Result<String, String> {
     ))
 }
 
+/// 이번 tick에 화면을 다시 그릴 이유가 있는가.
+///
+/// 유휴일 때 안 그리는 게 목적이지만(실측: 12초 유휴 5,093바이트 → 747바이트,
+/// 하루 35MB → 5MB), **빼먹으면 화면이 멈추는 조건**이 있어서 한 자리에 모은다:
+/// - `pending` — 폴러 업데이트나 키·마우스가 상태를 바꿨다
+/// - `fetching` — 스피너가 도는 중이다(1초에 한 번 움직이면 멈춘 것처럼 보인다)
+/// - `second_changed` — 시계와 "N초 전"이 초 단위다. 빼면 둘 다 얼어붙는다
+/// - `size_changed` — 창 크기가 바뀌었다
+fn should_redraw(pending: bool, fetching: bool, second_changed: bool, size_changed: bool) -> bool {
+    pending || fetching || second_changed || size_changed
+}
+
 type Tui = Terminal<CrosstermBackend<Stdout>>;
 
 /// raw mode + alternate screen으로 진입해 터미널을 초기화한다.
@@ -487,6 +499,16 @@ fn run(
     let mut mouse_on = false;
     // 직전 tick의 KST 오늘. 이 값이 바뀌는 순간이 자정 넘김이다.
     let mut prev_today = kst_today();
+    // **가만히 있으면 다시 그리지 않는다.** 루프는 입력을 100ms마다 깨워 보지만
+    // 그때마다 전체 화면을 다시 그릴 이유는 없다 — 화면에서 가장 빠른 것도
+    // "N초 전"과 스피너라 1초면 충분하다. 매 tick 그리면 하루 86만 번
+    // write+flush에 BSU/ESU 이스케이프가 붙는데(노트북에 띄워 두는 앱이다)
+    // 열에 아홉은 직전 프레임과 같은 그림이다.
+    //
+    // 다시 그리는 조건: ①폴러 업데이트 ②키·마우스 ③초가 바뀜 ④크기가 바뀜.
+    let mut dirty = true;
+    let mut last_second = 0u64;
+    let mut last_size = term.size().unwrap_or_default();
 
     loop {
         // 외부 SIGTERM/SIGHUP 수신 시 q를 누른 것과 동일하게 정상 종료 경로로
@@ -500,6 +522,7 @@ fn run(
         while let Ok(up) = rx_up.try_recv() {
             let is_games = matches!(up, Update::Games(_));
             app.apply(up);
+            dirty = true;
 
             if is_games {
                 if let Some(code) = auto_team.clone() {
@@ -584,31 +607,44 @@ fn run(
         }
 
         // 스피너 프레임: fetch가 in-flight인 동안 매 tick(~100ms) 회전.
+        // 도는 동안에는 초 단위 게이트를 건너뛴다 — 스피너는 "지금 뭔가 하고
+        // 있다"를 보이는 게 전부라 1초에 한 번 움직이면 멈춘 것처럼 보인다.
+        // fetch는 짧으므로 유휴 절감은 그대로 남는다.
         if app.fetching {
             app.spinner_frame = app.spinner_frame.wrapping_add(1);
         }
 
-        // 동기화 출력(BSU/ESU): 미지원 터미널은 이스케이프를 무시하므로 안전.
-        let _ = execute!(std::io::stdout(), BeginSynchronizedUpdate);
-        // 화면이 실제로 전환된 프레임에서만 clear한다(ADR-0007) — 매 프레임
-        // clear하면 깜빡임이 생기므로 직전 view_key와 다를 때만 호출한다.
-        let view_key = app.view_key();
-        if view_key != last_view_key {
-            // `Terminal::clear()`를 쓰지 않는다. 그건 지우기 전에 커서 위치를
-            // **DSR(ESC[6n)로 터미널에 물어보고** 답을 stdin에서 읽어 되돌린다.
-            // 대체 화면에서 커서를 숨겨 둔 이 앱에는 되돌릴 커서가 없는데,
-            // 대가는 크다: DSR에 답하지 않는 터미널에서는 2초를 기다린 끝에
-            // 에러가 나고 `?`가 앱을 그 자리에서 끝낸다(실측: pty에서 Enter로
-            // 화면을 바꾸는 순간 "The cursor position could not be read"로 종료).
-            // 응답을 stdin에서 긁어가므로 그 사이 눌린 키를 삼킬 수도 있다.
-            // `resize`는 같은 일(화면 지우기 + 백버퍼 리셋으로 전체 재그리기)을
-            // DSR 없이 한다 — ADR-0007이 필요로 한 건 그 둘뿐이다.
-            let size = term.size()?;
-            term.resize(size.into())?;
-            last_view_key = view_key;
+        let second_changed = app.now_secs != last_second;
+        last_second = app.now_secs;
+        // 크기는 백엔드에 묻는다(ioctl — DSR과 달리 터미널의 답을 기다리지 않는다).
+        let size_now = term.size().unwrap_or(last_size);
+        let size_changed = size_now != last_size;
+        last_size = size_now;
+
+        if should_redraw(dirty, app.fetching, second_changed, size_changed) {
+            dirty = false;
+            // 동기화 출력(BSU/ESU): 미지원 터미널은 이스케이프를 무시하므로 안전.
+            let _ = execute!(std::io::stdout(), BeginSynchronizedUpdate);
+            // 화면이 실제로 전환된 프레임에서만 clear한다(ADR-0007) — 매 프레임
+            // clear하면 깜빡임이 생기므로 직전 view_key와 다를 때만 호출한다.
+            let view_key = app.view_key();
+            if view_key != last_view_key {
+                // `Terminal::clear()`를 쓰지 않는다. 그건 지우기 전에 커서 위치를
+                // **DSR(ESC[6n)로 터미널에 물어보고** 답을 stdin에서 읽어 되돌린다.
+                // 대체 화면에서 커서를 숨겨 둔 이 앱에는 되돌릴 커서가 없는데,
+                // 대가는 크다: DSR에 답하지 않는 터미널에서는 2초를 기다린 끝에
+                // 에러가 나고 `?`가 앱을 그 자리에서 끝낸다(실측: pty에서 Enter로
+                // 화면을 바꾸는 순간 "The cursor position could not be read"로 종료).
+                // 응답을 stdin에서 긁어가므로 그 사이 눌린 키를 삼킬 수도 있다.
+                // `resize`는 같은 일(화면 지우기 + 백버퍼 리셋으로 전체 재그리기)을
+                // DSR 없이 한다 — ADR-0007이 필요로 한 건 그 둘뿐이다.
+                let size = term.size()?;
+                term.resize(size.into())?;
+                last_view_key = view_key;
+            }
+            term.draw(|f: &mut Frame| ui::draw(f, app, &mut hits))?;
+            let _ = execute!(std::io::stdout(), EndSynchronizedUpdate);
         }
-        term.draw(|f: &mut Frame| ui::draw(f, app, &mut hits))?;
-        let _ = execute!(std::io::stdout(), EndSynchronizedUpdate);
 
         // 마우스 캡처는 설정을 따라간다. F9에서 끈 그 순간 터미널이 드래그
         // 선택·복사를 되찾아야 하므로, 매 프레임 현재 값과 비교해 전환한다.
@@ -635,6 +671,7 @@ fn run(
                     if is_interrupt(&k) || app.on_key(k.code) {
                         break;
                     }
+                    dirty = true;
                 }
                 Event::Mouse(m) => {
                     // 누르는 순간이 아니라 **떼는 순간**에 반응한다 — 눌렀다가
@@ -648,6 +685,7 @@ fn run(
                     };
                     if let Some(a) = action {
                         app.on_mouse(hits.at(m.column, m.row), a);
+                        dirty = true;
                     }
                 }
                 _ => {}
@@ -1005,5 +1043,31 @@ mod tests {
         ] {
             assert!(help.contains(needle), "--help missing {needle:?}:\n{help}");
         }
+    }
+
+    /// **가만히 있으면 그리지 않는다** — 그게 이 게이트의 전부다.
+    #[test]
+    fn an_idle_tick_does_not_redraw() {
+        assert!(!should_redraw(false, false, false, false));
+    }
+
+    /// **초가 바뀌면 반드시 그린다.** 이 조건을 빼는 "최적화"가 가장 그럴듯한데,
+    /// 빼면 헤더 시계와 "N초 전"이 그 자리에 얼어붙는다 — 앱이 죽은 것처럼 보인다.
+    #[test]
+    fn a_new_second_always_redraws_or_the_clock_freezes() {
+        assert!(should_redraw(false, false, true, false));
+    }
+
+    /// 스피너가 도는 동안에는 초 게이트를 건너뛴다(1초에 한 칸이면 멈춘 것 같다).
+    #[test]
+    fn a_spinner_in_flight_keeps_animating_between_seconds() {
+        assert!(should_redraw(false, true, false, false));
+    }
+
+    /// 창 크기 변경과 상태 변화(폴러 업데이트·키)도 각각 단독으로 그린다.
+    #[test]
+    fn a_resize_or_a_state_change_redraws_on_its_own() {
+        assert!(should_redraw(false, false, false, true), "리사이즈");
+        assert!(should_redraw(true, false, false, false), "상태 변화");
     }
 }

@@ -7,7 +7,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{
         canvas::{Canvas, Rectangle},
-        Block, Paragraph, Wrap,
+        Block, Paragraph,
     },
     Frame,
 };
@@ -178,24 +178,57 @@ fn render_speed_list(
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let mut spans: Vec<Span> = Vec::new();
+    // **한 항목을 두 줄로 쪼개지 않는다.** 이전엔 `Wrap`에 맡겼는데, 폭에서
+    // 그냥 끊기라 "4F 143km"이 `4F` / `143km`로 갈렸다 — 한 공의 구속이 두
+    // 개처럼 읽힌다(v0.32 실측: 80·100·120칸 전부 재현). 항목 단위로 채우고,
+    // 남는 게 있으면 마지막에 `…`로 **있다는 사실만** 남긴다(§15 정직한 말줄임).
+    let width = area.width as usize;
+    let height = area.height as usize;
+    let mut lines: Vec<Line> = Vec::new();
+    let mut cur: Vec<Span> = Vec::new();
+    let mut cur_w = 0usize;
+    let mut dropped = false;
+
     for (idx, p) in pitches.iter().enumerate() {
-        let color = result_color(p.result);
         let text = match p.speed_kmh {
             Some(kmh) => format!("{}{} {}km", p.order, result_letter(p.result), kmh),
             None => format!("{}{}", p.order, result_letter(p.result)),
         };
-        if !spans.is_empty() {
-            spans.push(Span::raw("  "));
+        let sep = if cur.is_empty() { 0 } else { 2 };
+        let w = super::text::display_width(&text);
+        if cur_w + sep + w > width {
+            // 이 줄은 여기까지. 다음 줄이 없으면 남은 항목은 못 싣는다.
+            if lines.len() + 1 >= height {
+                dropped = true;
+                break;
+            }
+            lines.push(Line::from(std::mem::take(&mut cur)));
+            cur_w = 0;
         }
-        let mut style = theme::status_fg(preset, color);
+        if !cur.is_empty() {
+            cur.push(Span::raw("  "));
+            cur_w += 2;
+        }
+        let mut style = theme::status_fg(preset, result_color(p.result));
         if selected == Some(idx) {
             style = style.add_modifier(Modifier::REVERSED);
         }
-        spans.push(Span::styled(text, style));
+        cur_w += w;
+        cur.push(Span::styled(text, style));
     }
-    let para = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: false });
-    f.render_widget(para, area);
+    if dropped {
+        // 마지막 줄 끝에 한 칸을 비워 `…`를 얹는다 — 자리가 없으면 항목 하나를 뺀다.
+        while cur_w + 1 > width && cur.len() > 1 {
+            if let Some(span) = cur.pop() {
+                cur_w -= super::text::display_width(&span.content);
+            }
+        }
+        cur.push(Span::raw("…"));
+    }
+    if !cur.is_empty() {
+        lines.push(Line::from(cur));
+    }
+    f.render_widget(Paragraph::new(lines), area);
 }
 
 #[cfg(test)]
@@ -827,6 +860,67 @@ mod tests {
                 .filter(|y| (0..w).any(|x| !buf[(x, *y)].symbol().trim().is_empty()))
                 .count();
             println!("폭 {w:>2}: 내용폭 {box_w:>2} · 내용높이 {box_h:>2} · 범례 {legend_rows}줄");
+        }
+    }
+
+    /// **한 공의 구속이 두 줄로 갈리지 않는다.** 이전엔 `Wrap`이 폭에서 그냥
+    /// 끊어 "4F 143km"이 `4F` / `143km`가 됐다 — 한 값이 두 개처럼 읽힌다
+    /// (v0.32 실측: 80·100·120칸 전부 재현).
+    ///
+    /// 계약은 **"온전히 있거나, 아예 없거나"**다. 각 항목은 어느 한 줄 안에
+    /// 통째로 있어야 하고, 못 실은 게 있으면 `…`가 그 사실을 말해야 한다.
+    #[test]
+    fn a_speed_entry_is_either_whole_on_one_line_or_absent() {
+        let pitches: Vec<Pitch> = (1..=6)
+            .map(|i| Pitch {
+                order: i,
+                plate_x: 0.0,
+                plate_y: 2.4,
+                sz_top: 3.3,
+                sz_bottom: 1.5,
+                speed_kmh: Some(140 + i as u16),
+                result: PitchResult::Foul,
+                text: String::new(),
+                ..Default::default()
+            })
+            .collect();
+        let entries: Vec<String> = pitches
+            .iter()
+            .map(|p| format!("{}F {}km", p.order, p.speed_kmh.unwrap()))
+            .collect();
+
+        for width in 12..=60u16 {
+            let mut term = Terminal::new(TestBackend::new(width, LEGEND_HEIGHT)).unwrap();
+            term.draw(|f| render_speed_list(f, f.area(), &pitches, None, "default"))
+                .unwrap();
+            let buf = term.backend().buffer().clone();
+            let lines: Vec<String> = (0..LEGEND_HEIGHT)
+                .map(|y| (0..width).map(|x| buf[(x, y)].symbol()).collect())
+                .collect();
+            let whole = lines.join("\n");
+
+            let mut missing = 0;
+            for e in &entries {
+                // 어느 한 줄 안에 통째로 있는가?
+                let on_one_line = lines.iter().any(|l| l.contains(e.as_str()));
+                if on_one_line {
+                    continue;
+                }
+                missing += 1;
+                // 없다면 **조각도 남아 있으면 안 된다** — 조각이 곧 갈린 것이다.
+                let head = e.split(' ').next().unwrap(); // "4F"
+                let tail = e.split(' ').nth(1).unwrap(); // "143km"
+                assert!(
+                    !(whole.contains(head) && whole.contains(tail)),
+                    "폭 {width}: {e:?}가 갈려 있다:\n{whole}"
+                );
+            }
+            if missing > 0 {
+                assert!(
+                    whole.contains('…'),
+                    "폭 {width}: 항목 {missing}개를 못 실었는데 말줄임이 없다:\n{whole}"
+                );
+            }
         }
     }
 }

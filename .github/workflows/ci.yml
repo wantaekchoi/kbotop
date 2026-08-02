@@ -43,10 +43,9 @@ jobs:
       - name: test
         run: cargo test --all-features
 
-  # NOTE: the codecov badge in README.md / README.en.md only fills in once a
-  # human links this repo on codecov.io and adds a CODECOV_TOKEN secret in
-  # this repo's GitHub settings (Settings > Secrets and variables > Actions).
-  # That is a one-time, manual setup step this workflow cannot perform.
+  # The codecov badge in README.md / README.en.md is live: this repo is linked
+  # on codecov.io and CODECOV_TOKEN is set in Settings > Secrets and variables.
+  # (Until that one-time manual step was done the badge rendered as "unknown".)
   coverage:
     runs-on: ubuntu-latest
     steps:

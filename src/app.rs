@@ -1301,6 +1301,18 @@ impl App {
             Update::Games(g) => {
                 self.games = g;
                 self.games_loaded = true;
+                // 되감아 둔 이닝 캐시를 **오늘 목록에 있는 경기로** 줄인다.
+                // 경기 id로 나뉘어 있어 섞이지는 않지만 지우는 곳이 없었다 —
+                // F2로 날짜를 옮겨 다니면 본 경기가 전부 쌓인다(실측 최악
+                // 53MB). 같은 날 안에서 나갔다 돌아오는 경우는 그대로 남으므로
+                // v0.21이 고친 "다시 들어가면 또 기다린다"는 재발하지 않는다.
+                let watched = match &self.screen {
+                    Screen::Live { game, .. } => Some(game.id.clone()),
+                    Screen::List => None,
+                };
+                self.past_innings.retain(|id, _| {
+                    self.games.iter().any(|g| &g.id == id) || watched.as_deref() == Some(id)
+                });
                 if self.selected >= self.games.len() {
                     self.selected = self.games.len().saturating_sub(1);
                 }
@@ -3839,5 +3851,57 @@ mod tests {
         assert_eq!(app.top_overlay(), None);
         app.on_key(KeyCode::Char('j'));
         assert_eq!(app.selected, 1);
+    }
+
+    /// **되감기 캐시가 무한히 자라지 않는다.** 경기 id로 나뉘어 있어 섞이지는
+    /// 않았지만 지우는 곳이 없어서, F2로 날짜를 옮겨 다니면 그동안 본 경기가
+    /// 전부 쌓였다(실측 최악 53MB). 새 목록이 오면 그 목록에 있는 경기만 남긴다.
+    #[test]
+    fn the_rewind_cache_shrinks_to_the_games_currently_listed() {
+        let mut app = App::new(Default::default());
+        app.apply(Update::Games(vec![game("a"), game("b")]));
+        app.past_innings
+            .insert("a".into(), std::collections::BTreeMap::new());
+        app.past_innings
+            .insert("b".into(), std::collections::BTreeMap::new());
+
+        // 날짜를 옮기면 어제 경기의 캐시는 따라오지 않는다.
+        app.apply(Update::Games(vec![game("c")]));
+        assert!(app.past_innings.is_empty(), "{:?}", app.past_innings.keys());
+    }
+
+    /// **같은 날 안에서 나갔다 돌아오면 그대로 있다** — v0.21이 고친 동작이
+    /// 위 정리로 되살아나면 안 된다.
+    #[test]
+    fn leaving_and_returning_within_the_same_day_keeps_the_rewind_cache() {
+        let mut app = App::new(Default::default());
+        app.apply(Update::Games(vec![game("a"), game("b")]));
+        app.past_innings
+            .insert("a".into(), std::collections::BTreeMap::new());
+
+        app.enter_live(game("a"));
+        app.on_key(KeyCode::Esc);
+        app.apply(Update::Games(vec![game("a"), game("b")])); // 60초 뒤 폴링
+        assert!(
+            app.past_innings.contains_key("a"),
+            "같은 날인데 캐시가 날아갔다"
+        );
+    }
+
+    /// 보고 있는 경기가 목록에서 사라져도(서스펜디드 이월 등) 그 캐시는 남긴다 —
+    /// 화면에 떠 있는 것을 지우면 되감기가 그 자리에서 멈춘다.
+    #[test]
+    fn the_game_on_screen_keeps_its_cache_even_if_it_leaves_the_list() {
+        let mut app = App::new(Default::default());
+        app.apply(Update::Games(vec![game("a")]));
+        app.enter_live(game("a"));
+        app.past_innings
+            .insert("a".into(), std::collections::BTreeMap::new());
+
+        app.apply(Update::Games(vec![game("z")]));
+        assert!(
+            app.past_innings.contains_key("a"),
+            "보고 있는 경기의 캐시가 날아갔다"
+        );
     }
 }
