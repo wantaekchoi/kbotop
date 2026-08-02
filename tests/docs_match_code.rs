@@ -313,3 +313,72 @@ fn the_keys_the_demo_tapes_press_still_exist() {
         }
     }
 }
+
+/// 한 줄에서 등장 순서대로 정수를 모두 뽑는다. 문서 문장 안의 숫자를 **그 문장
+/// 안에서만** 읽기 위한 것 — 문서 전체에 `contains("60")`을 하면 어디에 있든
+/// 통과해 버려 검사가 아무것도 안 지킨다(이 파일에서 실제로 그렇게 썼다가
+/// 상수를 300→240으로 바꿔도 초록이라 걸렸다).
+fn numbers_in(line: &str) -> Vec<u64> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for c in line.chars() {
+        if c.is_ascii_digit() {
+            cur.push(c);
+        } else if !cur.is_empty() {
+            out.push(cur.parse().unwrap());
+            cur.clear();
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur.parse().unwrap());
+    }
+    out
+}
+
+/// `marker`로 시작하는 줄을 찾는다.
+fn line_starting_with<'a>(doc: &'a str, marker: &str) -> &'a str {
+    doc.lines()
+        .find(|l| l.starts_with(marker))
+        .unwrap_or_else(|| panic!("'{marker}'로 시작하는 줄이 문서에 없다"))
+}
+
+/// README가 문장으로 적어 둔 **갱신 주기 네 개**가 실제 상수와 같은지 본다.
+///
+/// v0.31에서 "무엇이 보이나" 절을 쓰면서 라이브 5초·목록 60초·순위 90초·종료
+/// 5분을 적었다. 이런 숫자는 조용히 늙는다 — v0.29에서 종료 경기 주기를 30초에서
+/// 5분으로 바꿨을 때 아무 문서도 따라오지 않았고, 그 사실을 아무도 몰랐다.
+/// 문장 **그 줄에서** 순서대로 읽어 대조한다.
+#[test]
+fn the_documented_poll_intervals_match_the_constants() {
+    use kbotop::config::Config;
+    use kbotop::poller::{FINAL_LIVE_POLL_SECS, GAMES_POLL_SECS, STANDINGS_POLL_SECS};
+
+    let expected = vec![
+        Config::default().effective_poll_secs(),
+        GAMES_POLL_SECS,
+        STANDINGS_POLL_SECS,
+        FINAL_LIVE_POLL_SECS / 60,
+    ];
+    for (doc, marker, name) in [
+        (README_KO, "갱신 주기는", "README.md"),
+        (README_EN, "Refresh intervals:", "README.en.md"),
+    ] {
+        let line = line_starting_with(doc, marker);
+        assert_eq!(
+            numbers_in(line),
+            expected,
+            "{name}의 갱신 주기 문장이 상수와 다르다: {line:?}"
+        );
+    }
+}
+
+/// 위 테스트는 종료 경기 주기를 **분으로** 대조한다. 초 단위 상수가 60으로
+/// 안 떨어지면 문서가 반올림된 거짓말을 하게 되므로 여기서 막는다.
+#[test]
+fn the_finished_game_interval_is_a_whole_number_of_minutes() {
+    assert_eq!(
+        kbotop::poller::FINAL_LIVE_POLL_SECS % 60,
+        0,
+        "README가 '5분'처럼 분으로 적는다 — 분으로 안 떨어지면 문서를 초로 고쳐야 한다"
+    );
+}

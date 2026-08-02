@@ -18,6 +18,18 @@
 
 Leave it open and the score, count, and play-by-play keep themselves current. No API key, one binary.
 
+## What you get
+
+**Game list** — each game's status and score, the starting matchup, the ballpark and broadcaster. Before first pitch, how many hours and minutes are left.
+
+**Live** — score, inning, count, outs and runners, with the play-by-play underneath. Every pitch is plotted in the strike zone and in a side view with its location and speed, alongside the linescore and the current matchup (the batter's day, the pitcher's pitch count, their career head-to-head). `[` rewinds through past at-bats, and past an inning boundary it pulls in the inning before.
+
+**Standings** — wins, losses, win rate and games behind, plus the last five games and the current streak. `Enter` opens that team's season batting and pitching lines.
+
+**On the side** — headlines from press RSS feeds (`n` for the list and an excerpt) and links to each club's official site and shop (`o`).
+
+Refresh intervals: 5 seconds for live (configurable), 60 for the game list, 90 for standings. A finished game has nothing left to change, so it is checked once every 5 minutes.
+
 ## Install
 
 **Homebrew** (macOS · Linux)
@@ -64,7 +76,7 @@ kbotop --license          # notices for the statically linked open source
 
 Press `?` in the app for the full list.
 
-The mouse works too: click to select, click again to open, wheel to scroll. It does take drag-to-select away from your terminal, so hold Shift while dragging to copy, or turn it off in `F9`.
+The mouse works too. Turn it on in `F9` and you can click to select, click again to open, and scroll with the wheel. It is off by default because while it is on your terminal loses drag-to-select (hold Shift while dragging to copy).
 
 ## Configuration
 

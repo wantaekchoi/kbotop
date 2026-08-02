@@ -194,7 +194,11 @@ pub(crate) mod test_support {
             term.draw(|f| render(f, f.area(), &app)).unwrap();
             let buf = term.backend().buffer().clone();
 
-            let w = area.width.saturating_sub(4).max(1);
+            // 이 헬퍼를 쓰는 오버레이(설정·뉴스 목록·기사)는 모두 **좌우 여백 없이**
+            // 화면 폭을 다 쓴다(v0.31 — 옆에 남긴 한 칸으로 아래 하이라이트가 비쳐
+            // 데드픽셀처럼 보였다). 여기 계산이 렌더와 어긋나면 엉뚱한 좌표의
+            // 모서리를 검사하게 되므로 같은 식을 쓴다.
+            let w = area.width.max(1);
             let h = area.height.saturating_sub(2).max(1);
             let rect = super::help_rect(w, h, area);
             let bottom_y = rect.y + rect.height - 1;
@@ -614,6 +618,61 @@ mod tests {
 
     /// 에러가 떠 있는 화면도 mono면 무채여야 한다. 위 테스트는 에러가 없는
     /// 화면만 봐서(그 사실을 주석으로 선언까지 해 두고) 배너를 못 봤다.
+    /// **화면을 거의 다 덮는 오버레이는 옆구리에 한 칸을 남기지 않는다.**
+    ///
+    /// 설정·뉴스 목록·기사는 `width - 4`로 좌우에 2칸씩 남겼는데, 왼쪽 두 칸은
+    /// 목록의 커서 표식("> ")이 채워서 실제로 드러나는 건 **오른쪽 한 칸뿐**
+    /// 이었다. 그 한 칸으로 아래 선택 행의 하이라이트 색이 비쳐, 커서가 그 줄에
+    /// 있을 때만 화면 끝에 색칠된 빈 칸 하나가 떴다 — 사용자에게는 데드픽셀로
+    /// 보였다(지적 2026-08-02). 도움말·팀 성적처럼 **작은** 오버레이는 주변이
+    /// 넉넉히 보여 "뒤에 화면이 있다"로 읽히므로 이 검사 대상이 아니다.
+    #[test]
+    fn a_full_bleed_overlay_leaves_no_colored_sliver_at_the_edge() {
+        use ratatui::style::Color;
+        let base = || {
+            let mut app = App::new(Default::default());
+            app.games_loaded = true;
+            app.games = vec![game("g", GameStatus::Live, "9회말")];
+            // 응원 팀 색을 하이라이트로 쓰게 해, 새는 색이 있으면 눈에 띄게 한다.
+            app.fav_code = Some("LG".into());
+            app
+        };
+
+        let mut settings = base();
+        settings.settings = Some(crate::app::SettingsState {
+            cursor: 0,
+            save_failed: false,
+        });
+
+        let mut news = base();
+        news.news = vec![crate::model::NewsItem {
+            title: "제목".into(),
+            url: "https://example.test".into(),
+            source: "매체".into(),
+            summary: "발췌".into(),
+            published: String::new(),
+        }];
+        news.news_list = Some(crate::app::NewsListState { cursor: 0 });
+
+        for (name, app) in [("settings", settings), ("news list", news)] {
+            let mut term = Terminal::new(TestBackend::new(120, 34)).unwrap();
+            term.draw(|f| draw(f, &app, &mut crate::ui::hit::HitMap::default()))
+                .unwrap();
+            let buf = term.backend().buffer().clone();
+            let leaked: Vec<(u16, u16)> = buf
+                .content()
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.symbol().trim().is_empty() && !matches!(c.bg, Color::Reset))
+                .map(|(i, _)| (i as u16 % 120, i as u16 / 120))
+                .collect();
+            assert!(
+                leaked.is_empty(),
+                "{name} 오버레이 옆으로 색칠된 빈 칸이 샜다: {leaked:?}"
+            );
+        }
+    }
+
     #[test]
     fn mono_preset_keeps_the_error_banner_colorless() {
         use ratatui::style::Color;

@@ -36,6 +36,23 @@ fn update_age_label(l: &Labels, now_secs: u64, last_secs: u64) -> String {
     }
 }
 
+/// 응원 팀 배지에 쓸 이름. `WO`·`OB` 같은 내부 코드는 아래 중계·목록 화면이
+/// 쓰는 "키움"·"두산"과 따로 놀아, 같은 팀을 가리키는 두 표기가 한 화면에
+/// 있었다(사용자 지적 2026-08-02). 표를 새로 만들지 않고 **이미 화면에 실려
+/// 온 데이터**에서 찾는다 — 그러면 서버가 부르는 이름과 항상 같고, 언어별로
+/// 무엇을 보여줄지 따로 정할 것도 없다(중계 화면과 같은 출처이므로).
+/// 오늘 경기에도 순위표에도 그 팀이 없으면(휴식일 등) 코드를 그대로 둔다 —
+/// 모르는 이름을 지어내지 않는다는 기존 원칙 그대로다.
+fn team_display_name<'a>(app: &'a App, code: &'a str) -> &'a str {
+    app.games
+        .iter()
+        .flat_map(|g| [&g.home, &g.away])
+        .chain(app.standings.iter().map(|s| &s.team))
+        .find(|t| t.code == code && !t.name.is_empty())
+        .map(|t| t.name.as_str())
+        .unwrap_or(code)
+}
+
 /// Span 슬라이스의 표시폭 합(display_width 휴리스틱). 우측 정렬 패딩·폭
 /// 예산 판정에 쓴다 — Span.content(Cow<str>)는 ratatui-core에서 공개 필드다.
 fn spans_width(spans: &[Span]) -> usize {
@@ -91,7 +108,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMa
     if let Some(code) = app.fav_code.as_deref() {
         counts_spans.push(Span::raw("   "));
         counts_spans.push(Span::styled(
-            format!(" {code} "),
+            format!(" {} ", team_display_name(app, code)),
             team_badge_style(&app.theme_preset, code),
         ));
         counts_spans.push(Span::styled(
@@ -324,6 +341,66 @@ mod tests {
             buf.content().iter().any(|c| c.bg == team_bg),
             "cheer badge must render on team color background"
         );
+    }
+
+    /// **응원 배지는 화면의 다른 곳과 같은 이름을 쓴다.** `WO`·`OB` 같은 내부
+    /// 코드가 배지에만 남아, 바로 아래 목록·중계가 부르는 "키움"·"두산"과 같은
+    /// 팀인지 한눈에 안 보였다(사용자 지적 2026-08-02).
+    #[test]
+    fn the_cheer_badge_uses_the_team_name_the_rest_of_the_screen_uses() {
+        let mut app = App::new(Default::default());
+        app.fav_code = Some("WO".into());
+        let mut g = game("g", GameStatus::Live);
+        g.home = Team {
+            code: "WO".into(),
+            name: "키움".into(),
+        };
+        app.games = vec![g];
+        // ratatui는 전각 문자 뒤에 placeholder 셀을 넣으므로 공백을 걷어내고 본다
+        // (games.rs·standings.rs의 render_at과 같은 관례).
+        let text: String = render_to_string(&app)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(text.contains("키움"), "배지가 코드 그대로다:\n{text}");
+    }
+
+    /// 순위표만 떠 있어도(경기 없는 날) 이름을 찾는다 — 두 출처를 다 본다.
+    #[test]
+    fn the_cheer_badge_falls_back_to_the_standings_for_the_name() {
+        let mut app = App::new(Default::default());
+        app.fav_code = Some("OB".into());
+        app.standings = vec![crate::model::Standing {
+            rank: 1,
+            team: Team {
+                code: "OB".into(),
+                name: "두산".into(),
+            },
+            games: 10,
+            wins: 5,
+            losses: 5,
+            draws: 0,
+            win_rate: 0.5,
+            game_behind: 0.0,
+            last_five: String::new(),
+            streak: String::new(),
+            stats: Default::default(),
+        }];
+        let text: String = render_to_string(&app)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(text.contains("두산"), "순위표의 이름을 못 찾았다:\n{text}");
+    }
+
+    /// **모르면 지어내지 않는다.** 오늘 경기에도 순위표에도 그 팀이 없으면
+    /// (휴식일·첫 폴링 전) 코드를 그대로 둔다.
+    #[test]
+    fn the_cheer_badge_keeps_the_code_when_no_data_names_the_team() {
+        let mut app = App::new(Default::default());
+        app.fav_code = Some("WO".into());
+        let text = render_to_string(&app);
+        assert!(text.contains("WO"), "코드마저 사라졌다:\n{text}");
     }
 
     /// fav 설정 여부와 무관하게 활성 탭·스피너는 named color(Cyan)/reverse만 쓴다

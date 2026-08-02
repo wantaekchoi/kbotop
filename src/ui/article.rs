@@ -183,8 +183,13 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     };
     let l = app.labels();
 
-    // 큰 박스: 좌우 2칸·상하 1칸 여백(help_rect는 area보다 크면 area로 clamp).
-    let w = area.width.saturating_sub(4).max(1);
+    // **좌우 여백을 두지 않는다.** 이전엔 `width - 4`로 양쪽에 2칸을 남겼는데,
+    // 커서 표식("> ")이 왼쪽 두 칸을 채워서 실제로 드러나는 건 **오른쪽 한 칸뿐**
+    // 이었다. 그 한 칸에 아래 목록의 선택 행 하이라이트가 비쳐, 커서가 특정 줄에
+    // 있을 때만 화면 끝에 색칠된 빈 칸 하나가 뜬다 — 사용자에게 데드픽셀로
+    // 보였다(지적 2026-08-02, 실측으로 확인). 위아래 한 줄은 그대로 남겨
+    // 헤더·푸터가 통째로 보이게 둔다(그건 여백으로 읽힌다).
+    let w = area.width.max(1);
     let h = area.height.saturating_sub(2).max(1);
     let rect = super::help_rect(w, h, area);
     let inner = rect.inner(Margin::new(1, 1)); // 테두리 안쪽(본문 렌더 영역)

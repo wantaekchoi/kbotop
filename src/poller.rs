@@ -94,10 +94,15 @@ pub const STANDINGS_POLL_SECS: u64 = 90;
 /// 상태가 있고 되감기는 별도 요청(`?inning=N`)을 쓰므로, 이 폴링이 가져오는
 /// 새 정보는 사실상 없다. 5분이면 서스펜디드 재개 같은 예외를 놓치지 않으면서
 /// 하루 288번(59MB)으로 줄어든다.
-const FINAL_LIVE_POLL_SECS: u64 = 300;
+pub const FINAL_LIVE_POLL_SECS: u64 = 300;
 
 /// 뉴스 헤드라인 폴링 주기. 부가 기능이라 games(60s)보다도 느슨하게 둔다.
 const NEWS_POLL_SECS: u64 = 300;
+
+/// 경기 목록 갱신 주기. 설계상 설정 대상이 아니라 고정이다 — README 두 판이
+/// 이 값을 문장으로 적고 있어(v0.31 "무엇이 보이나"), 상수로 꺼내 문서 검사가
+/// 대조할 수 있게 했다.
+pub const GAMES_POLL_SECS: u64 = 60;
 
 /// 지수 백오프 상한. `base`가 이미 이보다 크면(games 기본 60s처럼) 그 base를
 /// 그대로 상한으로 쓴다 — 원래 느슨한 주기가 에러 중에도 더 느려지지는 않는다.
@@ -249,7 +254,8 @@ pub fn spawn(
                         games_errors = games_errors.saturating_add(1);
                     }
                 }
-                next_games = now + backoff_delay(Duration::from_secs(60), games_errors);
+                next_games =
+                    now + backoff_delay(Duration::from_secs(GAMES_POLL_SECS), games_errors);
             }
             if !tips_done && poll.want_tips {
                 // 시작 후 첫 games 폴링이 나간 다음에야 1회 시도 — 실패·기각은

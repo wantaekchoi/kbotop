@@ -1398,16 +1398,23 @@ impl App {
         }
     }
 
-    /// "이번 프레임이 보여주는 화면이 무엇인가"를 식별하는 최소 키(screen, tab).
+    /// "이번 프레임이 보여주는 화면이 무엇인가"를 식별하는 최소 키(screen, tab, 오버레이).
     /// main.rs의 렌더 루프가 직전 프레임의 키와 비교해 값이 달라졌을 때만
     /// `term.clear()`를 호출한다 — ratatui 0.30에서 화면 전환(Live↔List,
     /// Games↔Standings) 시 내부 버퍼와 실제 터미널이 어긋나 이전 화면의 착색
     /// 셀이 지워지지 않는 문제(ADR-0007)를 잡기 위함이다.
     ///
-    /// 오버레이(help/settings/article/newslist/options/link_picker)는 이미 `Clear`
-    /// 위젯으로 정상 처리되므로 의도적으로 이 키에 포함하지 않는다 — 포함하면
-    /// 오버레이를 열고 닫을 때마다 불필요한 전체 화면 클리어(깜빡임)가 생긴다.
-    pub fn view_key(&self) -> (u8, u8) {
+    /// **오버레이도 이 키에 포함한다(v0.31).** v0.30까지는 "오버레이는 `Clear`
+    /// 위젯이 처리하므로 넣으면 괜한 깜빡임만 생긴다"고 적어 두고 뺐는데, 실측이
+    /// 그 전제를 뒤집었다 — 라이브 화면(스트라이크존·측면 궤적의 착색 브라유
+    /// 글리프)에서 설정을 열면 그 색 셀 몇 개가 오버레이 위에 그대로 남았다.
+    /// 사용자에게는 빈 화면에 색 점이 박힌 **데드픽셀**로 보였다(지적
+    /// 2026-08-02). `Clear`는 ratatui 버퍼만 비우므로, diff가 그 셀을 "안 바뀜"
+    /// 으로 판정하면 터미널에는 아무것도 안 나가고 옛 색이 살아남는다.
+    /// 여기 포함해 전체 재그리기를 한 번 강제하면 사라진다(vhs 녹화로 전후 비교
+    /// 확인). 클리어는 오버레이를 열고 닫을 때 한 프레임뿐이고 동기화 출력
+    /// (BSU/ESU)으로 감싸므로 깜빡임은 관측되지 않았다.
+    pub fn view_key(&self) -> (u8, u8, bool) {
         let screen = match self.screen {
             Screen::List => 0,
             Screen::Live { .. } => 1,
@@ -1416,7 +1423,14 @@ impl App {
             Tab::Games => 0,
             Tab::Standings => 1,
         };
-        (screen, tab)
+        let overlay = self.show_help
+            || self.settings.is_some()
+            || self.options.is_some()
+            || self.link_picker.is_some()
+            || self.news_list.is_some()
+            || self.article_view.is_some()
+            || self.team_stats_target().is_some();
+        (screen, tab, overlay)
     }
 }
 
@@ -1456,6 +1470,8 @@ mod tests {
     #[test]
     fn a_click_on_another_row_selects_it_without_opening() {
         let mut app = App::new(Default::default());
+        // 마우스는 기본이 꺼짐이다(v0.31) — 마우스 동작을 보는 테스트는 켜고 시작한다.
+        app.mouse = true;
         app.games = vec![game("a"), game("b")];
         app.on_mouse(Some(crate::ui::hit::Zone::GameRow(1)), MouseAction::Click);
         assert_eq!(app.selected, 1);
@@ -1468,6 +1484,8 @@ mod tests {
     #[test]
     fn a_click_on_the_selected_row_opens_it() {
         let mut app = App::new(Default::default());
+        // 마우스는 기본이 꺼짐이다(v0.31) — 마우스 동작을 보는 테스트는 켜고 시작한다.
+        app.mouse = true;
         app.games = vec![game("a"), game("b")];
         app.selected = 1;
         app.on_mouse(Some(crate::ui::hit::Zone::GameRow(1)), MouseAction::Click);
@@ -1482,6 +1500,8 @@ mod tests {
     #[test]
     fn clicking_a_tab_goes_to_that_tab_not_the_next_one() {
         let mut app = App::new(Default::default());
+        // 마우스는 기본이 꺼짐이다(v0.31) — 마우스 동작을 보는 테스트는 켜고 시작한다.
+        app.mouse = true;
         app.on_mouse(
             Some(crate::ui::hit::Zone::Tab(Tab::Standings)),
             MouseAction::Click,
@@ -1499,6 +1519,8 @@ mod tests {
     #[test]
     fn clicking_a_tab_from_the_live_screen_leaves_it() {
         let mut app = App::new(Default::default());
+        // 마우스는 기본이 꺼짐이다(v0.31) — 마우스 동작을 보는 테스트는 켜고 시작한다.
+        app.mouse = true;
         app.enter_live(game("a"));
         app.on_mouse(
             Some(crate::ui::hit::Zone::Tab(Tab::Games)),
@@ -1531,6 +1553,8 @@ mod tests {
     #[test]
     fn a_scroll_over_the_list_moves_the_selection() {
         let mut app = App::new(Default::default());
+        // 마우스는 기본이 꺼짐이다(v0.31) — 마우스 동작을 보는 테스트는 켜고 시작한다.
+        app.mouse = true;
         app.games = vec![game("a"), game("b")];
         app.on_mouse(
             Some(crate::ui::hit::Zone::GameRow(0)),
@@ -1570,11 +1594,11 @@ mod tests {
             .iter()
             .position(|(k, _, _)| matches!(k, SettingKind::Mouse))
             .expect("설정에 마우스 행이 없다");
-        assert!(app.mouse);
+        assert!(!app.mouse, "기본값은 끔이다(v0.31)");
         app.change_setting(idx, true);
-        assert!(!app.mouse);
+        assert!(app.mouse);
         app.change_setting(idx, false);
-        assert!(app.mouse, "반대 방향으로도 뒤집혀야 한다");
+        assert!(!app.mouse, "반대 방향으로도 뒤집혀야 한다");
     }
 
     /// 오버레이가 **화면에서 사라지면** 마우스도 함께 풀려야 한다.
@@ -1586,6 +1610,8 @@ mod tests {
     #[test]
     fn the_mouse_unlocks_when_the_overlay_disappears() {
         let mut app = App::new(Default::default());
+        // 마우스는 기본이 꺼짐이다(v0.31) — 마우스 동작을 보는 테스트는 켜고 시작한다.
+        app.mouse = true;
         app.games = vec![game("a"), game("b")];
         app.standings = vec![standing_with_games(1, 10)];
         app.team_stats_rank = Some(1);
@@ -1609,6 +1635,8 @@ mod tests {
     #[test]
     fn a_click_cancels_a_pending_g() {
         let mut app = App::new(Default::default());
+        // 마우스는 기본이 꺼짐이다(v0.31) — 마우스 동작을 보는 테스트는 켜고 시작한다.
+        app.mouse = true;
         app.games = vec![game("a"), game("b"), game("c")];
         app.on_key(KeyCode::Char('g'));
         app.on_mouse(Some(crate::ui::hit::Zone::GameRow(2)), MouseAction::Click);
@@ -1751,29 +1779,29 @@ mod tests {
         assert_ne!(live_key, after_tab);
     }
 
-    /// 오버레이(help/options/link_picker/settings)는 Clear 위젯으로 이미 정상
-    /// 처리되므로 view_key에 포함되면 안 된다 — 포함되면 오버레이를 열고 닫을
-    /// 때마다 main.rs가 불필요하게 term.clear()를 호출해 깜빡임이 생긴다.
+    /// **오버레이는 view_key를 바꾼다(v0.31에서 뒤집힘).** 예전엔 "Clear 위젯이
+    /// 처리하니 포함하면 깜빡임만 생긴다"고 반대로 단언하던 자리다 — 실제로는
+    /// 라이브 화면의 착색 셀이 오버레이 위에 남아 데드픽셀로 보였다. 위 단위
+    /// 테스트가 필드를 직접 세우는 반면 여기서는 **실제 키 경로**로 열고 닫아,
+    /// 핸들러가 다른 상태 필드를 쓰기 시작해도 이 계약이 유지되는지 본다.
     #[test]
-    fn view_key_is_unaffected_by_overlays() {
+    fn every_overlay_key_toggles_the_view_key_and_puts_it_back() {
         let mut app = App::new(Default::default());
+        // `o`는 열 링크가 있어야 픽커가 뜬다 — 경기가 없으면 아무 일도 안 한다.
+        app.games = vec![game("a")];
         let base = app.view_key();
 
-        app.on_key(KeyCode::Char('?')); // help
-        assert_eq!(app.view_key(), base);
-        app.on_key(KeyCode::Char('?')); // close(아무 키나 닫힘)
-
-        app.on_key(KeyCode::F(2)); // options
-        assert_eq!(app.view_key(), base);
-        app.on_key(KeyCode::F(2)); // close
-
-        app.on_key(KeyCode::Char('o')); // link_picker
-        assert_eq!(app.view_key(), base);
-        app.on_key(KeyCode::Esc); // close
-
-        app.on_key(KeyCode::F(9)); // settings
-        assert_eq!(app.view_key(), base);
-        app.on_key(KeyCode::F(9)); // close
+        for (open, close, what) in [
+            (KeyCode::Char('?'), KeyCode::Char('?'), "help"),
+            (KeyCode::F(2), KeyCode::F(2), "options"),
+            (KeyCode::Char('o'), KeyCode::Esc, "link picker"),
+            (KeyCode::F(9), KeyCode::F(9), "settings"),
+        ] {
+            app.on_key(open);
+            assert_ne!(app.view_key(), base, "{what}를 열었는데 화면 키가 그대로다");
+            app.on_key(close);
+            assert_eq!(app.view_key(), base, "{what}를 닫았는데 키가 안 돌아왔다");
+        }
     }
 
     #[test]
@@ -3654,5 +3682,37 @@ mod tests {
         // 입력이 잠기지 않았는지: 커서가 그대로 움직여야 한다.
         app.on_key(KeyCode::Down);
         assert_eq!(app.selected, 1, "화면도 없는데 입력이 잠겼다");
+    }
+
+    /// **오버레이를 열고 닫으면 화면 식별자가 바뀐다.** 이 값이 바뀌어야
+    /// main.rs가 전체 재그리기를 한 번 강제하고, 그래야 라이브 화면의 착색 셀이
+    /// 오버레이 위에 데드픽셀로 남지 않는다(v0.31, 실측으로 확인).
+    #[test]
+    fn opening_an_overlay_changes_the_view_key() {
+        let mut app = App::new(Default::default());
+        let base = app.view_key();
+
+        app.show_help = true;
+        assert_ne!(app.view_key(), base, "도움말");
+        app.show_help = false;
+        assert_eq!(app.view_key(), base, "닫으면 되돌아온다");
+
+        app.settings = Some(SettingsState {
+            cursor: 0,
+            save_failed: false,
+        });
+        assert_ne!(app.view_key(), base, "설정");
+        app.settings = None;
+
+        app.news_list = Some(NewsListState { cursor: 0 });
+        assert_ne!(app.view_key(), base, "뉴스 목록");
+        app.news_list = None;
+
+        app.standings = vec![standing_with_games(1, 10)];
+        app.team_stats_rank = Some(1);
+        assert_ne!(app.view_key(), base, "팀 성적");
+        app.team_stats_rank = None;
+
+        assert_eq!(app.view_key(), base, "전부 닫으면 처음과 같다");
     }
 }
