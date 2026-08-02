@@ -1157,6 +1157,26 @@ mod tests {
         }
     }
 
+    /// v0.35: 중계+대결 블록이 내용만큼만 차지하고, 남는 세로는 컨테이너
+    /// 끝까지 늘어나지 않는다. `render_at`은 공백을 지워 위치 정보를 잃으므로
+    /// 원시 버퍼에서 왼쪽 칼럼(60%)의 마지막 줄이 비어 있는지 직접 본다 —
+    /// 이전 결함(120×40에서 62% 빈 줄)은 정확히 이 줄이 안 비어 있었다.
+    #[test]
+    fn the_relay_column_does_not_stretch_to_the_bottom_of_a_tall_terminal() {
+        let mut app = App::new(Default::default());
+        app.lang = crate::ui::i18n::Lang::Ko;
+        app.screen = matchup_screen();
+        let mut term = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        term.draw(|f| super::render(f, f.area(), &app, &mut crate::ui::hit::HitMap::default()))
+            .unwrap();
+        let buf = term.backend().buffer();
+        let last_row_left_col: String = (0..72).map(|x| buf[(x, 39)].symbol()).collect();
+        assert!(
+            last_row_left_col.trim().is_empty(),
+            "왼쪽 칼럼 마지막 줄이 비어 있지 않다 — 패널이 컨테이너 끝까지 늘어났다: {last_row_left_col:?}"
+        );
+    }
+
     /// **대결 블록이 문자중계를 밀어내지 않는다** — 이게 v0.26의 금지선이다.
     ///
     /// 처음엔 "80×24에서는 아예 안 뜬다"로 잡았는데 틀렸다. 그 크기에서도
