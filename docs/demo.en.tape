@@ -22,7 +22,7 @@ Set Padding 24
 Set TypingSpeed 55ms
 
 Hide
-Type "HOME=$(mktemp -d) kbotop --date 2026-07-02 --team kt --lang en"
+Type "HOME=$(mktemp -d) kbotop --date 2026-07-29 --team ssg --lang en"
 Enter
 Show
 

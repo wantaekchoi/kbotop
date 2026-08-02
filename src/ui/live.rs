@@ -73,7 +73,16 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMa
 ///
 /// v0.25까지 문자중계 패널이 `Min(0)`으로 아래까지 늘어나, 화면이 클수록 아래
 /// 절반이 비었다(실측: 160×50에서 20%). 줄 수는 타석당 유한한데(보통 5~12줄)
-/// 패널만 커지는 구조였다.
+/// 패널만 커지는 구조였다. v0.26에서 대결 블록을 추가했지만 문자중계 쪽은
+/// 여전히 `Min(relay_need)`라 **컨테이너 끝까지 늘어나는 문제 자체는 안 풀렸다**
+/// — 대결 블록이 고정 높이라 그 여유를 못 가져가기 때문(v0.33 실측: 283타석
+/// 기준 120×40에서 62% 빈 줄, 대결 블록 추가 후에도 그대로).
+///
+/// v0.35: 문자중계도 `Length(relay_need)`로 내용 높이에 맞춰 접고, 남는 세로는
+/// 셋째 조각(`Min(0)`, 렌더 안 함)이 가져간다. 테두리 안에 빈 줄이 늘어선
+/// 모습 대신 두 블록이 내용만큼만 차지하고 그 아래는 평범한 배경으로 남는다
+/// — 채울 새 내용이 없는 자리(선수 기록·이미지는 이미 붙었거나 기각됨)를
+/// 억지로 채우지 않는 쪽을 택했다.
 ///
 /// 작은 화면에서는 지금 그대로다 — 남는 세로가 없으면 문자중계가 다 쓴다
 /// (80×24에서 빈 줄이 0이라는 실측이 그 근거다).
@@ -90,7 +99,11 @@ fn render_relay_column(f: &mut Frame, area: Rect, vm: &LiveVm, hits: &mut super:
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(relay_need), Constraint::Length(matchup_h)])
+        .constraints([
+            Constraint::Length(relay_need),
+            Constraint::Length(matchup_h),
+            Constraint::Min(0),
+        ])
         .split(area);
     render_relay(f, rows[0], vm, hits);
 

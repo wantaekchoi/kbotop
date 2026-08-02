@@ -5,6 +5,11 @@
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-08-02
+
+### Fixed
+- **큰 터미널에서 문자중계 패널 안에 빈 줄이 잔뜩 남던 것을 고쳤습니다.** 120×40에서 이 패널이 21행을 잡는데 내용은 보통 7~13줄이라 안이 절반 넘게 비어 보였습니다(283타석 실측 62%). 이제 문자중계·대결 블록 모두 내용만큼만 차지하고, 남는 세로는 테두리 안 빈 줄이 아니라 평범한 배경으로 남습니다. 80×24처럼 여유가 없는 화면은 그대로입니다.
+
 ## [0.34.0] - 2026-08-02
 
 ### Fixed
@@ -372,7 +377,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.34.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.35.0...HEAD
+[0.35.0]: https://github.com/wantaekchoi/kbotop/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/wantaekchoi/kbotop/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/wantaekchoi/kbotop/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/wantaekchoi/kbotop/compare/v0.31.0...v0.32.0

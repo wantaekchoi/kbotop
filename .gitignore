@@ -1,5 +1,6 @@
 /target
 .superpowers/
+.venv/
 
 # CodeGraph 로컬 인덱스(에이전트가 코드 구조를 질의하는 SQLite 그래프).
 # 기기마다 다시 만들면 되는 산출물이라 추적하지 않는다.
