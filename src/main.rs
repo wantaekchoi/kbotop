@@ -28,44 +28,7 @@ use kbotop::source::rss::RssSource;
 use kbotop::source::{DataSource, NewsSource};
 use kbotop::ui;
 
-#[derive(Parser)]
-#[command(
-    name = "kbotop",
-    version,
-    about = "Watch KBO baseball from your terminal.",
-    after_long_help = "Examples:\n  kbotop                     today's games\n  kbotop --date yesterday    also: YYYY-MM-DD, YYYYMMDD, today, tomorrow, +N, -N\n  kbotop --date 2026-05-29   a specific date\n  kbotop --team lg           straight into your team's live game (theme + cheer)\n\nKeys:\n  Tab switch · Enter live · Left/Right pitches · F2 options · o team links · n news · ? help · q quit",
-    after_help = "Run with --help for examples and key summary."
-)]
-struct Cli {
-    /// Favorite team code to enter live view directly.
-    /// Aliases: lg, kt, ssg/sk, nc, kia/ht, lotte/lt, samsung/ss, hanwha/hh, kiwoom/wo, doosan/ob
-    #[arg(long)]
-    team: Option<String>,
-    /// Date: YYYY-MM-DD, YYYYMMDD, today, yesterday, tomorrow, +N, -N (default: today, KST)
-    // allow_hyphen_values: `-N`(어제로 N일)은 값이 하이픈으로 시작해 clap이
-    // 플래그로 오인한다 — `--help`가 `-N`을 광고하는데 `--date -1`이 죽던
-    // 문제(v0.17 커버리지 작업 중 발견). `--tz`도 같은 이유로 붙어 있다.
-    #[arg(long, allow_hyphen_values = true)]
-    date: Option<String>,
-    /// UI language: ko | en | ja (default: auto by locale)
-    #[arg(long)]
-    lang: Option<String>,
-    /// Display time zone: auto | kst | +09:00 | -04:00 (default: auto —
-    /// detects the system zone; game dates stay on KST since that is when
-    /// KBO plays)
-    // allow_hyphen_values: 서쪽 시간대는 값이 `-04:00`처럼 하이픈으로 시작해
-    // clap이 플래그로 오인한다(미주 전체가 여기 해당) — 실사용 검증에서 잡힘.
-    #[arg(long, allow_hyphen_values = true)]
-    tz: Option<String>,
-    /// Print third-party license notices and exit.
-    ///
-    /// 정적 링크 배포물은 의존성의 저작권 표시·라이선스 전문을 함께 배포해야
-    /// 한다. 그 고지는 릴리스 아카이브에만 들어 있어서, Homebrew·curl 인스톨러·
-    /// `cargo install`로 받은 사람은 **바이너리만 갖고 고지는 못 받는다**.
-    /// 파일을 따라다니게 하는 대신 바이너리가 스스로 뱉게 한다.
-    #[arg(long)]
-    license: bool,
-}
+use kbotop::cli::Cli;
 
 /// 언어 결정: CLI > config > env(LC_ALL→LANG, "ko"/"ja" 접두) > En.
 /// config는 영속 상태라 모르는 값(구버전에서 저장된 이제 없는 언어)이면 무시하고 env/기본으로 폴백한다 — CLI만 fail-fast.
@@ -427,7 +390,7 @@ fn main() -> Result<()> {
         .or(app.config.favorite_team.as_deref())
         .and_then(team_code)
         .map(str::to_string);
-    let mut watching_id: Option<String> = None;
+    let mut watching_id: Option<(String, kbotop::model::GameStatus)> = None;
     // F2 픽커가 바꾼 app.date/app.poll_choice를 폴러에 통지하기 위한 "마지막으로
     // 전송한 값" 기억(watching_id와 동일 패턴) — App은 채널을 모르므로 run()이
     // 매 tick 변화를 감지해 대신 보낸다.
@@ -483,7 +446,7 @@ fn run(
     app: &mut App,
     rx_up: &mpsc::Receiver<Update>,
     tx_cmd: &mpsc::Sender<Command>,
-    watching_id: &mut Option<String>,
+    watching_id: &mut Option<(String, kbotop::model::GameStatus)>,
     cli: &Cli,
     term_signal: &AtomicBool,
     sent_date: &mut String,
@@ -526,12 +489,7 @@ fn run(
 
             if is_games {
                 if let Some(code) = auto_team.clone() {
-                    if let Some(g) = app
-                        .games
-                        .iter()
-                        .find(|g| g.home.code == code || g.away.code == code)
-                        .cloned()
-                    {
+                    if let Some(g) = kbotop::app::pick_team_game(&app.games, &code).cloned() {
                         // Canceled/Scheduled 즐겨찾기 게임이면 진입을 보류한다(App::on_key와
                         // 동일한 가드) — 취소가 아니라면 다음 Games 폴링(60s)에서 상태가
                         // 바뀌었을 때 재시도할 수 있도록 auto_team을 그대로 남겨둔다.
@@ -550,7 +508,11 @@ fn run(
         }
 
         // 화면 전환에 따른 폴러 명령 동기화.
-        let current = app.watched_game().map(|g| g.id.clone());
+        //
+        // **상태까지 함께 본다.** id만 비교하면 같은 경기를 계속 보는 동안
+        // Live → Final 전이를 놓치고, 폴러는 진입 시점의 스냅샷을 든 채
+        // 끝난 경기를 5초마다 계속 받는다.
+        let current = app.watched_game().map(|g| (g.id.clone(), g.status));
         if current != *watching_id {
             match &current {
                 Some(_) => {

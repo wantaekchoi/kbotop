@@ -309,7 +309,11 @@ impl<'a> LiveVm<'a> {
                 detail.push_str(addition);
             }
         }
-        detail
+        // 본문 자체가 폭을 넘으면 **정직하게 말줄임한다.** 지금까지는 부가
+        // 정보(경과 시간)만 폭을 보고 본문은 그냥 넘겨, 이름이 긴 선수가 나오면
+        // ratatui가 조용히 잘랐다("타자: 빅"에서 끝나는 식). `text` 모듈 doc이
+        // 금지하는 그 클리핑이다.
+        super::text::ellipsize(&detail, inner_width)
     }
 
     /// 문자중계 옆에 스트라이크존을 함께 그릴지. 폭이 좁거나 **아직 투구
@@ -1164,17 +1168,34 @@ mod tests {
         }
         let vm = LiveVm::from_app(&app).unwrap();
 
-        let base = vm.detail_line(0);
         let full = vm.detail_line(usize::MAX);
+        let exact = super::super::text::display_width(&full);
+        // 한 칸 모자라면 소요가 빠진다 — 본문은 그 폭에 여전히 들어간다.
+        let base = vm.detail_line(exact - 1);
         assert!(full.len() > base.len(), "넉넉한 폭에선 소요가 붙는다");
         assert!(full.contains("Duration"));
         assert!(!base.contains("Duration"), "좁으면 소요부터 빠진다");
-        // 경계: 딱 맞는 폭이면 붙고, 한 칸 모자라면 안 붙는다.
-        let exact = super::super::text::display_width(&full);
+        // 경계: 딱 맞는 폭이면 붙는다.
         assert_eq!(vm.detail_line(exact), full);
-        assert_eq!(vm.detail_line(exact - 1), base);
-        // 투수/타자 같은 기존 정보는 어느 폭에서도 그대로 남는다.
+        // 투수/타자 같은 기존 정보는 소요가 빠져도 그대로 남는다.
         assert!(base.starts_with("P:"), "기존 정보가 밀리면 안 된다: {base}");
+    }
+
+    /// **본문 자체가 폭을 넘으면 정직하게 말줄임한다.**
+    ///
+    /// 예전에는 부가 정보(경과·소요)만 폭을 보고 본문은 그냥 넘겨, 이름이 긴
+    /// 선수가 나오면 ratatui가 조용히 잘랐다("타자: 빅"에서 끝나는 식).
+    /// `text` 모듈 doc이 금지하는 그 클리핑이다.
+    #[test]
+    fn a_detail_line_too_long_for_the_width_is_ellipsized() {
+        let app = live_app(GameStatus::Final);
+        let vm = LiveVm::from_app(&app).unwrap();
+        let narrow = vm.detail_line(20);
+        assert!(
+            super::super::text::display_width(&narrow) <= 20,
+            "폭을 넘겼다: {narrow:?}"
+        );
+        assert!(narrow.contains('…'), "조용히 잘렸다: {narrow:?}");
     }
 
     /// 존 표시 결정은 폭만의 문제가 아니다 — 투구 데이터가 없으면 폭이 아무리

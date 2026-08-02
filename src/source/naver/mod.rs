@@ -20,7 +20,7 @@ pub struct NaverSource {
 
 impl NaverSource {
     pub fn new() -> Self {
-        Self::build(BASE.to_string(), TIPS_URL.to_string())
+        Self::build(BASE.to_string(), TIPS_URL.to_string(), true)
     }
 
     /// 테스트 전용 생성자: API base와 tips URL을 모두 주어진 주소로
@@ -29,12 +29,16 @@ impl NaverSource {
     #[cfg(test)]
     fn with_base(base: impl Into<String>) -> Self {
         let base = base.into();
-        Self::build(base.clone(), base)
+        // 로컬 mock은 http라 여기서는 https 강제를 끈다(프로덕션 경로는 켠다).
+        Self::build(base.clone(), base, false)
     }
 
-    fn build(base: String, tips_url: String) -> Self {
+    fn build(base: String, tips_url: String, https_only: bool) -> Self {
         NaverSource {
             agent: ureq::AgentBuilder::new()
+                // https로 시작한 요청이 리다이렉트를 타고 **평문으로 떨어지는
+                // 것**을 막는다. ureq 기본값은 이를 허용한다.
+                .https_only(https_only)
                 .timeout(std::time::Duration::from_secs(10))
                 .build(),
             user_agent: format!(

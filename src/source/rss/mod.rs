@@ -66,7 +66,7 @@ pub struct RssSource {
 
 impl RssSource {
     pub fn new() -> Self {
-        Self::build(default_feeds())
+        Self::build(default_feeds(), true)
     }
 
     /// 테스트 전용 생성자: 기본 피드 목록 대신 주어진 목록을 쓴다(피드 URL을
@@ -75,12 +75,16 @@ impl RssSource {
     /// 공개 시그니처는 그대로다.
     #[cfg(test)]
     fn with_feeds(feeds: Vec<Feed>) -> Self {
-        Self::build(feeds)
+        // 로컬 mock은 http라 여기서는 https 강제를 끈다(프로덕션 경로는 켠다).
+        Self::build(feeds, false)
     }
 
-    fn build(feeds: Vec<Feed>) -> Self {
+    fn build(feeds: Vec<Feed>, https_only: bool) -> Self {
         Self {
             agent: ureq::AgentBuilder::new()
+                // https로 시작한 요청이 리다이렉트를 타고 **평문으로 떨어지는
+                // 것**을 막는다. ureq 기본값은 이를 허용한다.
+                .https_only(https_only)
                 .timeout(std::time::Duration::from_secs(FEED_TIMEOUT_SECS))
                 .build(),
             user_agent: format!(

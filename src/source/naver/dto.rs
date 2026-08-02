@@ -66,7 +66,16 @@ where
     D: Deserializer<'de>,
 {
     let v = Option::<serde_json::Value>::deserialize(deserializer)?;
-    Ok(v.and_then(|v| v.as_f64()).map(|n| n as f32).unwrap_or(0.0))
+    // 숫자 문자열도 받는다. 투수의 `inn`은 `"4.2"`처럼 **문자열**로 오는데
+    // (실측: 받아본 응답 181건이 전부 문자열) `as_f64()`만 보던 예전 구현은
+    // 그걸 전부 0.0으로 뭉갰다 — 82구 던진 투수가 화면에 `0.0이닝`으로 나왔고,
+    // 프로덕션에서 0 아닌 값이 나올 수가 없었다.
+    Ok(v.and_then(|v| {
+        v.as_f64()
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+    })
+    .map(|n| n as f32)
+    .unwrap_or(0.0))
 }
 
 /// lenient_float의 Option<f32> 버전. home/awayTeamWinRate처럼 "값 없음"이
@@ -430,7 +439,9 @@ pub struct Player {
     /// 타자: 시즌 타율
     #[serde(default, deserialize_with = "lenient_float")]
     pub season_hra: f32,
-    /// 투수: 소화 이닝(3.1 = 3과 1/3이 아니라 소수 표기 그대로 온다)
+    /// 투수: 소화 이닝. **야구 표기라 소수가 아니다** — `4.2`는 4와 2/3이닝이다
+    /// (중계·기록지가 쓰는 그대로). 서버는 이 값을 **문자열**로 준다.
+    /// 화면에도 같은 표기로 내보내므로 산술에 쓰지 말 것.
     #[serde(default, deserialize_with = "lenient_float")]
     pub inn: f32,
     /// 투수: 투구 수

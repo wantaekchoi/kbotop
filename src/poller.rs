@@ -87,7 +87,14 @@ pub const STANDINGS_POLL_SECS: u64 = 90;
 /// 워치 중인 게임이 `GameStatus::Final`일 때 쓰는 완화된 live 폴링 주기. 종료된
 /// 경기는 relay 데이터가 더 바뀌지 않으므로 라이브 기본 주기(3~5s)로 계속 두드릴
 /// 이유가 없다(design §12: "과도한 폴링으로 차단·민폐" 대응).
-const FINAL_LIVE_POLL_SECS: u64 = 30;
+/// 끝난 경기를 다시 받는 주기.
+///
+/// 종료 경기의 `/relay` 응답은 **더 이상 바뀌지 않는다**(실측 205KB). 그런데
+/// 30초로도 하루 2,880번 · 590MB를 상대 서버에서 받아 온다. 화면에 이미 최종
+/// 상태가 있고 되감기는 별도 요청(`?inning=N`)을 쓰므로, 이 폴링이 가져오는
+/// 새 정보는 사실상 없다. 5분이면 서스펜디드 재개 같은 예외를 놓치지 않으면서
+/// 하루 288번(59MB)으로 줄어든다.
+const FINAL_LIVE_POLL_SECS: u64 = 300;
 
 /// 뉴스 헤드라인 폴링 주기. 부가 기능이라 games(60s)보다도 느슨하게 둔다.
 const NEWS_POLL_SECS: u64 = 300;
@@ -120,7 +127,7 @@ fn backoff_delay(base: Duration, errors: u32) -> Duration {
 /// games/live 각각 연속 에러 횟수를 세어 `backoff_delay`로 다음 폴링 대기를
 /// 지수 백오프하고, 성공하면 카운터를 0으로 리셋한다. 또한 워치 중인 게임이
 /// `GameStatus::Final`이면(데이터가 더 바뀌지 않으므로) live 기본 주기 대신
-/// `FINAL_LIVE_POLL_SECS`(30s)를 쓴다 — Live/Suspended는 기존처럼
+/// `FINAL_LIVE_POLL_SECS`를 쓴다 — Live/Suspended는 기존처럼
 /// `live_poll_secs` 그대로 사용한다.
 /// 폴링 동작 설정. 셋 다 프로세스 시작 시 정해져 스레드로 넘어간다.
 #[derive(Debug, Clone, Copy)]

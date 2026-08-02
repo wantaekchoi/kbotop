@@ -3,7 +3,7 @@
 //! (한겨레), description이 사실상 전문(동아·뉴시스) — 상한으로 흡수한다.
 use crate::error::{Error, Result};
 use crate::model::NewsItem;
-use crate::source::text::{lead_excerpt, strip_html_to_text, EXCERPT_CHARS};
+use crate::source::text::{lead_excerpt, strip_html_to_text, EXCERPT_CHARS, TITLE_CHARS};
 
 /// 자식 원소의 텍스트를 네임스페이스 무시하고(local name 기준) 모아 반환한다.
 /// CDATA와 혼합 콘텐츠를 모두 담기 위해 하위 텍스트 노드를 전부 이어붙인다.
@@ -182,7 +182,10 @@ pub(crate) fn feed_from_xml(
         .descendants()
         .filter(|n| n.is_element() && n.tag_name().name() == "item")
     {
-        let title = strip_html_to_text(&child_text(item, "title"));
+        // 제목도 자른다. 요약(EXCERPT_CHARS)만 상한이 있고 제목은 없어서,
+        // 오염된 피드가 수백만 자짜리 제목을 주면 기사 오버레이 한 프레임이
+        // 400ms 가까이 걸렸다(실측) — 100ms마다 다시 그리므로 화면이 멈춘다.
+        let title = lead_excerpt(&strip_html_to_text(&child_text(item, "title")), TITLE_CHARS);
         if title.is_empty() {
             continue; // 제목 없는 항목은 표시할 게 없다.
         }

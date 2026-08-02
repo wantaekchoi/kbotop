@@ -19,28 +19,27 @@ const CARGO_TOML: &str = include_str!("../Cargo.toml");
 ///
 /// v0.16에서 `--tz`를 추가하고 README에 안 적어, 시간대를 직접 정할 수 있다는
 /// 사실이 여덟 릴리스 동안 문서에 없었다(v0.25에서 발견).
+///
+/// **clap에게 직접 묻는다.** v0.28까지는 `src/main.rs`를 텍스트로 긁어
+/// `#[arg(long)]` 다음 줄을 필드로 가정했는데, 그 방식은 `#[arg(long = "...")]`
+/// 이름 오버라이드도 short 옵션도 못 보고, 단언이 `>= 4`라 **파서가 하나를
+/// 놓쳐도 통과**했다. `Cli`를 lib으로 옮겨 이 질문이 가능해졌다.
 #[test]
 fn every_cli_flag_appears_in_both_readmes() {
-    // clap 정의를 파싱하는 대신 소스에서 `#[arg(long)]` 아래 필드명을 읽는다 —
-    // 바이너리를 실행하지 않고도 플래그 목록을 얻는 가장 단순한 경로다.
-    let main_rs = include_str!("../src/main.rs");
-    let flags: Vec<String> = main_rs
-        .lines()
-        .collect::<Vec<_>>()
-        .windows(3)
-        .filter(|w| w[0].trim_start().starts_with("#[arg(long"))
-        .filter_map(|w| {
-            // `    team: Option<String>,` → team
-            let line = w[1].trim_start();
-            let name = line.split(':').next()?.trim();
-            (!name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
-                .then(|| name.replace('_', "-"))
-        })
+    use clap::CommandFactory;
+    let cmd = kbotop::cli::Cli::command();
+    let flags: Vec<String> = cmd
+        .get_arguments()
+        .filter_map(|a| a.get_long())
+        // help/version은 clap이 자동으로 넣는 것이라 README가 따로 안내하지 않는다.
+        .filter(|n| *n != "help" && *n != "version")
+        .map(str::to_string)
         .collect();
 
-    assert!(
-        flags.len() >= 4,
-        "플래그를 못 찾았다 — 파싱 방식이 깨졌을 수 있다: {flags:?}"
+    assert_eq!(
+        flags.len(),
+        5,
+        "플래그 개수가 바뀌었다 — README와 이 숫자를 함께 고칠 것: {flags:?}"
     );
 
     for flag in &flags {
@@ -52,6 +51,23 @@ fn every_cli_flag_appears_in_both_readmes() {
             );
         }
     }
+}
+
+/// short 옵션을 조용히 늘리지 않는다.
+///
+/// `-t` 같은 걸 하나 추가하면 그것도 영구히 남는 공개 인터페이스인데, 긴 이름만
+/// 세던 검사는 아무 말도 하지 않았다. 우리가 정의한 인자에는 short가 없고,
+/// `-h`/`-V`는 clap이 자체 처리해 `get_arguments()`에 나오지 않는다(실제 실행은
+/// 된다 — 그건 clap이 보장한다).
+#[test]
+fn we_do_not_add_short_flags_without_noticing() {
+    use clap::CommandFactory;
+    let cmd = kbotop::cli::Cli::command();
+    let shorts: Vec<char> = cmd.get_arguments().filter_map(|a| a.get_short()).collect();
+    assert!(
+        shorts.is_empty(),
+        "short 옵션이 생겼다 — 의도한 것이면 이 테스트를 고칠 것: {shorts:?}"
+    );
 }
 
 /// CHANGELOG의 모든 버전 제목에는 하단 링크 정의가 있어야 한다.
@@ -260,3 +276,41 @@ fn the_notice_lists_the_versions_we_actually_lock() {
         stale.join("\n")
     );
 }
+
+/// 데모 녹화가 쓰는 키는 코드에 살아 있어야 한다.
+///
+/// VHS는 F키를 못 보내서 tape가 `S`(F9 별칭)를 누른다. 그런데 `S`는 도움말에도
+/// README에도 없어서 "아무도 안 쓰는 키"로 보인다 — 죽은 코드로 판단해 지우면
+/// **릴리스마다 도는 녹화가 조용히 깨진다.** 화면에는 설정이 안 열린 채로 녹화가
+/// 끝나고, 그걸 알아채는 건 GIF를 프레임 단위로 볼 때뿐이다.
+#[test]
+fn the_keys_the_demo_tapes_press_still_exist() {
+    const APP_RS: &str = include_str!("../src/app.rs");
+    for tape in [
+        include_str!("../docs/demo.tape"),
+        include_str!("../docs/demo.en.tape"),
+    ] {
+        for line in tape.lines() {
+            let Some(rest) = line.trim().strip_prefix("Type \"") else {
+                continue;
+            };
+            let Some(keys) = rest.split('"').next() else {
+                continue;
+            };
+            // 한 글자짜리 키만 본다(`[`처럼 여러 번 눌리는 것도 포함).
+            let mut chars = keys.chars();
+            let (Some(c), None) = (chars.next(), chars.next()) else {
+                continue;
+            };
+            if c.is_whitespace() {
+                continue;
+            }
+            let needle = format!("KeyCode::Char('{c}')");
+            assert!(
+                APP_RS.contains(&needle),
+                "데모 tape가 누르는 `{c}`를 app.rs가 더 이상 처리하지 않는다"
+            );
+        }
+    }
+}
+

@@ -385,9 +385,20 @@ fn batter_name_of(t: &TextRelay) -> String {
     else {
         return String::new();
     };
-    match o.text.split_once("번타자 ") {
-        Some((_, name)) => name.trim().to_string(),
-        None => o.text.clone(),
+    name_from_announcement(&o.text)
+}
+
+/// "9번타자 천성호" / "대타 최준우" → 이름만.
+///
+/// 대타·대주자는 타순 없이 온다(실측: 안내 158건 중 4건). 예전에는 `"번타자 "`가
+/// 없으면 원문을 통째로 썼는데, 그러면 되감기 타이틀이 `Rewind B11 대타 최준우`가
+/// 되어 다른 타석과 표기가 어긋났다. 공백이 아예 없는 낯선 형식은 원문 그대로
+/// 둔다(정보를 잃는 것보다 낫다).
+fn name_from_announcement(text: &str) -> String {
+    let rest = text.split_once("번타자 ").map(|(_, n)| n).unwrap_or(text);
+    match rest.rsplit_once(' ') {
+        Some((_, name)) if !name.trim().is_empty() => name.trim().to_string(),
+        _ => rest.trim().to_string(),
     }
 }
 
@@ -1322,5 +1333,46 @@ mod tests {
     fn a_genuinely_empty_day_is_still_empty_not_an_error() {
         let empty = r#"{"result":{"games":[]}}"#;
         assert_eq!(games_from_schedule(empty).unwrap().len(), 0);
+    }
+    /// **투수 이닝이 실제 값으로 살아 있어야 한다.**
+    ///
+    /// 서버가 `inn`을 `"4.2"`처럼 문자열로 주는데 `as_f64()`만 보던 파서가
+    /// 전부 0.0으로 뭉갰다 — 82구 던진 선발이 화면에 `0.0이닝`으로 나왔고,
+    /// 프로덕션에서 0 아닌 값이 나올 수가 없었다(v0.26 대결 블록의 데모 GIF에도
+    /// 그대로 찍혀 있었다).
+    #[test]
+    fn a_pitchers_innings_survive_the_string_encoding() {
+        const RELAY: &str = include_str!("../../../tests/fixtures/relay_20260719KTLG.json");
+        let st = live_from_relay(
+            RELAY,
+            crate::model::Team {
+                code: "LG".into(),
+                name: "LG".into(),
+            },
+            crate::model::Team {
+                code: "KT".into(),
+                name: "KT".into(),
+            },
+        )
+        .unwrap();
+        let p = st.pitcher_line.expect("픽스처엔 현재 투수가 있다");
+        assert!(
+            p.innings > 0.0,
+            "이닝이 0으로 뭉개졌다 — 투구수 {}구인데 {}이닝",
+            p.pitches,
+            p.innings
+        );
+    }
+
+    /// 대타·대주자는 타순 없이 "대타 최준우"로 온다 — 역할 표시를 떼고 이름만
+    /// 남긴다. 원문을 통째로 쓰면 되감기 타이틀이 다른 타석과 어긋난다.
+    #[test]
+    fn an_announcement_yields_only_the_name() {
+        assert_eq!(name_from_announcement("9번타자 천성호"), "천성호");
+        assert_eq!(name_from_announcement("대타 최준우"), "최준우");
+        assert_eq!(name_from_announcement("대주자 엄준현"), "엄준현");
+        // 공백이 없는 낯선 형식은 원문 그대로(정보를 아예 잃지 않는다).
+        assert_eq!(name_from_announcement("천성호"), "천성호");
+        assert_eq!(name_from_announcement(""), "");
     }
 }

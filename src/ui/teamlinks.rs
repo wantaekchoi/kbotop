@@ -77,8 +77,32 @@ pub fn encode_url(url: &str) -> String {
     out
 }
 
+/// 우리가 열어 줄 URL인가.
+///
+/// **뉴스 링크는 RSS가 준 값이라 우리 것이 아니다.** 그런데 예전에는 그대로
+/// `open(1)`/`xdg-open`에 넘겼다. `open`은 `-`로 시작하는 인자를 **플래그로**
+/// 읽으므로, 피드가 `<link>-a/Applications/무엇.app</link>`을 주면 URL을 여는
+/// 대신 로컬 앱이 실행된다(`-b<bundleid>`, `-e`, `-f`도 같다 — 실측 확인).
+/// `file://`·`smb://`도 그대로 통과해 로컬 파일 열람이나 자격증명 유출로
+/// 이어질 수 있었다.
+///
+/// 셸 주입은 원래 없었다(`Command::arg`는 argv로 직접 넘긴다). 문제는 **인자
+/// 해석**이고, 그건 스킴을 제한하면 닫힌다.
+fn is_openable(url: &str) -> bool {
+    // 대소문자 무시: `HTTPS://`도 유효한 URL이다.
+    let lower = url.trim().to_ascii_lowercase();
+    (lower.starts_with("http://") || lower.starts_with("https://"))
+        // 스킴 뒤에 호스트가 있어야 한다("https://"만 오는 건 열 것이 없다).
+        && lower.len() > "https://".len()
+}
+
 /// 브라우저 열기 — 실패는 조용히 무시(관용: TUI가 죽을 일이 아니다).
+///
+/// http/https가 아니면 **아무것도 하지 않는다**(위 `is_openable` 참조).
 pub fn open_url(url: &str) {
+    if !is_openable(url) {
+        return;
+    }
     let enc = encode_url(url);
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(&enc).spawn();
@@ -277,6 +301,38 @@ mod tests {
             last_five: String::new(),
             streak: String::new(),
             stats: Default::default(),
+        }
+    }
+    /// **RSS가 준 링크를 그대로 실행 경로에 넘기지 않는다.**
+    ///
+    /// `open(1)`은 `-`로 시작하는 인자를 플래그로 읽는다 — 피드가
+    /// `-a/Applications/무엇.app`을 주면 URL 대신 **로컬 앱이 실행된다**(실측
+    /// 확인). `file://`·`smb://`도 그대로 통과했다.
+    #[test]
+    fn only_http_urls_are_openable() {
+        for good in [
+            "https://sports.news.naver.com/kbaseball",
+            "http://example.kr/a?b=c&d=e",
+            "HTTPS://Example.KR/대문자스킴",
+        ] {
+            assert!(is_openable(good), "정상 링크를 막았다: {good}");
+        }
+        for bad in [
+            "-a/System/Applications/Calculator.app", // macOS open의 -a 플래그
+            "-bcom.apple.Terminal",                  // -b<bundleid>
+            "-e",                                    // TextEdit로 열기
+            "-f",                                    // stdin을 읽는다(raw mode 중인 우리 stdin)
+            "file:///etc/passwd",
+            "smb://attacker.example/share", // 자격증명 유출
+            "vnc://attacker.example",
+            "javascript:alert(1)",
+            "ssh://attacker.example",
+            "; rm -rf ~",
+            "",
+            "https://", // 호스트가 없다
+            "   ",
+        ] {
+            assert!(!is_openable(bad), "열면 안 되는 것을 통과시켰다: {bad:?}");
         }
     }
 }

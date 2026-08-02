@@ -209,7 +209,7 @@ pub struct App {
     /// 마지막 "성공" 갱신(Games/Standings/Live 반영) 시각의 now_secs 스냅샷
     /// (v0.15 A-2). None = 아직 한 번도 성공한 적 없음. `stale`(이진값)과 달리
     /// "몇 초 전"까지 보여주기 위한 값 — apply()가 Error/Fetching에서는
-    /// 갱신하지 않는다(660행 근처 주석과 같은 철학: 시도 신호일 뿐 회복이 아니다).
+    /// 갱신하지 않는다(`apply`의 Fetching 분기와 같은 철학: 시도 신호일 뿐 회복이 아니다).
     pub last_update_secs: Option<u64>,
     /// 표시용 시간대(프로세스 시작 시 1회 결정 — `localtime::resolve`).
     /// 경기일 판단(`dateutil::kst_days`)은 여전히 KST 고정이라 별개다.
@@ -254,6 +254,26 @@ pub struct App {
     /// 마우스를 쓸지(config `mouse`, F9에서 토글). main이 매 프레임 보고 캡처를
     /// 켜고 끈다 — 끈 즉시 터미널이 드래그 선택을 되찾아야 하기 때문이다.
     pub mouse: bool,
+}
+
+/// `--team`이 들어갈 경기를 고른다.
+///
+/// **더블헤더에서는 진행 중인 쪽을 집는다.** 예전에는 그냥 첫 일치를 썼는데,
+/// API가 시작시각 오름차순으로 주므로 항상 1차전이었다 — 2차전이 진행 중인데도
+/// 이미 끝난 1차전 화면에 갇혔고(`can_enter_live(Final)`이 true라 그대로
+/// 진입한다), 진입 직후 `auto_team`이 비워져 재시도 경로도 없었다.
+///
+/// 우선순위: 진행 중 > 예정 > 그 외(끝남·취소). 같은 등급이면 먼저 오는 것.
+pub fn pick_team_game<'a>(games: &'a [Game], code: &str) -> Option<&'a Game> {
+    games
+        .iter()
+        .filter(|g| g.home.code == code || g.away.code == code)
+        .min_by_key(|g| match g.status {
+            GameStatus::Live => 0,
+            GameStatus::Suspended => 1,
+            GameStatus::Scheduled => 2,
+            _ => 3,
+        })
 }
 
 impl App {
@@ -437,6 +457,10 @@ impl App {
         }
         // opener들은 모든 오버레이 consumer 뒤에 둔다 — 링크픽커가 열린 채 F2를
         // 누르면 오버레이가 이중으로 열리던 결함(최종 리뷰 I-1) 방지.
+        // `S`는 F9의 별칭이다. 도움말·README에는 F9만 적혀 있어 "안 쓰는 키"로
+        // 보이지만, **데모 녹화가 이 별칭에 의존한다** — VHS가 F키를 못 보내서
+        // `docs/demo.tape`·`demo.en.tape`가 `Type "S"`를 쓴다. 지우면 릴리스마다
+        // 도는 녹화가 조용히 깨진다(`tests/docs_match_code.rs`가 봉인한다).
         if key == KeyCode::F(9) || key == KeyCode::Char('S') {
             self.settings = Some(SettingsState {
                 cursor: 0,
@@ -632,14 +656,6 @@ impl App {
                 if !self.news.is_empty() {
                     self.news_list = Some(NewsListState { cursor: 0 });
                 }
-                self.pending_g = false;
-            }
-            KeyCode::Char('/')
-            | KeyCode::F(3)
-            | KeyCode::F(4)
-            | KeyCode::F(6)
-            | KeyCode::Char(' ') => {
-                // 마일스톤 B에서 구현: 검색, 필터, 정렬, 즐겨찾기. 지금은 인식만 하고 무동작.
                 self.pending_g = false;
             }
             _ => {
@@ -1209,6 +1225,16 @@ impl App {
                 if self.selected >= self.games.len() {
                     self.selected = self.games.len().saturating_sub(1);
                 }
+                // 보고 있는 경기의 **상태도 따라 갱신한다.** 라이브 화면의 `Game`은
+                // 진입 시점의 스냅샷이라, 보는 도중 경기가 끝나도 영원히 Live로
+                // 남아 있었다. 그 결과 ①화면 배지가 "종료"로 안 바뀌고
+                // ②폴러가 끝난 경기를 5초마다 계속 받는다(종료 경기용 완화 주기가
+                // 있는데도 걸리지 않았다 — 하루 3.6GB를 상대 서버에서 받아 왔다).
+                if let Screen::Live { game, .. } = &mut self.screen {
+                    if let Some(fresh) = self.games.iter().find(|g| g.id == game.id) {
+                        *game = fresh.clone();
+                    }
+                }
             }
             Update::Standings(s) => {
                 self.standings = s;
@@ -1597,6 +1623,79 @@ mod tests {
         );
     }
 
+    /// **보는 도중 경기가 끝나면 화면의 경기 상태도 따라가야 한다.**
+    ///
+    /// 라이브 화면의 `Game`은 진입 시점 스냅샷이라 영원히 Live로 남아 있었다.
+    /// 그래서 ①배지가 "종료"로 안 바뀌고 ②폴러가 끝난 경기를 5초마다 계속
+    /// 받았다(종료 경기용 완화 주기가 있는데도 걸리지 않았다). 기존 폴러 테스트는
+    /// "이미 끝난 경기에 새로 들어갈 때"만 봐서 이 전이를 못 잡았다.
+    #[test]
+    fn a_game_that_ends_while_we_watch_it_updates_on_screen() {
+        let mut app = App::new(Default::default());
+        let mut g = game("a");
+        g.status = GameStatus::Live;
+        app.enter_live(g.clone());
+
+        // 폴링이 "그 경기 끝났다"고 알려 온다.
+        let mut finished = g.clone();
+        finished.status = GameStatus::Final;
+        app.apply(crate::poller::Update::Games(vec![finished]));
+
+        let watched = app.watched_game().expect("라이브 화면인데 경기가 없다");
+        assert_eq!(
+            watched.status,
+            GameStatus::Final,
+            "경기가 끝났는데 화면은 아직 진행 중으로 안다"
+        );
+    }
+
+    /// 다른 경기의 소식이 와도 보고 있는 것을 바꾸지 않는다(위 갱신이 과하지 않은지).
+    #[test]
+    fn another_games_update_does_not_touch_the_one_we_watch() {
+        let mut app = App::new(Default::default());
+        let mut g = game("a");
+        g.status = GameStatus::Live;
+        app.enter_live(g);
+
+        let mut other = game("b");
+        other.status = GameStatus::Final;
+        app.apply(crate::poller::Update::Games(vec![other]));
+
+        assert_eq!(
+            app.watched_game().unwrap().status,
+            GameStatus::Live,
+            "남의 경기 소식이 우리 화면을 바꿨다"
+        );
+    }
+
+    /// **더블헤더에서 `--team`은 진행 중인 경기로 들어간다.**
+    ///
+    /// API가 시작시각 오름차순으로 주므로 첫 일치는 늘 1차전이다. 2차전이
+    /// 진행 중인데도 이미 끝난 1차전 화면에 갇혔다(실측: 2025-05-11 롯데·NC·KIA
+    /// 전부 그랬다).
+    #[test]
+    fn a_double_header_enters_the_game_that_is_actually_on() {
+        let mut first = game("g1");
+        first.status = GameStatus::Final;
+        let mut second = game("g2");
+        second.status = GameStatus::Live;
+        // API 순서 그대로: 1차전이 앞에 온다.
+        let games = vec![first, second];
+        let picked = pick_team_game(&games, "LG").expect("LG 경기가 있다");
+        assert_eq!(picked.id, "g2", "끝난 1차전으로 들어갔다");
+    }
+
+    /// 둘 다 안 끝났으면 먼저 오는 것(1차전)을 고른다.
+    #[test]
+    fn a_double_header_before_first_pitch_picks_the_earlier_one() {
+        let mut first = game("g1");
+        first.status = GameStatus::Scheduled;
+        let mut second = game("g2");
+        second.status = GameStatus::Scheduled;
+        let games = vec![first, second];
+        assert_eq!(pick_team_game(&games, "LG").unwrap().id, "g1");
+    }
+
     #[test]
     fn tab_toggles_between_games_and_standings() {
         let mut app = App::new(Default::default());
@@ -1852,7 +1951,7 @@ mod tests {
         assert_eq!(app.last_update_secs, None);
     }
 
-    /// A-2: Fetching은 "시도 신호일 뿐 회복이 아니다"(660행 근처 주석과 동일
+    /// A-2: Fetching은 "시도 신호일 뿐 회복이 아니다"(`last_update_secs` 필드 주석과 동일
     /// 철학) — last_update_secs도 stale/last_error와 같은 생명주기를 따른다.
     #[test]
     fn fetching_update_does_not_set_last_update_secs() {

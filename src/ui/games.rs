@@ -94,15 +94,16 @@ fn block_title(app: &App) -> String {
     }
 }
 
-/// 선발 매치업 칸("올러 vs 최원태"). 한글 이름 3자 + " vs " + 3자를 기준으로
-/// 잡되 외국인 선수 이름이 길어질 수 있어 여유를 뒀다.
-const STARTERS_COL_WIDTH: usize = 20;
+/// 선발 매치업 칸("올러 vs 최원태"). 실측 최장 조합이 22칸이라(「로드리게스 vs
+/// 알칸타라」·「알칸타라 vs 에르난데스」 등 외국인 선발 맞대결) 20칸으로는 폭이
+/// 아무리 넓어도 잘렸다 — 고정 칸이라 남는 폭이 여기로 오지 않는다.
+const STARTERS_COL_WIDTH: usize = 26;
 /// 구장·중계 칸("대구 · SPOTV").
 const VENUE_COL_WIDTH: usize = 18;
 /// 선발 칸을 켜는 최소 내부 폭(기존 칼럼 합계 + 팀명 최소폭 + 선발 칸).
-const WIDTH_FOR_STARTERS: u16 = 78;
+const WIDTH_FOR_STARTERS: u16 = 84;
 /// 구장 칸까지 켜는 최소 내부 폭.
-const WIDTH_FOR_VENUE: u16 = 97;
+const WIDTH_FOR_VENUE: u16 = 103;
 
 pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMap) {
     let l = app.labels();
@@ -148,8 +149,11 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMa
             // 아직 시작 안 한 경기는 점수를 비운다(v0.23). 서버는 예정 경기에도
             // `homeTeamScore: 0`을 주므로(실측) 값만 보면 "0 : 0"이 찍혀 무승부
             // 중인 것처럼 보인다 — 상태로 판단해야 한다. 실행 확인에서 잡혔다.
+            // 취소도 같다. 서버가 `cancel:true`인 경기에도 0을 주므로(실측:
+            // 2026시즌 취소 25경기 전부) 위 주석이 말한 그 문제가 그대로
+            // 재현됐다 — "CANCEL 두산 0 : 0 KT"가 무승부처럼 보였다.
             let score = match (g.status, g.away_score, g.home_score) {
-                (GameStatus::Scheduled, _, _) => "— : —".to_string(),
+                (GameStatus::Scheduled | GameStatus::Canceled, _, _) => "— : —".to_string(),
                 (_, Some(a), Some(h)) => format!("{a} : {h}"),
                 _ => "— : —".to_string(),
             };
@@ -683,7 +687,7 @@ mod tests {
         g.stadium = "대구".into();
         app.apply(Update::Games(vec![g]));
 
-        let mid = render_at(&app, 85, 6);
+        let mid = render_at(&app, 90, 6);
         assert!(mid.contains("올러"), "선발이 너무 일찍 빠졌다:\n{mid}");
         assert!(!mid.contains("대구"), "좁은데 구장이 남았다:\n{mid}");
 
@@ -771,5 +775,36 @@ mod tests {
         term.draw(|f| render(f, f.area(), &app, &mut hits)).unwrap();
         assert!(hits.at(2, 2).is_some());
         assert_eq!(hits.at(2, 5), None, "테두리 자리가 클릭 영역이 됐다");
+    }
+    /// **취소된 경기는 점수를 비운다.** 서버가 `cancel:true`인 경기에도
+    /// `homeTeamScore: 0`을 주므로(실측: 2026시즌 취소 25경기 전부) 값만 보면
+    /// `0 : 0`이 찍혀 무승부처럼 보인다. 예정 경기엔 이미 같은 처리를 해 두고
+    /// 취소만 빠져 있었다.
+    #[test]
+    fn a_canceled_game_shows_no_score() {
+        let mut app = App::new(Default::default());
+        app.games_loaded = true;
+        let mut g = game("a");
+        g.status = crate::model::GameStatus::Canceled;
+        g.home_score = Some(0);
+        g.away_score = Some(0);
+        app.games = vec![g];
+        let text = render_at(&app, 100, 10);
+        assert!(!text.contains("0:0"), "취소인데 0 : 0으로 나온다:\n{text}");
+    }
+
+    /// **외국인 선발 맞대결이 잘리지 않아야 한다.** 칸이 20칸 고정이라 폭이
+    /// 아무리 넓어도 실측 최장 조합(22칸)이 들어가지 않았다 — 같은 화면에서
+    /// 팀명 칸은 60칸 넘게 늘어나 공백만 채우고 있었다.
+    #[test]
+    fn a_foreign_starter_matchup_fits_when_there_is_room() {
+        let mut app = App::new(Default::default());
+        app.games_loaded = true;
+        let mut g = game("a");
+        g.away_starter = "로드리게스".into();
+        g.home_starter = "알칸타라".into();
+        app.games = vec![g];
+        let text = render_at(&app, 200, 10);
+        assert!(text.contains("알칸타라"), "홈 선발이 잘렸다:\n{text}");
     }
 }

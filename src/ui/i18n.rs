@@ -104,9 +104,6 @@ pub struct Labels {
     pub col_home: &'static str,
     pub col_status: &'static str,
     pub col_team: &'static str,
-    /// 순위표 최근 5경기·연속 기록 칼럼 헤더(v0.23). 폭이 빡빡한 칼럼이라
-    /// 어느 언어에서도 짧게 둔다.
-    /// 팀 성적 오버레이(v0.24). 라벨 칸은 14칸이라 어느 언어에서도 짧게 둔다.
     /// 대결 요약 블록(v0.26). 좁은 칸에 들어가므로 어느 언어에서도 짧게.
     pub title_matchup: &'static str,
     pub matchup_batter: &'static str,
@@ -115,6 +112,7 @@ pub struct Labels {
     pub matchup_innings: &'static str,
     pub matchup_hits: &'static str,
     pub matchup_pitches: &'static str,
+    /// 팀 성적 오버레이(v0.24). 라벨 칸은 14칸이라 어느 언어에서도 짧게 둔다.
     pub title_team_stats: &'static str,
     pub team_stats_hint: &'static str,
     pub stats_batting: &'static str,
@@ -137,6 +135,8 @@ pub struct Labels {
     pub stat_err: &'static str,
     pub col_starters: &'static str,
     pub col_venue: &'static str,
+    /// 순위표 최근 5경기·연속 기록 칼럼 헤더(v0.23). 폭이 빡빡한 칼럼이라
+    /// 어느 언어에서도 짧게 둔다.
     pub col_last_five: &'static str,
     pub col_streak: &'static str,
     pub tag_live: &'static str,
