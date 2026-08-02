@@ -5,6 +5,11 @@
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-08-02
+
+### Fixed
+- **문자중계의 긴 줄이 말줄임 없이 잘리던 것을 고쳤습니다.** "장진혁 : 유격수 땅볼 아웃 (유격수->1루수 "처럼 문장이 그냥 멈춰, 거기서 끝난 건지 잘린 건지 알 수 없었습니다. 같은 화면의 대결 블록·스코어라인은 이미 `…`로 표시하고 있었고 여기만 빠져 있었습니다.
+
 ## [0.33.0] - 2026-08-02
 
 노트북에 띄워 두는 앱이라는 걸 전제로 유휴 동작을 다시 봤고, 라이브 화면을 세 크기에서 실측했습니다.
@@ -367,7 +372,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.33.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/wantaekchoi/kbotop/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/wantaekchoi/kbotop/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/wantaekchoi/kbotop/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/wantaekchoi/kbotop/compare/v0.30.0...v0.31.0

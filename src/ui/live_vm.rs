@@ -519,11 +519,22 @@ impl LiveVm<'_> {
             .filter(|(_, l)| l.time_hm.is_some())
             .map(|(r, _)| super::text::display_width(r))
             .max();
+        // **폭을 넘는 줄은 정직하게 말줄임한다.** 이전엔 그대로 넘겨 ratatui의
+        // List가 폭에서 조용히 잘랐다 — "장진혁 : 유격수 땅볼 아웃 (유격수->1루수 "
+        // 처럼 문장이 그냥 멈춰, 거기서 끝난 건지 잘린 건지 알 수 없었다
+        // (v0.33 실측, 80칸). §15 오버플로 정책은 이 화면의 다른 곳(대결 블록·
+        // 스코어라인)에는 이미 적용돼 있었고 여기만 빠져 있었다.
+        let clip = |rows: &[String]| -> Vec<String> {
+            rows.iter()
+                .map(|r| super::text::ellipsize(r, width as usize))
+                .collect()
+        };
+
         let Some(longest_timed) = longest_timed else {
-            return self.relay_rows.clone(); // 시각을 가진 줄이 없다
+            return clip(&self.relay_rows); // 시각을 가진 줄이 없다
         };
         if (width as usize) < longest_timed + RELAY_TIME_WIDTH + 2 {
-            return self.relay_rows.clone();
+            return clip(&self.relay_rows);
         }
 
         // 시각은 **시각 있는 줄들 중 가장 긴 것** 오른쪽에 맞춘다. 패널 오른쪽
@@ -535,10 +546,15 @@ impl LiveVm<'_> {
             .map(|(row, line)| match &line.time_hm {
                 Some(t) => {
                     let t = shifted_clock(self.clock_delta_secs, t).unwrap_or_else(|| t.clone());
+                    // 여기서 본문을 자를 필요는 없다: `body_w`는 시각을 가진
+                    // 줄들의 **최대 폭**이고, 위 이른 반환이 그보다 좁은 폭을
+                    // 이미 걸러냈다. 뮤테이션으로 확인했다 — 여기 말줄임을
+                    // 넣어도 어떤 폭에서도 자르지 않는 죽은 코드였다.
                     let used = super::text::display_width(row);
                     format!("{row}{}{t}", " ".repeat(body_w.saturating_sub(used) + 1))
                 }
-                None => row.clone(),
+                // 시각 없는 줄(결과 요약)도 패널 폭을 넘으면 자른다.
+                None => super::text::ellipsize(row, width as usize),
             })
             .collect()
     }
@@ -1807,5 +1823,34 @@ mod tests {
         );
         assert_ne!(kst_pitch, ny_pitch, "투구 시각이 안 옮겨졌다:\n{ny_pitch}");
         assert_ne!(kst_relay, ny_relay, "문자중계 줄 시각이 안 옮겨졌다");
+    }
+
+    /// **문자중계 줄도 폭을 넘으면 말줄임한다.** 이전엔 그대로 넘겨 ratatui의
+    /// List가 조용히 잘랐다 — "…(유격수->1루수 "처럼 문장이 그냥 멈춰, 거기서
+    /// 끝난 건지 잘린 건지 알 수 없었다(v0.33 실측). 같은 화면의 대결 블록·
+    /// 스코어라인은 이미 자르고 있었고 여기만 빠져 있었다.
+    #[test]
+    fn a_long_relay_line_is_ellipsized_not_silently_clipped() {
+        let app = live_app(GameStatus::Live);
+        let vm = LiveVm::from_app(&app).unwrap();
+        // 폭 5부터 훑는다 — 시각 칸조차 못 넣는 좁은 폭에서만 닿는 경로가
+        // 따로 있어서(`clip`), 넓은 폭만 보면 그 분기가 통째로 안 덮인다.
+        for width in 5..=90u16 {
+            for row in vm.relay_rows_at(width) {
+                let w = crate::ui::text::display_width(&row);
+                assert!(
+                    w <= width as usize,
+                    "폭 {width}인데 {w}칸짜리 줄이 나왔다: {row:?}"
+                );
+                // 원본보다 짧아졌다면 잘렸다는 표시가 있어야 한다.
+                let original_exists = vm.relay_rows.iter().any(|r| r == &row);
+                if !original_exists && !row.contains(':') {
+                    assert!(
+                        row.contains('…'),
+                        "폭 {width}: 잘렸는데 말줄임이 없다: {row:?}"
+                    );
+                }
+            }
+        }
     }
 }

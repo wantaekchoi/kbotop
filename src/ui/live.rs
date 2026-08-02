@@ -199,7 +199,15 @@ fn render_scoreline(
 /// 짝이다. VM으로 올리면 위젯이 내부적으로 하는 일을 밖에서 한 번 더 흉내 내는
 /// 중복이 된다.
 fn render_relay(f: &mut Frame, area: Rect, vm: &LiveVm, hits: &mut super::hit::HitMap) {
-    let rows = vm.relay_rows_at(area.width.saturating_sub(2));
+    // 커서가 있으면 `highlight_symbol("> ")`이 왼쪽 두 칸을 먹는다 — VM이 만드는
+    // 줄도 그만큼 좁아야 위젯의 클리핑에 기대지 않는다.
+    //
+    // **확인한 범위**: 폭 70에서 결과 요약 줄의 잘리는 지점이 두 칸 달라진다.
+    // 양쪽 다 `…`로 끝나므로 눈에 보이는 결함은 아니었다 — 뮤테이션으로
+    // 이 한 줄을 지워도 실패하는 테스트를 만들지 못했다. 그래도 두는 이유는
+    // "VM에 진짜 폭을 준다"가 맞는 계약이기 때문이고, 지금 그 대가는 1줄이다.
+    let symbol_w = if vm.relay_cursor.is_some() { 2 } else { 0 };
+    let rows = vm.relay_rows_at(area.width.saturating_sub(2 + symbol_w));
     let (rows, title) = (&rows, vm.relay_title.as_str());
     match vm.relay_cursor {
         Some(idx) => {
@@ -1331,5 +1339,37 @@ mod tests {
             text.contains('…'),
             "좁은 폭인데 말줄임 표시가 없다 — 조용히 잘렸다:\n{text}"
         );
+    }
+
+    /// **커서를 켜면 줄이 두 칸 좁아진다는 걸 VM도 알아야 한다.**
+    ///
+    /// `highlight_symbol("> ")`이 왼쪽 두 칸을 먹는데 VM에는 패널 폭을 그대로
+    /// 넘기면, 폭에 딱 맞게 말줄임한 줄이 `"> "` 때문에 두 칸 밀려 **끝의 `…`가
+    /// 잘린다** — 잘렸다는 표시 자체가 잘려서, 다시 조용한 클리핑으로 돌아간다.
+    /// 좁은 폭에서만 드러나므로 폭을 훑는다.
+    #[test]
+    fn the_ellipsis_survives_when_the_relay_cursor_is_on() {
+        let mut checked = 0;
+        for width in 40..=90u16 {
+            let mut app = App::new(Default::default());
+            app.screen = live_screen();
+
+            let plain = render_live_view_only(&app, width, 30);
+            let want = plain.matches('…').count();
+            if want == 0 {
+                continue; // 이 폭에서는 자를 줄이 없다
+            }
+            checked += 1;
+
+            app.live_relay_cursor = Some(0);
+            let cursored = render_live_view_only(&app, width, 30);
+            assert!(
+                cursored.matches('…').count() >= want,
+                "폭 {width}: 커서를 켜니 말줄임 표시가 {}→{}개로 줄었다:\n{cursored}",
+                want,
+                cursored.matches('…').count()
+            );
+        }
+        assert!(checked > 0, "말줄임이 생기는 폭을 하나도 못 찾았다");
     }
 }
