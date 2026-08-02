@@ -1,11 +1,11 @@
-# kbotop demo (English) — v0.31: mouse off by default, team name on the cheer badge. VHS cannot send mouse
+# kbotop demo (English) — v0.32: every clock on screen follows the display time zone. VHS cannot send mouse
 # events, so the GIF shows keyboard use only.
 # v0.26: a matchup block under the play-by-play
 # (today's batter/pitcher lines + career head-to-head).
 # v0.20: rewind past inning boundaries ([ pulls in the previous inning),
 # line, its pitch shows in the zone), rewind ([ ] at-bats),
 # live pitch nav (side/zone), in-app news list (n), settings (S), theme presets, tabs.
-# (2026-07-29 Doosan vs SSG, 5 at-bats in the final inning)
+# (2026-07-30 Kiwoom vs LG, 5 at-bats in the final inning)
 # record with: vhs docs/demo.en.tape  (needs `kbotop` on PATH: cargo install --path .)
 # Isolate config autosave from the real config via a temp HOME
 # (on macOS the directories crate uses $HOME/Library/Application Support).
@@ -22,7 +22,7 @@ Set Padding 24
 Set TypingSpeed 55ms
 
 Hide
-Type "HOME=$(mktemp -d) kbotop --date 2026-07-29 --team doosan --lang en"
+Type "HOME=$(mktemp -d) kbotop --date 2026-07-30 --team lg --lang en"
 Enter
 Show
 

@@ -1,8 +1,8 @@
-# kbotop demo — v0.31: 마우스 기본 끔, 응원 배지에 팀 이름. VHS는 마우스를 못 보내므로 GIF에는 키 조작만 담긴다.
+# kbotop demo — v0.32: 화면 전체가 표시 시간대를 따른다. VHS는 마우스를 못 보내므로 GIF에는 키 조작만 담긴다.
 # v0.26: 라이브 화면 아래 '이 대결' 블록(타자·투수 당일 기록 + 통산 상대 전적).
 # v0.20: 지난 이닝까지 되감기([ 로 이닝 경계 넘기), 문자중계↔투구 연동(j/k),
 # 인앱 뉴스 목록 읽기(n), 인앱 설정(S)·테마 프리셋(mono=무채)·언어 전환, 브래킷 탭.
-# (2026-07-29 두산 vs SSG, 마지막 이닝 타석 5개)
+# (2026-07-30 키움 vs LG, 마지막 이닝 타석 5개)
 # record with: vhs docs/demo.tape  (needs `kbotop` on PATH: cargo install --path .)
 # 설정 자동저장이 실제 config를 안 건드리도록 임시 HOME으로 격리해 실행한다
 # (macOS는 directories 크레이트가 $HOME/Library/Application Support를 쓴다).
@@ -19,7 +19,7 @@ Set Padding 24
 Set TypingSpeed 55ms
 
 Hide
-Type "HOME=$(mktemp -d) kbotop --date 2026-07-29 --team doosan --lang ko"
+Type "HOME=$(mktemp -d) kbotop --date 2026-07-30 --team lg --lang ko"
 Enter
 Show
 

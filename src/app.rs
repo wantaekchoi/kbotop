@@ -133,6 +133,35 @@ pub enum MouseAction {
     ScrollDown,
 }
 
+/// 화면에 겹쳐 뜨는 층. **`OVERLAY_STACK`의 앞이 위**다.
+///
+/// v0.31까지 이 순서가 두 군데 흩어져 있었고 **서로 달랐다** — `on_key`는
+/// 도움말을 가장 먼저 소비하는데 `ui::draw`는 도움말을 아래에서 세 번째로
+/// 그렸다. 동시에 두 개가 열리는 경우가 기사↔뉴스 목록뿐이라 물리지 않았을
+/// 뿐, 층을 하나 더 얹는 순간 "위에 보이는데 키는 아래가 먹는" 상태가 생긴다.
+/// 이제 키 소비 순서와 그리는 순서가 **같은 배열**에서 나온다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Overlay {
+    Article,
+    NewsList,
+    TeamStats,
+    Settings,
+    LinkPicker,
+    Options,
+    Help,
+}
+
+/// 위 → 아래. 키는 앞에서부터 찾고, 그리기는 뒤에서부터 올라온다.
+pub const OVERLAY_STACK: [Overlay; 7] = [
+    Overlay::Article,
+    Overlay::NewsList,
+    Overlay::TeamStats,
+    Overlay::Settings,
+    Overlay::LinkPicker,
+    Overlay::Options,
+    Overlay::Help,
+];
+
 pub struct App {
     pub config: Config,
     pub tab: Tab,
@@ -325,133 +354,33 @@ impl App {
         crate::ui::i18n::labels(self.lang)
     }
 
+    /// 지금 열려 있는지 — `OVERLAY_STACK` 순서 판정과 렌더가 함께 쓴다.
+    pub fn is_overlay_open(&self, o: Overlay) -> bool {
+        match o {
+            Overlay::Article => self.article_view.is_some(),
+            Overlay::NewsList => self.news_list.is_some(),
+            // rank가 아니라 **화면에 실제로 보이는지**로 판정한다 — 렌더도 같은
+            // 함수를 보므로 "안 보이는데 키만 먹는" 상태가 구조적으로 생길 수
+            // 없다. 두 축을 따로 두면 rank는 살아 있는데 그 팀이 순위표에서
+            // 사라진 경우(폴링 갱신) 화면 없이 입력만 잠긴다.
+            Overlay::TeamStats => self.team_stats_target().is_some(),
+            Overlay::Settings => self.settings.is_some(),
+            Overlay::LinkPicker => self.link_picker.is_some(),
+            Overlay::Options => self.options.is_some(),
+            Overlay::Help => self.show_help,
+        }
+    }
+
+    /// 키를 먹을 층 — 위에서부터 처음 열려 있는 것.
+    pub fn top_overlay(&self) -> Option<Overlay> {
+        OVERLAY_STACK.into_iter().find(|o| self.is_overlay_open(*o))
+    }
+
     /// 키 입력 처리. true 반환 시 종료.
     pub fn on_key(&mut self, key: KeyCode) -> bool {
-        if self.show_help {
-            // 도움말 화면에서는 아무 키나 눌러 닫는다.
-            self.show_help = false;
-            self.pending_g = false;
-            return false;
-        }
-
-        if let Some(opt) = &mut self.options {
-            match key {
-                KeyCode::Esc | KeyCode::F(2) => self.options = None,
-                KeyCode::Down | KeyCode::Char('j') => {
-                    let len = crate::ui::options::pane_len(
-                        opt.pane,
-                        self.now_secs,
-                        crate::ui::i18n::labels(self.lang),
-                    );
-                    if len > 0 && opt.cursor + 1 < len {
-                        opt.cursor += 1;
-                    }
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    opt.cursor = opt.cursor.saturating_sub(1);
-                }
-                KeyCode::Enter => self.apply_option(),
-                _ => {} // 오버레이가 나머지 키 소비
-            }
-            self.pending_g = false;
-            return false;
-        }
-        if let Some(picker) = &mut self.link_picker {
-            match key {
-                KeyCode::Esc | KeyCode::Char('o') => self.link_picker = None,
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if picker.cursor + 1 < picker.items.len() {
-                        picker.cursor += 1;
-                    }
-                }
-                KeyCode::Up | KeyCode::Char('k') => picker.cursor = picker.cursor.saturating_sub(1),
-                KeyCode::Enter => {
-                    if let Some((_, url)) = picker.items.get(picker.cursor) {
-                        crate::ui::teamlinks::open_url(url);
-                    }
-                    self.link_picker = None;
-                }
-                _ => {}
-            }
-            self.pending_g = false;
-            return false;
-        }
-        if let Some(view) = &mut self.article_view {
-            // 기사 오버레이가 열려 있으면 모든 키를 소비한다(options/link_picker 패턴).
-            // scroll 상한은 렌더가 콘텐츠 길이로 clamp하므로 여기선 saturating만.
-            match key {
-                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => self.article_view = None,
-                KeyCode::Down | KeyCode::Char('j') => view.scroll = view.scroll.saturating_add(1),
-                KeyCode::Up | KeyCode::Char('k') => view.scroll = view.scroll.saturating_sub(1),
-                KeyCode::PageDown => view.scroll = view.scroll.saturating_add(10),
-                KeyCode::PageUp => view.scroll = view.scroll.saturating_sub(10),
-                KeyCode::Char('o') | KeyCode::Enter if !view.item.url.is_empty() => {
-                    crate::ui::teamlinks::open_url(&view.item.url);
-                }
-                _ => {}
-            }
-            self.pending_g = false;
-            return false;
-        }
-        if let Some(list) = &mut self.news_list {
-            // 목록 오버레이가 열려 있으면 모든 키를 소비한다. 기사 오버레이가 이
-            // 위에 겹칠 수 있으므로(article_view 블록이 먼저 소비) 여기 도달했다는
-            // 것은 기사가 닫혀 있고 목록만 열려 있다는 뜻이다.
-            match key {
-                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => self.news_list = None,
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if list.cursor + 1 < self.news.len() {
-                        list.cursor += 1;
-                    }
-                }
-                KeyCode::Up | KeyCode::Char('k') => list.cursor = list.cursor.saturating_sub(1),
-                KeyCode::Enter => {
-                    if let Some(item) = self.news.get(list.cursor).cloned() {
-                        self.article_view = Some(ArticleView { item, scroll: 0 });
-                    }
-                }
-                _ => {}
-            }
-            self.pending_g = false;
-            return false;
-        }
-        // 팀 성적 오버레이(v0.24)가 **화면에 보이는 동안** 키를 소비한다.
-        //
-        // 조건이 `team_stats_rank.is_some()`이 아니라 `team_stats_target()`인 게
-        // 중요하다 — 렌더도 같은 함수를 보므로 "안 보이는데 키만 먹는" 상태가
-        // 구조적으로 생길 수 없다. 두 축을 따로 두면 rank는 살아 있는데 그 팀이
-        // 순위표에서 사라진 경우(폴링 갱신) 화면 없이 입력만 잠긴다.
-        if self.team_stats_target().is_some() {
-            if matches!(key, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q')) {
-                self.team_stats_rank = None;
-            }
-            self.pending_g = false;
-            return false;
-        }
-        if self.settings.is_some() {
-            // 설정 오버레이가 열려 있으면 모든 키를 소비한다(options/link_picker
-            // 패턴). rows 길이는 settings_rows()가 &self를 빌리므로 &mut
-            // self.settings 빌림 전에 먼저 계산해 둔다(borrow 충돌 회피).
-            let rows = self.settings_rows().len();
-            let st = self.settings.as_mut().unwrap();
-            match key {
-                KeyCode::Esc | KeyCode::F(9) | KeyCode::Char('q') => self.settings = None,
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if st.cursor + 1 < rows {
-                        st.cursor += 1;
-                    }
-                }
-                KeyCode::Up | KeyCode::Char('k') => st.cursor = st.cursor.saturating_sub(1),
-                KeyCode::Left | KeyCode::Right | KeyCode::Enter => {
-                    // st(=&mut self.settings)의 빌림을 여기서 끝낸다 — 아래
-                    // self.change_setting/self.persist가 &mut self를 다시 빌린다.
-                    let cursor = st.cursor;
-                    let forward = !matches!(key, KeyCode::Left);
-                    self.change_setting(cursor, forward);
-                    self.persist();
-                }
-                _ => {}
-            }
+        // 열려 있는 층이 있으면 **가장 위 하나가** 키를 통째로 먹는다.
+        if let Some(top) = self.top_overlay() {
+            self.on_key_overlay(top, key);
             self.pending_g = false;
             return false;
         }
@@ -663,6 +592,140 @@ impl App {
             }
         }
         false
+    }
+
+    /// 층 하나의 키 처리. `on_key`가 `OVERLAY_STACK` 순서로 고른 **하나만**
+    /// 부른다 — 층마다 `return false`를 반복하던 342줄 체인을 여기로 갈랐다.
+    fn on_key_overlay(&mut self, overlay: Overlay, key: KeyCode) {
+        match overlay {
+            Overlay::Help => self.show_help = false, // 아무 키나 눌러 닫는다
+            Overlay::Options => self.on_key_options(key),
+            Overlay::LinkPicker => self.on_key_link_picker(key),
+            Overlay::Settings => self.on_key_settings(key),
+            Overlay::TeamStats => {
+                if matches!(key, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q')) {
+                    self.team_stats_rank = None;
+                }
+            }
+            Overlay::NewsList => self.on_key_news_list(key),
+            Overlay::Article => self.on_key_article(key),
+        }
+    }
+
+    fn on_key_options(&mut self, key: KeyCode) {
+        // pane_len이 &self를 빌리므로 &mut self.options 빌림 전에 계산해 둔다.
+        let len = self.options.as_ref().map(|opt| {
+            crate::ui::options::pane_len(
+                opt.pane,
+                self.now_secs,
+                crate::ui::i18n::labels(self.lang),
+            )
+        });
+        let Some(opt) = &mut self.options else { return };
+        match key {
+            KeyCode::Esc | KeyCode::F(2) => self.options = None,
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(len) = len {
+                    if len > 0 && opt.cursor + 1 < len {
+                        opt.cursor += 1;
+                    }
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => opt.cursor = opt.cursor.saturating_sub(1),
+            KeyCode::Enter => self.apply_option(),
+            _ => {} // 오버레이가 나머지 키 소비
+        }
+    }
+
+    fn on_key_link_picker(&mut self, key: KeyCode) {
+        let Some(picker) = &mut self.link_picker else {
+            return;
+        };
+        match key {
+            KeyCode::Esc | KeyCode::Char('o') => self.link_picker = None,
+            KeyCode::Down | KeyCode::Char('j') => {
+                if picker.cursor + 1 < picker.items.len() {
+                    picker.cursor += 1;
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => picker.cursor = picker.cursor.saturating_sub(1),
+            KeyCode::Enter => {
+                if let Some((_, url)) = picker.items.get(picker.cursor) {
+                    crate::ui::teamlinks::open_url(url);
+                }
+                self.link_picker = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// scroll 상한은 렌더가 콘텐츠 길이로 clamp하므로 여기선 saturating만.
+    fn on_key_article(&mut self, key: KeyCode) {
+        let Some(view) = &mut self.article_view else {
+            return;
+        };
+        match key {
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => self.article_view = None,
+            KeyCode::Down | KeyCode::Char('j') => view.scroll = view.scroll.saturating_add(1),
+            KeyCode::Up | KeyCode::Char('k') => view.scroll = view.scroll.saturating_sub(1),
+            KeyCode::PageDown => view.scroll = view.scroll.saturating_add(10),
+            KeyCode::PageUp => view.scroll = view.scroll.saturating_sub(10),
+            KeyCode::Char('o') | KeyCode::Enter if !view.item.url.is_empty() => {
+                crate::ui::teamlinks::open_url(&view.item.url);
+            }
+            _ => {}
+        }
+    }
+
+    /// 기사 오버레이가 이 위에 겹치므로(OVERLAY_STACK에서 Article이 앞) 여기
+    /// 도달했다는 건 기사가 닫혀 있고 목록만 열려 있다는 뜻이다.
+    fn on_key_news_list(&mut self, key: KeyCode) {
+        let news_len = self.news.len();
+        let Some(list) = &mut self.news_list else {
+            return;
+        };
+        match key {
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => self.news_list = None,
+            KeyCode::Down | KeyCode::Char('j') => {
+                if list.cursor + 1 < news_len {
+                    list.cursor += 1;
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => list.cursor = list.cursor.saturating_sub(1),
+            KeyCode::Enter => {
+                let cursor = list.cursor;
+                if let Some(item) = self.news.get(cursor).cloned() {
+                    self.article_view = Some(ArticleView { item, scroll: 0 });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_key_settings(&mut self, key: KeyCode) {
+        // rows 길이는 settings_rows()가 &self를 빌리므로 &mut self.settings
+        // 빌림 전에 먼저 계산해 둔다(borrow 충돌 회피).
+        let rows = self.settings_rows().len();
+        let Some(st) = self.settings.as_mut() else {
+            return;
+        };
+        match key {
+            KeyCode::Esc | KeyCode::F(9) | KeyCode::Char('q') => self.settings = None,
+            KeyCode::Down | KeyCode::Char('j') => {
+                if st.cursor + 1 < rows {
+                    st.cursor += 1;
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => st.cursor = st.cursor.saturating_sub(1),
+            KeyCode::Left | KeyCode::Right | KeyCode::Enter => {
+                // st의 빌림을 여기서 끝낸다 — change_setting/persist가 &mut self를 다시 빌린다.
+                let cursor = st.cursor;
+                let forward = !matches!(key, KeyCode::Left);
+                self.change_setting(cursor, forward);
+                self.persist();
+            }
+            _ => {}
+        }
     }
 
     /// `j`/`k` — 문자중계 줄 커서를 한 칸 옮기고, **그 줄이 가리키는 투구를 함께
@@ -3714,5 +3777,67 @@ mod tests {
         app.team_stats_rank = None;
 
         assert_eq!(app.view_key(), base, "전부 닫으면 처음과 같다");
+    }
+
+    /// **위에 보이는 층이 키를 먹는다.** 층을 두 개 열어 두고 위에 있는 쪽이
+    /// 소비하는지 본다 — v0.31까지 이 계약은 `on_key`의 `if` 순서와 `ui::draw`의
+    /// 호출 순서에 각각 손으로 적혀 있었고 **서로 달랐다**(도움말이 키는 1순위,
+    /// 그리기는 아래에서 3번째). 실제로 동시에 열리는 게 기사↔목록뿐이라 안
+    /// 물렸을 뿐이다.
+    #[test]
+    fn the_topmost_open_overlay_is_the_one_that_takes_the_key() {
+        let mut app = App::new(Default::default());
+        app.news = vec![news_item("제목", "https://example.test")];
+
+        app.news_list = Some(NewsListState { cursor: 0 });
+        assert_eq!(app.top_overlay(), Some(Overlay::NewsList));
+
+        // 목록에서 Enter로 기사를 열면 **둘 다 열려 있다** — 위는 기사다.
+        app.on_key(KeyCode::Enter);
+        assert!(app.news_list.is_some(), "목록은 뒤에 남아 있다");
+        assert!(app.article_view.is_some());
+        assert_eq!(app.top_overlay(), Some(Overlay::Article));
+
+        // 이때 j는 기사 스크롤이지 목록 커서가 아니다.
+        app.on_key(KeyCode::Char('j'));
+        assert_eq!(app.article_view.as_ref().unwrap().scroll, 1);
+        assert_eq!(
+            app.news_list.as_ref().unwrap().cursor,
+            0,
+            "아래층이 키를 먹었다"
+        );
+    }
+
+    /// `OVERLAY_STACK`이 **모든** 층을 정확히 한 번씩 담는지. 층을 새로 만들고
+    /// 배열에 안 넣으면 그 층은 키를 영영 못 받는다(화면에는 뜨는데).
+    #[test]
+    fn the_overlay_stack_lists_every_layer_exactly_once() {
+        let all = [
+            Overlay::Article,
+            Overlay::NewsList,
+            Overlay::TeamStats,
+            Overlay::Settings,
+            Overlay::LinkPicker,
+            Overlay::Options,
+            Overlay::Help,
+        ];
+        assert_eq!(OVERLAY_STACK.len(), all.len());
+        for o in all {
+            assert_eq!(
+                OVERLAY_STACK.iter().filter(|x| **x == o).count(),
+                1,
+                "{o:?}가 스택에 없거나 중복이다"
+            );
+        }
+    }
+
+    /// 열린 층이 하나도 없으면 키는 본 화면으로 내려간다.
+    #[test]
+    fn with_no_overlay_open_the_key_reaches_the_screen_below() {
+        let mut app = App::new(Default::default());
+        app.games = vec![game("a"), game("b")];
+        assert_eq!(app.top_overlay(), None);
+        app.on_key(KeyCode::Char('j'));
+        assert_eq!(app.selected, 1);
     }
 }

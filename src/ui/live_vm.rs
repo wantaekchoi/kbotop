@@ -121,6 +121,9 @@ pub(crate) struct LiveVm<'a> {
     /// 문자열이고, 시각은 **폭이 남을 때만** 붙으므로 폭을 아는 쪽
     /// ([`LiveVm::relay_rows_at`])이 조립한다.
     relay_lines: &'a [RelayLine],
+    /// 표시 시간대와 KST의 차(초). 문자중계 줄에 시각을 붙이는 건 폭을 아는
+    /// `relay_rows_at`이라, 그때 옮길 수 있도록 여기 들고 온다.
+    clock_delta_secs: i64,
     /// 문자중계 커서. `None`이면 하이라이트 없이 꼬리만 보여준다(기본 상태).
     /// `Some(idx)`는 **이미 `relay_rows` 범위 안으로 클램프됐다** — v0.19a까지
     /// 이 클램프(`idx.min(len-1)`)는 렌더에 있었다(리뷰 I-1). 렌더는 이제 범위
@@ -201,12 +204,19 @@ impl<'a> LiveVm<'a> {
         });
 
         // "HH:MM" 경기 시작 시각("....THH:MM:SS"에서 추출, 실패 시 생략).
-        let start_hhmm = game
+        // 표시 시간대와 KST의 차. 아래 세 자리(시작 시각·투구 시각·문자중계 줄
+        // 시각)가 전부 이 값으로 옮겨진다 — 헤더 시계만 로컬이고 나머지는 KST라
+        // 한 화면에 두 시간대가 섞이던 것을 없앤다(v0.32).
+        let delta = tz_delta_secs(&app.tz);
+        let start_raw = game
             .start
             .split('T')
             .nth(1)
             .and_then(|t| t.get(0..5))
             .unwrap_or("");
+        // 옮기지 못하면(형식 파손) 원문을 그대로 둔다 — 관용 원칙.
+        let start_shifted = shifted_clock(delta, start_raw);
+        let start_hhmm = start_shifted.as_deref().unwrap_or(start_raw);
         let detail_base = detail_prefix(l, s, past_at_bat, start_hhmm);
 
         // B-2/B-3(v0.18): 경기 경과/소요. Live는 "시작~지금", Final/Suspended는
@@ -261,7 +271,7 @@ impl<'a> LiveVm<'a> {
         }
         .filter(|i| *i < pitches.len());
 
-        let pitch_line = pitch_line(l, &game.start, pitches, selected_pitch);
+        let pitch_line = pitch_line(l, &game.start, pitches, selected_pitch, delta);
 
         Some(LiveVm {
             title,
@@ -279,6 +289,7 @@ impl<'a> LiveVm<'a> {
             selected_pitch,
             relay_rows,
             relay_lines: s.active_relay_lines(app.live_atbat_sel),
+            clock_delta_secs: delta,
             relay_cursor,
             matchup_rows: matchup_rows(l, s, past_at_bat.is_some()),
             inning_score: &s.inning_score,
@@ -411,14 +422,26 @@ fn detail_prefix(
 
 /// 스코어라인 셋째 줄: 선택된 투구 상세(시각·상대시간·결과 원문) 또는 네비 힌트.
 /// `pitches`는 활성 at-bat(라이브 또는 돌려보기 중인 과거 타석)의 투구다.
-fn pitch_line(l: &Labels, game_start: &str, pitches: &[Pitch], sel: Option<usize>) -> PitchLine {
+fn pitch_line(
+    l: &Labels,
+    game_start: &str,
+    pitches: &[Pitch],
+    sel: Option<usize>,
+    delta_secs: i64,
+) -> PitchLine {
     match sel.and_then(|i| pitches.get(i).map(|p| (i, p))) {
         Some((i, p)) => {
             let speed = p
                 .speed_kmh
                 .map(|k| format!("{k}km"))
                 .unwrap_or_else(|| "-".into());
-            let time = p.time_hms.as_deref().unwrap_or("-");
+            // 표시 시간대로 옮겨서 보여준다(아래 rel/interval은 **차이값**이라
+            // 옮기지 않는다 — 어느 시간대에서 재도 같다).
+            let shown_time = p
+                .time_hms
+                .as_deref()
+                .map(|t| shifted_clock(delta_secs, t).unwrap_or_else(|| t.to_string()));
+            let time = shown_time.as_deref().unwrap_or("-");
             let rel = p
                 .time_hms
                 .as_deref()
@@ -511,6 +534,7 @@ impl LiveVm<'_> {
             .zip(self.relay_lines.iter())
             .map(|(row, line)| match &line.time_hm {
                 Some(t) => {
+                    let t = shifted_clock(self.clock_delta_secs, t).unwrap_or_else(|| t.clone());
                     let used = super::text::display_width(row);
                     format!("{row}{}{t}", " ".repeat(body_w.saturating_sub(used) + 1))
                 }
@@ -703,6 +727,40 @@ fn pitch_interval_label(l: &Labels, prev_hms: &str, cur_hms: &str) -> Option<Str
     } else {
         Some(format!("+{}:{:02}", d / 60, d % 60))
     }
+}
+
+/// KST 벽시계 "HH:MM"/"HH:MM:SS"를 **표시 시간대**의 같은 자리 문자열로 옮긴다.
+///
+/// 서버가 주는 시각은 전부 KST다(`game.start`, `Pitch.time_hms`,
+/// `RelayLine.time_hm`). v0.16에서 헤더 시계만 `--tz`를 따르게 하고 이 값들은
+/// 원문 그대로 뒀더니, 뉴욕에서 켜면 헤더는 `05:26 EST`인데 바로 아래 "시작
+/// 18:00"이 나란히 떠서 **한 화면에 두 시간대가 이름표도 없이 섞였다**(v0.30
+/// 발견). 보는 사람의 시계와 맞는 시각을 보여준다는 v0.16의 결정을 화면 전체로
+/// 넓힌다.
+///
+/// 날짜는 필요 없다. 출력이 시:분(:초)뿐이라 자정을 넘기든 아니든
+/// `(t + delta) mod 86400`이 같은 값을 준다 — 그래서 날짜 없는
+/// `Pitch.time_hms`도 안전하게 옮길 수 있다. **경과·간격 계산은 이 함수를
+/// 쓰지 않는다**(차이값이라 어느 시간대에서 재도 같고, KST 고정이 맞다 —
+/// `now_kst_hms` 주석 참고).
+///
+/// 입력의 정밀도를 그대로 지킨다("18:00"→"HH:MM", "21:15:03"→"HH:MM:SS").
+/// 파싱 실패는 `None`(호출부가 원문을 그대로 두게 — 무패닉·관용 원칙).
+fn shifted_clock(delta_secs: i64, clock: &str) -> Option<String> {
+    let secs = crate::dateutil::parse_hms_secs(clock)?;
+    let shifted = (secs + delta_secs).rem_euclid(86400);
+    let (h, m, sec) = (shifted / 3600, (shifted % 3600) / 60, shifted % 60);
+    Some(if clock.matches(':').count() >= 2 {
+        format!("{h:02}:{m:02}:{sec:02}")
+    } else {
+        format!("{h:02}:{m:02}")
+    })
+}
+
+/// 표시 시간대와 KST의 차(초). 0이면 옮길 것이 없다 — 한국에서 보는 대다수는
+/// 이 경로로 예전과 완전히 같은 화면을 본다.
+fn tz_delta_secs(tz: &crate::localtime::TimeZone) -> i64 {
+    (tz.offset_secs - KST_OFFSET_SECS) as i64
 }
 
 /// UTC epoch 초 → KST 기준 "HH:MM:SS". `game.start`·`Pitch.time_hms`는 항상
@@ -1668,5 +1726,86 @@ mod tests {
                 "긴 줄 때문에 시각이 막혔다: {rows:?}"
             );
         });
+    }
+
+    /// **한 화면에 두 시간대가 섞이지 않는다.** v0.16에서 헤더 시계만 `--tz`를
+    /// 따르게 하고 경기 시각은 KST 원문을 그대로 뒀다 — 뉴욕에서 켜면 헤더는
+    /// `05:26 EST`인데 바로 아래 "시작 18:00"이 나란히 떴고, 어느 쪽이 어느
+    /// 시간대인지 화면 어디에도 없었다(v0.30 발견, v0.32 수정).
+    #[test]
+    fn game_times_follow_the_display_timezone_like_the_header_clock() {
+        // 뉴욕(-04:00)에서 보면 18:30 KST 경기는 05:30에 시작한다.
+        assert_eq!(
+            super::shifted_clock(-4 * 3600 - super::KST_OFFSET_SECS as i64, "18:30").as_deref(),
+            Some("05:30")
+        );
+        // 자정을 거꾸로 넘는 경우도 날짜 없이 옳게 나온다(21:15 KST → 08:15 EDT).
+        assert_eq!(
+            super::shifted_clock(-4 * 3600 - super::KST_OFFSET_SECS as i64, "21:15:03").as_deref(),
+            Some("08:15:03"),
+            "초 정밀도가 유지돼야 한다"
+        );
+        // 앞으로 넘는 경우(시드니 +11:00): 21:15 KST → 23:15.
+        assert_eq!(
+            super::shifted_clock(11 * 3600 - super::KST_OFFSET_SECS as i64, "21:15").as_deref(),
+            Some("23:15")
+        );
+    }
+
+    /// **한국에서 보는 화면은 한 글자도 안 바뀐다.** 대다수 사용자가 이 경로다.
+    #[test]
+    fn a_kst_viewer_sees_exactly_what_the_server_sent() {
+        let delta = super::tz_delta_secs(&crate::localtime::TimeZone::kst());
+        assert_eq!(delta, 0);
+        for t in ["18:30", "21:15:03", "00:00", "23:59:59"] {
+            assert_eq!(super::shifted_clock(delta, t).as_deref(), Some(t));
+        }
+    }
+
+    /// 형식이 깨진 값은 옮기지 않고 `None` — 호출부가 원문을 그대로 둔다.
+    #[test]
+    fn a_malformed_clock_is_not_shifted() {
+        for bad in ["", "-", "25:00", "18:60", "eighteen"] {
+            assert_eq!(super::shifted_clock(3600, bad), None, "{bad}");
+        }
+    }
+
+    /// **화면까지 실제로 옮겨졌는지** 본다. 위 단위 테스트는 변환 함수만 보므로,
+    /// 그 함수를 만들어 두고 **호출을 빠뜨리면** 통과한다 — 세 자리(시작 시각·
+    /// 투구 시각·문자중계 줄 시각) 전부를 조립된 결과에서 확인한다.
+    #[test]
+    fn every_clock_on_the_live_screen_moves_with_the_display_timezone() {
+        let mut app = live_app(GameStatus::Live);
+        if let Screen::Live { game, .. } = &mut app.screen {
+            game.start = "2026-07-19T18:30:00".into();
+        }
+        // 첫 투구를 골라 상세줄에 시각이 뜨게 한다.
+        app.live_pitch_sel = Some(0);
+
+        let kst = LiveVm::from_app(&app).unwrap();
+        let kst_detail = kst.detail_line(200);
+        let kst_pitch = kst.pitch_line.text(200);
+        let kst_relay = kst.relay_rows_at(200).join("\n");
+        assert!(
+            kst_detail.contains("18:30"),
+            "전제: KST에서는 원문 그대로다:\n{kst_detail}"
+        );
+
+        // 뉴욕(-04:00)으로 옮기면 같은 값들이 13시간 뒤로 간다.
+        app.tz = crate::localtime::TimeZone {
+            offset_secs: -4 * 3600,
+            abbrev: "EDT".into(),
+        };
+        let ny = LiveVm::from_app(&app).unwrap();
+        let ny_detail = ny.detail_line(200);
+        let ny_pitch = ny.pitch_line.text(200);
+        let ny_relay = ny.relay_rows_at(200).join("\n");
+
+        assert!(
+            ny_detail.contains("05:30"),
+            "시작 시각이 안 옮겨졌다:\n{ny_detail}"
+        );
+        assert_ne!(kst_pitch, ny_pitch, "투구 시각이 안 옮겨졌다:\n{ny_pitch}");
+        assert_ne!(kst_relay, ny_relay, "문자중계 줄 시각이 안 옮겨졌다");
     }
 }

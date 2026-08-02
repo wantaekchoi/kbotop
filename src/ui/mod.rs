@@ -119,43 +119,32 @@ pub fn draw(f: &mut Frame, app: &App, hits: &mut HitMap) {
         footer::render(f, chunks[2], app);
     }
 
-    if app.options.is_some() {
-        options::render(f, f.area(), app);
-    }
-
-    if let Some(picker) = &app.link_picker {
-        let items: Vec<ratatui::text::Line> = picker
-            .items
-            .iter()
-            .map(|(l, _)| ratatui::text::Line::from(l.as_str()))
-            .collect();
-        options::chooser(f, f.area(), l.title_open, &items, picker.cursor);
-    }
-
-    if app.show_help {
-        help::render(f, f.area(), app);
-    }
-
-    if app.settings.is_some() {
-        settings::render(f, f.area(), app);
-    }
-
-    // 팀 성적(v0.24) — 순위 탭 전용이고 on_key가 열려 있는 동안 다른 오버레이
-    // 오픈을 막으므로 겹치지 않는다.
-    if app.team_stats_target().is_some() {
-        teamstats::render(f, f.area(), app);
-    }
-
-    // 뉴스 목록은 기사보다 아래 층 — 기사가 목록 위에 겹쳐 열릴 수 있으므로
-    // (on_key의 소비 순서와 대응) 목록을 먼저 그리고 기사를 그 위에 그린다.
-    if app.news_list.is_some() {
-        newslist::render(f, f.area(), app);
-    }
-
-    // 기사 오버레이는 최상위 — 열려 있으면 on_key가 다른 오버레이 오픈을 막으므로
-    // 실제로 겹치는 일은 없지만, 그려질 땐 가장 위에 온다.
-    if app.article_view.is_some() {
-        article::render(f, f.area(), app);
+    // 오버레이는 `app::OVERLAY_STACK`을 **뒤에서부터**(아래층부터) 그린다 —
+    // 나중에 그린 것이 위에 온다. 키를 먹는 순서(`App::top_overlay`)가 같은
+    // 배열의 앞에서부터이므로, "위에 보이는 층이 키를 먹는다"가 구조적으로
+    // 보장된다. v0.31까지는 두 순서가 각자 손으로 적혀 있었고 서로 달랐다.
+    for overlay in crate::app::OVERLAY_STACK.into_iter().rev() {
+        if !app.is_overlay_open(overlay) {
+            continue;
+        }
+        match overlay {
+            crate::app::Overlay::Options => options::render(f, f.area(), app),
+            crate::app::Overlay::LinkPicker => {
+                if let Some(picker) = &app.link_picker {
+                    let items: Vec<ratatui::text::Line> = picker
+                        .items
+                        .iter()
+                        .map(|(l, _)| ratatui::text::Line::from(l.as_str()))
+                        .collect();
+                    options::chooser(f, f.area(), l.title_open, &items, picker.cursor);
+                }
+            }
+            crate::app::Overlay::Help => help::render(f, f.area(), app),
+            crate::app::Overlay::Settings => settings::render(f, f.area(), app),
+            crate::app::Overlay::TeamStats => teamstats::render(f, f.area(), app),
+            crate::app::Overlay::NewsList => newslist::render(f, f.area(), app),
+            crate::app::Overlay::Article => article::render(f, f.area(), app),
+        }
     }
 }
 
