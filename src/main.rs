@@ -85,6 +85,18 @@ fn kst_date_from_utc_secs(utc_secs: i64) -> String {
     format_civil(kst_days(utc_secs as u64))
 }
 
+/// 자정을 넘겨 KST의 "오늘"이 바뀌었을 때 조회 날짜를 따라가게 한다.
+///
+/// 앱은 시작할 때 정한 날짜를 세션 내내 들고 있었다 — 헤더 시계는 새 날짜의
+/// 시각을 가리키는데 목록은 어제 경기 그대로였고, 화면 어디에도 그 사실이
+/// 적히지 않았다(v0.29 상주 리뷰가 지적, v0.30에서 수정). 반대로 F2 픽커나
+/// `--date`로 **다른 날을 골라 둔 사용자**의 화면을 마음대로 옮기면 안 되므로,
+/// 지금 보고 있는 날짜가 아직 "직전의 오늘"일 때만 새 오늘로 민다.
+/// 순수 함수라 자정 경계를 실시간 대기 없이 검증한다.
+fn rolled_over_date(shown: &str, prev_today: &str, today: &str) -> Option<String> {
+    (today != prev_today && shown == prev_today).then(|| today.to_string())
+}
+
 /// 외부 크레이트(chrono) 없이 `SystemTime`만으로 KST 기준 오늘 날짜를 계산한다.
 fn kst_today() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -473,6 +485,8 @@ fn run(
     let mut hits = ui::hit::HitMap::default();
     // 지금 캡처가 켜져 있는지. 설정과 어긋나면 아래 루프가 맞춘다.
     let mut mouse_on = false;
+    // 직전 tick의 KST 오늘. 이 값이 바뀌는 순간이 자정 넘김이다.
+    let mut prev_today = kst_today();
 
     loop {
         // 외부 SIGTERM/SIGHUP 수신 시 q를 누른 것과 동일하게 정상 종료 경로로
@@ -506,6 +520,20 @@ fn run(
                 }
             }
         }
+
+        // 초보용 팁 회전(tips::current)이 참조하는 현재 시각. 매 tick 갱신하면
+        // 충분하다 — 1분 단위 회전이라 100ms 해상도는 과분하다. 아래 자정 넘김
+        // 판정이 이 값을 쓰므로 SetDate 통지보다 **먼저** 갱신해야 한다.
+        app.now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        // 자정을 넘겼으면 조회 날짜를 오늘로 민다(아래 SetDate 통지가 폴러에 전달).
+        let today = kst_date_from_utc_secs(app.now_secs as i64);
+        if let Some(next) = rolled_over_date(&app.date, &prev_today, &today) {
+            app.date = next;
+        }
+        prev_today = today;
 
         // 화면 전환에 따른 폴러 명령 동기화.
         //
@@ -560,21 +588,23 @@ fn run(
             app.spinner_frame = app.spinner_frame.wrapping_add(1);
         }
 
-        // 초보용 팁 회전(tips::current)이 참조하는 현재 시각. 매 tick 갱신하면
-        // 충분하다 — 1분 단위 회전이라 100ms 해상도는 과분하지만 스피너 갱신과
-        // 같은 자리에 두면 별도 타이머 없이 자연히 최신 상태를 유지한다.
-        app.now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
         // 동기화 출력(BSU/ESU): 미지원 터미널은 이스케이프를 무시하므로 안전.
         let _ = execute!(std::io::stdout(), BeginSynchronizedUpdate);
         // 화면이 실제로 전환된 프레임에서만 clear한다(ADR-0007) — 매 프레임
         // clear하면 깜빡임이 생기므로 직전 view_key와 다를 때만 호출한다.
         let view_key = app.view_key();
         if view_key != last_view_key {
-            term.clear()?;
+            // `Terminal::clear()`를 쓰지 않는다. 그건 지우기 전에 커서 위치를
+            // **DSR(ESC[6n)로 터미널에 물어보고** 답을 stdin에서 읽어 되돌린다.
+            // 대체 화면에서 커서를 숨겨 둔 이 앱에는 되돌릴 커서가 없는데,
+            // 대가는 크다: DSR에 답하지 않는 터미널에서는 2초를 기다린 끝에
+            // 에러가 나고 `?`가 앱을 그 자리에서 끝낸다(실측: pty에서 Enter로
+            // 화면을 바꾸는 순간 "The cursor position could not be read"로 종료).
+            // 응답을 stdin에서 긁어가므로 그 사이 눌린 키를 삼킬 수도 있다.
+            // `resize`는 같은 일(화면 지우기 + 백버퍼 리셋으로 전체 재그리기)을
+            // DSR 없이 한다 — ADR-0007이 필요로 한 건 그 둘뿐이다.
+            let size = term.size()?;
+            term.resize(size.into())?;
             last_view_key = view_key;
         }
         term.draw(|f: &mut Frame| ui::draw(f, app, &mut hits))?;
@@ -702,6 +732,38 @@ mod tests {
     #[test]
     fn kst_date_from_utc_secs_handles_epoch_start() {
         assert_eq!(kst_date_from_utc_secs(0), "1970-01-01");
+    }
+
+    /// **자정을 넘기면 목록도 오늘로 넘어간다.** v0.29까지는 시작할 때 정한
+    /// 날짜를 세션 내내 들고 있어서, 헤더 시계는 새 날짜인데 목록은 어제
+    /// 경기였다 — 그것도 아무 표시 없이.
+    #[test]
+    fn the_shown_date_follows_midnight_when_the_user_did_not_pick_one() {
+        assert_eq!(
+            rolled_over_date("2026-08-02", "2026-08-02", "2026-08-03").as_deref(),
+            Some("2026-08-03")
+        );
+    }
+
+    /// **골라 둔 날짜는 건드리지 않는다.** `--date`나 F2 픽커로 다른 날을 보고
+    /// 있는 사람의 화면을 자정에 마음대로 옮기면 그건 고장이다.
+    #[test]
+    fn a_date_the_user_picked_survives_midnight() {
+        assert_eq!(
+            rolled_over_date("2026-05-29", "2026-08-02", "2026-08-03"),
+            None
+        );
+    }
+
+    /// 자정을 안 넘긴 tick(하루 종일 거의 전부)에서는 아무 일도 없어야 한다 —
+    /// 매 tick SetDate가 나가면 폴러가 games 게이트를 계속 리셋해 60초 주기가
+    /// 무너진다.
+    #[test]
+    fn nothing_happens_while_the_day_has_not_changed() {
+        assert_eq!(
+            rolled_over_date("2026-08-02", "2026-08-02", "2026-08-02"),
+            None
+        );
     }
 
     #[test]

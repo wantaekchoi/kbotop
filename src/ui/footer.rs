@@ -141,6 +141,16 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             },
         ),
         None => {
+            // 커서가 취소·예정 경기에 있으면 Enter는 아무 일도 하지 않는다
+            // (`App::can_enter_live` — 문자중계가 없어 영구 "loading"에 갇히는
+            // 걸 막는 가드다). 그런데 힌트는 "Enter 중계"라고 계속 말하고 있어,
+            // 눌러 본 사람은 앱이 먹통이 된 줄 안다 — 되는 자리에서만 안내한다.
+            let enter_is_dead = matches!(app.screen, Screen::List)
+                && app.tab == Tab::Games
+                && !app
+                    .games
+                    .get(app.selected)
+                    .is_some_and(|g| App::can_enter_live(g.status));
             let items: Vec<HintItem> = match (&app.screen, app.tab) {
                 (Screen::List, Tab::Games) => vec![
                     HintItem {
@@ -193,6 +203,14 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
                         key: "F1",
                         label: l.hint_help,
                         core: true,
+                    },
+                    // 순위 행에서 Enter를 누르면 그 팀의 시즌 성적이 뜬다
+                    // (v0.24). 그런데 footer에도 도움말에도 없어서 아는 사람만
+                    // 쓰는 기능이었다 — Esc를 힌트에 넣은 것과 같은 이유로 넣는다.
+                    HintItem {
+                        key: "Enter",
+                        label: l.hint_team_stats,
+                        core: false,
                     },
                     HintItem {
                         key: "F2",
@@ -288,6 +306,10 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
                     items
                 }
             };
+            let mut items = items;
+            if enter_is_dead || (app.tab == Tab::Standings && !app.team_stats_available()) {
+                items.retain(|h| h.key != "Enter");
+            }
             (
                 assemble_hints(&items, area.width as usize),
                 Style::default().add_modifier(Modifier::REVERSED),
@@ -513,9 +535,35 @@ mod tests {
             .collect()
     }
 
+    /// 힌트 테스트용 경기 하나. footer는 커서가 가리키는 경기의 상태를 보고
+    /// "Enter 중계"를 안내할지 정하므로, 목록 화면 테스트는 경기가 있어야 한다.
+    fn game_with(status: GameStatus) -> Game {
+        Game {
+            id: "g".into(),
+            start: String::new(),
+            status,
+            status_label: String::new(),
+            home: Team {
+                code: "LG".into(),
+                name: "LG".into(),
+            },
+            away: Team {
+                code: "KT".into(),
+                name: "KT".into(),
+            },
+            home_score: None,
+            away_score: None,
+            away_starter: String::new(),
+            home_starter: String::new(),
+            stadium: String::new(),
+            broadcast: String::new(),
+        }
+    }
+
     #[test]
     fn list_screen_hint_advertises_enter_live_not_esc() {
-        let app = App::new(Default::default());
+        let mut app = App::new(Default::default());
+        app.games = vec![game_with(GameStatus::Live)];
         // Games 탭 힌트 전부(F1/F2/F9/Tab/o/n/Enter/q)가 들어가려면 81칸이 필요하다
         // (assemble_hints가 부가 힌트 중 우선순위가 가장 낮은 "Enter Live"부터
         // 떨어뜨리므로, 80칸 표준폭에서는 의도적으로 생략될 수 있다 — 반응형
@@ -746,6 +794,7 @@ mod tests {
             let mut app = App::new(Default::default());
             app.lang = lang;
             app.games_loaded = true;
+            app.games = vec![game_with(GameStatus::Live)];
             // footer는 한 줄짜리 위젯이라 area를 그대로 주면 첫 행에 그려진다.
             let mut term = Terminal::new(TestBackend::new(80, 1)).unwrap();
             term.draw(|f| render(f, f.area(), &app)).unwrap();
@@ -756,5 +805,82 @@ mod tests {
                 "{lang:?} 80칸 footer에 Enter가 없다: {last:?}"
             );
         }
+    }
+
+    /// **되지도 않는 키를 광고하지 않는다.** 취소·예정 경기에 커서를 두면
+    /// Enter는 아무 일도 하지 않는다(`App::can_enter_live` — 문자중계가 없어
+    /// 영구 "loading"에 갇히는 걸 막는 가드다). 그런데 footer는 계속 "Enter
+    /// 중계"라고 말하고 있어서, 눌러 본 사람은 앱이 먹통이 됐다고 읽는다.
+    #[test]
+    fn the_enter_hint_disappears_on_a_game_that_cannot_be_entered() {
+        for status in [GameStatus::Canceled, GameStatus::Scheduled] {
+            let mut app = App::new(Default::default());
+            app.games_loaded = true;
+            app.games = vec![game_with(status)];
+            let text = render_to_string_with_width(&app, 100);
+            assert!(
+                !text.contains("Enter Live"),
+                "{status:?} 경기인데 Enter를 광고한다: {text:?}"
+            );
+        }
+        for status in [GameStatus::Live, GameStatus::Final, GameStatus::Suspended] {
+            let mut app = App::new(Default::default());
+            app.games_loaded = true;
+            app.games = vec![game_with(status)];
+            let text = render_to_string_with_width(&app, 100);
+            assert!(
+                text.contains("Enter Live"),
+                "{status:?} 경기인데 Enter가 없다: {text:?}"
+            );
+        }
+    }
+
+    fn standing_with_games(games: u16) -> crate::model::Standing {
+        crate::model::Standing {
+            rank: 1,
+            team: Team {
+                code: "LG".into(),
+                name: "LG".into(),
+            },
+            games,
+            wins: 0,
+            losses: 0,
+            draws: 0,
+            win_rate: 0.0,
+            game_behind: 0.0,
+            last_five: String::new(),
+            streak: String::new(),
+            stats: Default::default(),
+        }
+    }
+
+    /// **순위 탭의 Enter(팀 성적)도 안내한다.** v0.24에 들어온 기능인데 footer
+    /// 에도 도움말에도 없어서, README를 읽은 사람만 아는 상태였다.
+    #[test]
+    fn the_standings_tab_advertises_enter_for_team_stats() {
+        let mut app = App::new(Default::default());
+        app.tab = Tab::Standings;
+        // 경기 목록의 취소 경기가 순위 탭 힌트까지 지우면 안 된다.
+        app.games = vec![game_with(GameStatus::Canceled)];
+        app.standings = vec![standing_with_games(90)];
+        let text = render_to_string_with_width(&app, 100);
+        assert!(
+            text.contains("Enter Stats"),
+            "순위 탭 Enter가 없다: {text:?}"
+        );
+    }
+
+    /// 개막 전에는 성적이 전부 0이라 오버레이가 안 열린다(`team_stats_target`).
+    /// 그때는 안내도 하지 않는다 — 거짓 약속을 만들지 않는 같은 규칙이다.
+    #[test]
+    fn the_standings_enter_hint_is_absent_before_any_game_is_played() {
+        let mut app = App::new(Default::default());
+        app.tab = Tab::Standings;
+        app.standings = vec![standing_with_games(0)];
+        let text = render_to_string_with_width(&app, 100);
+        assert!(
+            !text.contains("Enter"),
+            "열리지도 않는 Enter를 광고한다: {text:?}"
+        );
     }
 }

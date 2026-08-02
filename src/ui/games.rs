@@ -104,6 +104,12 @@ const VENUE_COL_WIDTH: usize = 18;
 const WIDTH_FOR_STARTERS: u16 = 84;
 /// 구장 칸까지 켜는 최소 내부 폭.
 const WIDTH_FOR_VENUE: u16 = 103;
+/// 상태 칸을 켜는 최소 내부 폭. 이보다 좁으면 ratatui가 `Length(14)`를 줄여
+/// 칸을 **가운데서 잘라 버린다** — "4시간 55분 후"가 "4시간 5"로 남으면 사라진
+/// 게 아니라 **다른 값으로 읽힌다**(실측: 폭 48~59에서 재현). 선발·구장과 같은
+/// 규칙으로 통째로 뺀다. 상태 자체는 왼쪽 태그 칸(SCHED/LIVE/FINAL)이 계속
+/// 말해주므로 정보가 통째로 사라지지는 않는다.
+const WIDTH_FOR_STATUS: u16 = 58;
 
 pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMap) {
     let l = app.labels();
@@ -129,10 +135,14 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMa
     // 폭 예산(v0.23): 남을 때만 선발 매치업 → 구장 순으로 붙인다. 중계 채널은
     // 종료 경기에서 빈 값이라(실측) 칸을 예약하지 않고 구장 칸에 함께 싣는다.
     let inner = area.width.saturating_sub(2);
+    let show_status = inner >= WIDTH_FOR_STATUS;
     let show_starters = inner >= WIDTH_FOR_STARTERS;
     let show_venue = inner >= WIDTH_FOR_VENUE;
 
-    let mut header_cells = vec!["", l.col_away, l.col_score, l.col_home, l.col_status];
+    let mut header_cells = vec!["", l.col_away, l.col_score, l.col_home];
+    if show_status {
+        header_cells.push(l.col_status);
+    }
     if show_starters {
         header_cells.push(l.col_starters);
     }
@@ -194,8 +204,10 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMa
                     g.home.name.as_str(),
                     team_badge_style(&app.theme_preset, &g.home.code),
                 )),
-                Cell::from(status_cell),
             ];
+            if show_status {
+                cells.push(Cell::from(status_cell));
+            }
             if show_starters {
                 cells.push(Cell::from(super::text::ellipsize(
                     &starters,
@@ -216,8 +228,10 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMa
         Constraint::Min(12),
         Constraint::Length(9),
         Constraint::Min(12),
-        Constraint::Length(STATUS_COL_WIDTH as u16),
     ];
+    if show_status {
+        widths.push(Constraint::Length(STATUS_COL_WIDTH as u16));
+    }
     if show_starters {
         widths.push(Constraint::Length(STARTERS_COL_WIDTH as u16));
     }
@@ -697,6 +711,35 @@ mod tests {
             narrow.contains("SK"),
             "팀명은 어떤 폭에서도 남는다:\n{narrow}"
         );
+    }
+
+    /// **좁아지면 상태 칸을 통째로 뗀다.** ratatui는 `Length(14)`가 모자라면
+    /// 가운데서 자르는데, "4시간 55분 후"가 "4시간 5"로 남으면 사라진 게 아니라
+    /// 다른 값으로 읽힌다(v0.30 실측: 폭 48~59에서 재현). 상태 자체는 왼쪽
+    /// 태그 칸이 계속 말해준다.
+    #[test]
+    fn a_narrow_terminal_drops_the_status_column_instead_of_halving_the_countdown() {
+        let mut app = App::new(Default::default());
+        app.games_loaded = true;
+        let mut g = game("a");
+        g.status = GameStatus::Scheduled;
+        g.start = "2026-08-02T18:00:00".into();
+        // 시작 4시간 55분 전.
+        app.now_secs = 1_785_643_500;
+        app.games = vec![g];
+
+        let wide = render_at(&app, 120, 6);
+        assert!(
+            wide.contains("4h55mtogo"),
+            "넓은데 남은 시간이 안 뜬다:\n{wide}"
+        );
+        for w in 30..WIDTH_FOR_STATUS + 2 {
+            let text = render_at(&app, w, 6);
+            assert!(
+                !text.contains("4h5") || text.contains("4h55mtogo"),
+                "폭 {w}: 남은 시간이 잘린 채 남았다:\n{text}"
+            );
+        }
     }
 
     /// 지정한 폭으로 렌더한 뒤 **공백을 모두 제거한** 문자열을 돌려준다.

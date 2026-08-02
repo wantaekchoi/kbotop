@@ -911,7 +911,23 @@ impl App {
         self.standings
             .iter()
             .find(|s| s.rank == rank)
-            .filter(|s| s.games > 0)
+            .filter(|s| Self::has_team_stats(s))
+    }
+
+    /// 지금 커서가 가리키는 순위 행을 Enter로 열 수 있는가 — footer 힌트가
+    /// 묻는다. 판정은 `team_stats_target`과 같은 술어를 쓴다(경기 전 팀은
+    /// 성적이 전부 0이라 "기록 없음"과 구분되지 않아 열지 않는다).
+    pub fn team_stats_available(&self) -> bool {
+        self.tab == Tab::Standings
+            && matches!(self.screen, Screen::List)
+            && self
+                .standings
+                .get(self.selected)
+                .is_some_and(Self::has_team_stats)
+    }
+
+    fn has_team_stats(s: &crate::model::Standing) -> bool {
+        s.games > 0
     }
 
     /// 그 경기에 대해 받아 둔 이닝들. 없으면 빈 맵을 빌려준다 — 호출부가 매번

@@ -8,11 +8,53 @@ use ratatui::{
     Frame,
 };
 
-/// 최근 5경기 칼럼을 켜는 최소 내부 폭. 고정 칼럼(3+4+4+4+4+6+5=30)에 칸 간격
-/// 7개, 팀명 최소 10칸, 그리고 L5 칼럼(5+간격 1)을 더한 값이다.
-const WIDTH_FOR_LAST_FIVE: u16 = 53;
-/// 연속 칼럼까지 켜는 최소 내부 폭(위 값 + 6 + 간격 1).
-const WIDTH_FOR_STREAK: u16 = 60;
+/// 순위(#) 칸 + 간격 + 팀명 최소폭. 오른쪽 칼럼이 하나도 없을 때의 필요 내부 폭이다.
+const BASE_WIDTH: u16 = 3 + 1 + 10;
+/// 팀 오른쪽 칼럼들의 폭 — 왼쪽이 더 중요하다. 필요 내부 폭은
+/// `BASE_WIDTH + Σ(1 + 칸폭)`이고, 이 식이 주는 L5=53·STRK=60은 v0.23이 손으로
+/// 잡아 둔 상수와 정확히 일치한다(실측 확인).
+const COL_WIDTHS: [u16; 8] = [4, 4, 4, 4, 6, 5, 5, 6];
+
+/// 내부 폭 `inner`에 온전히 들어가는 오른쪽 칼럼 개수. **줄여서 넣지 않는다** —
+/// ratatui는 `Length` 칸이 모자라면 가운데서 잘라 버리는데, 숫자 칸이 잘리면
+/// 값이 사라지는 게 아니라 **다른 값으로 읽힌다**(실측: 폭 39에서 100승이
+/// `10`으로, 12.5경기차가 `12`로 찍혔다). 들어갈 만큼만 왼쪽부터 붙인다.
+fn visible_cols(inner: u16) -> usize {
+    // 딱 맞게 채우지 않고 한 칸을 남긴다 — ratatui의 배치는 `Min(10)` 팀 칸과
+    // 경쟁하는 제약 풀이라 계산상 정확히 들어맞는 폭에서도 마지막 칸이 1 줄어든다
+    // (실측: 내부 폭 41에서 승률이 `0.70`으로 잘렸다).
+    let budget = inner.saturating_sub(1);
+    let mut need = BASE_WIDTH;
+    let mut n = 0;
+    for w in COL_WIDTHS {
+        let next = need + 1 + w;
+        if next > budget {
+            break;
+        }
+        need = next;
+        n += 1;
+    }
+    n
+}
+
+/// 연속 기록을 화면 언어로 옮긴다. 서버는 `continuousGameResult`를 "3승"·"1패"·
+/// "1무"처럼 **한국어로** 주기 때문에, 영어·일본어 화면에서 STRK 칸만 한글로
+/// 남아 있었다(v0.30, 데모 GIF에서 눈에 띄었다). 숫자 + 알려진 접미일 때만
+/// 갈아 끼우고, 형식이 조금이라도 다르면 원문을 그대로 둔다 — 서버 표기가
+/// 바뀌어도 조용히 틀린 값을 만들지 않는 쪽이 낫다(관용 파싱 원칙).
+fn streak_label(l: &super::i18n::Labels, raw: &str) -> String {
+    let digits: String = raw.chars().take_while(char::is_ascii_digit).collect();
+    if digits.is_empty() {
+        return raw.to_string();
+    }
+    let suffix = match &raw[digits.len()..] {
+        "승" => l.streak_win,
+        "패" => l.streak_loss,
+        "무" => l.streak_draw,
+        _ => return raw.to_string(),
+    };
+    format!("{digits}{suffix}")
+}
 
 /// 순위는 --date와 무관한 시즌 "현재" 스냅샷이다(source.standings(year)) —
 /// 과거 날짜를 조회 중이어도 순위만은 오늘 기준임을 타이틀로 밝힌다.
@@ -45,20 +87,26 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMa
         return;
     }
 
-    // 폭 예산(v0.23): 좁아지면 뒤쪽 칼럼부터 뗀다 — 연속(STRK) → 최근5(L5) 순.
-    // 순위·팀·승패는 이 화면의 본체라 어떤 폭에서도 남는다. 임계값은 고정 칼럼
-    // 합계(테두리 2 + 칸 간격 포함)에 팀명 최소폭을 더해 잡았다.
+    // 폭 예산(v0.23): 좁아지면 뒤쪽 칼럼부터 뗀다 — 연속(STRK) → 최근5(L5) →
+    // 경기차(GB) → … 순. 순위·팀은 이 화면의 본체라 어떤 폭에서도 남는다.
     let inner = area.width.saturating_sub(2);
-    let show_last5 = inner >= WIDTH_FOR_LAST_FIVE;
-    let show_streak = inner >= WIDTH_FOR_STREAK;
+    let shown = visible_cols(inner);
 
-    let mut header_cells = vec!["#", l.col_team, "G", "W", "L", "D", "PCT", "GB"];
-    if show_last5 {
-        header_cells.push(l.col_last_five);
-    }
-    if show_streak {
-        header_cells.push(l.col_streak);
-    }
+    let mut header_cells = vec!["#", l.col_team];
+    // COL_WIDTHS와 같은 순서 — 하나를 고치면 다른 하나도 고쳐야 한다.
+    header_cells.extend(
+        [
+            "G",
+            "W",
+            "L",
+            "D",
+            "PCT",
+            "GB",
+            l.col_last_five,
+            l.col_streak,
+        ][..shown]
+            .iter(),
+    );
     let header = Row::new(header_cells);
 
     let rows: Vec<Row> = app
@@ -71,40 +119,24 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMa
                     s.team.name.as_str(),
                     team_badge_style(&app.theme_preset, &s.team.code),
                 )),
-                Cell::from(s.games.to_string()),
-                Cell::from(s.wins.to_string()),
-                Cell::from(s.losses.to_string()),
-                Cell::from(s.draws.to_string()),
-                Cell::from(format!("{:.3}", s.win_rate)),
-                Cell::from(format!("{:.1}", s.game_behind)),
             ];
-            if show_last5 {
-                cells.push(Cell::from(s.last_five.as_str()));
-            }
-            if show_streak {
-                cells.push(Cell::from(s.streak.as_str()));
-            }
+            let values = [
+                s.games.to_string(),
+                s.wins.to_string(),
+                s.losses.to_string(),
+                s.draws.to_string(),
+                format!("{:.3}", s.win_rate),
+                format!("{:.1}", s.game_behind),
+                s.last_five.clone(),
+                streak_label(l, &s.streak),
+            ];
+            cells.extend(values.into_iter().take(shown).map(Cell::from));
             Row::new(cells)
         })
         .collect();
 
-    let mut widths = vec![
-        Constraint::Length(3),
-        Constraint::Min(10),
-        Constraint::Length(4),
-        Constraint::Length(4),
-        Constraint::Length(4),
-        Constraint::Length(4),
-        Constraint::Length(6),
-        Constraint::Length(5),
-    ];
-    if show_last5 {
-        widths.push(Constraint::Length(5));
-    }
-    if show_streak {
-        // 연속 기록은 "10연승"까지 나올 수 있고 한글 2칸이라 6칸을 잡는다.
-        widths.push(Constraint::Length(6));
-    }
+    let mut widths = vec![Constraint::Length(3), Constraint::Min(10)];
+    widths.extend(COL_WIDTHS[..shown].iter().map(|w| Constraint::Length(*w)));
 
     let highlight = match theme::accent_for(
         &app.theme_preset,
@@ -290,6 +322,91 @@ mod tests {
         )]));
         let text = render_at(&app, 100, 6);
         assert!(text.contains("LG"));
+    }
+
+    /// **좁아져도 숫자를 반쯤 잘라 보여주지 않는다.** ratatui는 `Length` 칸이
+    /// 모자라면 가운데서 자르는데, 그러면 100승이 `10`으로, 12.5경기차가 `12`로
+    /// 찍힌다 — 값이 사라지는 게 아니라 **다른 값으로 읽힌다**(v0.30 실측).
+    /// 헤더에 뜬 칸은 어떤 폭에서도 값이 온전해야 한다.
+    #[test]
+    fn a_narrow_terminal_drops_columns_instead_of_halving_the_numbers() {
+        let mut app = crate::app::App::new(Default::default());
+        let mut st = standing_with("KIA", 1, "WWLLD", "3W");
+        st.games = 144;
+        st.wins = 100;
+        st.losses = 42;
+        st.draws = 2;
+        st.win_rate = 0.704;
+        st.game_behind = 12.5;
+        app.apply(Update::Standings(vec![st]));
+
+        let cols = [
+            ("G", "144"),
+            ("W", "100"),
+            ("L", "42"),
+            ("D", "2"),
+            ("PCT", "0.704"),
+            ("GB", "12.5"),
+            ("L5", "WWLLD"),
+            ("STRK", "3W"),
+        ];
+        for w in 20..=140u16 {
+            let text = render_at(&app, w, 6);
+            for (i, (head, value)) in cols.iter().enumerate() {
+                if super::visible_cols(w.saturating_sub(2)) > i {
+                    assert!(
+                        text.contains(value),
+                        "폭 {w}: {head} 칸이 떠 있는데 값 {value}가 온전하지 않다:\n{text}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// **연속 기록도 화면 언어를 따른다.** 서버가 "3승"으로 주는 값이라
+    /// 영어·일본어 화면에서 이 칸만 한글로 남아 있었다(v0.30 데모 GIF에서 발견).
+    #[test]
+    fn the_streak_column_speaks_the_screen_language() {
+        for (lang, expected) in [
+            (crate::ui::i18n::Lang::Ko, "3승"),
+            (crate::ui::i18n::Lang::En, "3W"),
+            (crate::ui::i18n::Lang::Ja, "3勝"),
+        ] {
+            let mut app = crate::app::App::new(Default::default());
+            app.lang = lang;
+            app.apply(Update::Standings(vec![standing_with(
+                "LG", 1, "WWLLD", "3승",
+            )]));
+            let text = render_at(&app, 100, 6);
+            assert!(text.contains(expected), "{lang:?}: {text}");
+        }
+    }
+
+    /// 서버 표기가 우리가 아는 형식이 아니면 **원문을 그대로 둔다** — 모르는
+    /// 것을 아는 척 옮기지 않는다.
+    #[test]
+    fn an_unknown_streak_format_is_left_alone() {
+        let l = &crate::ui::i18n::EN;
+        assert_eq!(super::streak_label(l, "3승"), "3W");
+        assert_eq!(super::streak_label(l, "1패"), "1L");
+        assert_eq!(super::streak_label(l, "2무"), "2D");
+        assert_eq!(super::streak_label(l, "10연승"), "10연승");
+        assert_eq!(super::streak_label(l, "streak"), "streak");
+        assert_eq!(super::streak_label(l, ""), "");
+    }
+
+    /// 임계값을 깎으면 이 테스트가 잡는다 — 폭이 넉넉하면 여덟 칸 다, 좁으면
+    /// 오른쪽부터 사라지고, 어느 폭에서도 늘어나기만 하지 줄지 않는다.
+    #[test]
+    fn columns_appear_left_to_right_as_the_terminal_widens() {
+        let mut prev = 0;
+        for inner in 0..160u16 {
+            let n = super::visible_cols(inner);
+            assert!(n >= prev, "폭 {inner}에서 칸 수가 줄었다: {prev} → {n}");
+            prev = n;
+        }
+        assert_eq!(super::visible_cols(160), 8);
+        assert_eq!(super::visible_cols(14), 0);
     }
 
     fn standing_with(

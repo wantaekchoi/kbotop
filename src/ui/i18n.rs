@@ -115,6 +115,15 @@ pub struct Labels {
     /// 팀 성적 오버레이(v0.24). 라벨 칸은 14칸이라 어느 언어에서도 짧게 둔다.
     pub title_team_stats: &'static str,
     pub team_stats_hint: &'static str,
+    /// 순위 탭 footer의 Enter 힌트(v0.30). 팀 성적 오버레이는 v0.24에 들어왔는데
+    /// footer에도 도움말에도 안 적혀 있어 아는 사람만 쓰는 기능이었다.
+    pub hint_team_stats: &'static str,
+    /// 연속 기록(STRK) 칸의 접미(v0.30). 서버는 "3승"·"1패"·"1무"처럼 **한국어로**
+    /// 준다 — 영어·일본어 화면에서 이 칸만 한글로 남아 있었다. 숫자와 접미를
+    /// 갈라 여기서 갈아 끼운다(형식이 달라지면 원문 그대로 둔다).
+    pub streak_win: &'static str,
+    pub streak_loss: &'static str,
+    pub streak_draw: &'static str,
     pub stats_batting: &'static str,
     pub stats_pitching: &'static str,
     pub stat_avg: &'static str,
@@ -273,6 +282,10 @@ pub const EN: Labels = Labels {
     matchup_pitches: "p",
     title_team_stats: "season stats",
     team_stats_hint: " Esc close ",
+    hint_team_stats: "Stats",
+    streak_win: "W",
+    streak_loss: "L",
+    streak_draw: "D",
     stats_batting: "Batting",
     stats_pitching: "Pitching",
     stat_avg: "AVG",
@@ -317,7 +330,7 @@ pub const EN: Labels = Labels {
     help_lines: [
         "Move       j / k or Up / Down",
         "Top/Bottom gg / G",
-        "Open live  Enter",
+        "Open       Enter (games=relay, standings=stats)",
         "Back       Esc",
         "Switch tab Tab / F5",
         "Pitch      Left / Right (live view)",
@@ -426,6 +439,10 @@ pub const KO: Labels = Labels {
     matchup_pitches: "구",
     title_team_stats: "시즌 성적",
     team_stats_hint: " Esc 닫기 ",
+    hint_team_stats: "성적",
+    streak_win: "승",
+    streak_loss: "패",
+    streak_draw: "무",
     stats_batting: "타격",
     stats_pitching: "투구·수비",
     stat_avg: "타율",
@@ -470,7 +487,7 @@ pub const KO: Labels = Labels {
     help_lines: [
         "이동        j / k 또는 방향키",
         "맨위/맨아래 gg / G",
-        "중계 열기   Enter",
+        "열기        Enter (경기=중계, 순위=성적)",
         "뒤로        Esc",
         "탭 전환     Tab / F5",
         "투구 보기   좌우 방향키 (중계 화면)",
@@ -579,6 +596,10 @@ pub const JA: Labels = Labels {
     matchup_pitches: "球",
     title_team_stats: "シーズン成績",
     team_stats_hint: " Esc 閉じる ",
+    hint_team_stats: "成績",
+    streak_win: "勝",
+    streak_loss: "敗",
+    streak_draw: "分",
     stats_batting: "打撃",
     stats_pitching: "投球·守備",
     stat_avg: "打率",
@@ -623,7 +644,7 @@ pub const JA: Labels = Labels {
     help_lines: [
         "移動        j / k または上下キー",
         "先頭/末尾  gg / G",
-        "中継を開く  Enter",
+        "開く        Enter (試合=中継・順位=成績)",
         "戻る        Esc",
         "タブ切替    Tab / F5",
         "投球確認    Left / Right (中継画面)",
@@ -803,6 +824,10 @@ mod tests {
                 l.matchup_pitches,
                 l.title_team_stats,
                 l.team_stats_hint,
+                l.hint_team_stats,
+                l.streak_win,
+                l.streak_loss,
+                l.streak_draw,
                 l.stats_batting,
                 l.stats_pitching,
                 l.stat_avg,
