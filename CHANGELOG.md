@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-08-03
+
+### Fixed
+- **터미널을 닫았는데 kbotop이 CPU를 100% 먹으며 계속 살아 있던 것을 고쳤습니다.** 터미널 창을 닫거나 SSH 연결이 끊기면 앱이 끝나야 하는데, 대신 코어 하나를 붙잡고 무한히 돌았습니다. 눈에 보이는 창이 없으니 알아채기도 어려웠습니다 — 실제로 6일 넘게 그렇게 돌던 프로세스를 발견해서 찾은 결함입니다. 노트북에 띄워 두는 앱이라 조용히 배터리를 태우고 있었습니다. 이제 어떤 화면에 있든 터미널이 사라지면 2초 안에 정리하고 끝냅니다.
+- **날짜 선택 창(`F2`)에서 `q`가 아무 반응이 없던 것을 고쳤습니다.** 설정·뉴스·기사 창은 모두 `q`로 닫히는데 여기만 빠져 있어, 닫으려던 사람은 창이 멈춘 것처럼 느꼈습니다.
+
 ## [0.35.0] - 2026-08-02
 
 ### Fixed
@@ -377,7 +383,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.35.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.36.0...HEAD
+[0.36.0]: https://github.com/wantaekchoi/kbotop/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/wantaekchoi/kbotop/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/wantaekchoi/kbotop/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/wantaekchoi/kbotop/compare/v0.32.0...v0.33.0

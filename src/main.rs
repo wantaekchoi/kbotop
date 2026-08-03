@@ -2,7 +2,7 @@ use std::io::{self, Stdout};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use clap::Parser;
@@ -302,6 +302,65 @@ fn install_term_signal_handler() -> Result<Arc<AtomicBool>> {
     Ok(Arc::new(AtomicBool::new(false)))
 }
 
+/// 종료 신호를 본 뒤 이만큼 지나도록 프로세스가 살아 있으면 갇힌 것으로 본다.
+/// 정상 종료는 100ms 루프 한 바퀴 + 터미널 복구가 전부라 2초면 넉넉하다.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+
+/// 감시 스레드가 깨어나는 주기.
+const WATCHDOG_TICK: Duration = Duration::from_millis(100);
+
+/// 종료 신호를 본 시각으로부터 `grace`가 지났는가 — 감시 스레드의 유일한 판단을
+/// 시각을 인자로 받는 순수 함수로 떼어 둔다(스레드도 프로세스도 없이 검증되게).
+fn should_force_exit(signaled_at: Option<Instant>, now: Instant, grace: Duration) -> bool {
+    signaled_at.is_some_and(|t| now.duration_since(t) >= grace)
+}
+
+/// **종료 신호를 받고도 메인 루프가 안 끝나면 프로세스를 강제로 끝낸다.**
+///
+/// crossterm 0.29의 unix 이벤트 소스에는 tty가 EOF에 닿으면 빠져나오지 못하는
+/// 루프가 있다(`src/event/source/unix/mio.rs`의 `TTY_TOKEN` 분기):
+/// `read()`가 `Ok(0)`을 주면 `read_count > 0`이 아니라 파서를 전진시키지 않는데,
+/// `break`도 `return`도 하지 않아 같은 `read()`를 그대로 다시 부른다.
+/// `WouldBlock`·`Interrupted`가 아닌 에러(터미널이 사라진 뒤의 `EIO` 등)도
+/// 마찬가지로 삼켜서 결과가 같다. 그 안에 들어가면 `event::poll`도
+/// `event::read`도 영영 돌아오지 않는다 — 둘 다 이 함수를 지난다.
+///
+/// 터미널이 사라지면(창을 닫거나 SSH가 끊기면) 커널이 SIGHUP을 보내고
+/// [`install_term_signal_handler`]가 건 핸들러가 플래그를 세우지만, 메인
+/// 스레드가 저 루프에 갇혀 있으면 **run()으로 제어가 돌아오지 않아 플래그를
+/// 볼 기회 자체가 없다.** 실측(2026-08-03): 그 상태로 CPU 코어 하나를 100%
+/// 물고 6일 넘게 돌던 프로세스 두 개를 발견했다. 노트북에 띄워 두는 앱이라
+/// (v0.33 유휴 렌더 게이트가 겨냥한 바로 그 사용 방식) 이건 조용히 배터리를
+/// 태우는 결함이다.
+///
+/// 그래서 판정을 **메인 스레드 밖**에 둔다. 여기서 신호를 보고 유예 시간이
+/// 지나도록 프로세스가 살아 있으면 터미널을 되돌리고 끝낸다. 정상 종료가
+/// 먼저 이기면 프로세스와 함께 이 스레드도 사라지므로 아무 일도 일어나지 않는다.
+///
+/// 업스트림(crossterm)에 고쳐지면 이 스레드는 없어도 되지만, 그때까지는
+/// 라이브러리 안쪽 루프를 우리가 깰 방법이 이것뿐이다.
+fn spawn_shutdown_watchdog(flag: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        let mut signaled_at: Option<Instant> = None;
+        loop {
+            std::thread::sleep(WATCHDOG_TICK);
+            if signaled_at.is_none() && flag.load(Ordering::Relaxed) {
+                signaled_at = Some(Instant::now());
+            }
+            if should_force_exit(signaled_at, Instant::now(), SHUTDOWN_GRACE) {
+                // 터미널이 아직 살아 있다면(SIGTERM 등) 되돌려 놓고 나간다.
+                // 이미 사라졌다면 이 쓰기들은 조용히 실패할 뿐이라 무해하다.
+                let _ = disable_raw_mode();
+                let _ = execute!(io::stdout(), DisableMouseCapture);
+                let _ = execute!(io::stdout(), LeaveAlternateScreen);
+                let _ = execute!(io::stdout(), crossterm::cursor::Show);
+                // 정상 경로도 신호를 받으면 Ok(())로 끝나므로 종료 코드를 맞춘다.
+                std::process::exit(0);
+            }
+        }
+    });
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let (cfg, config_error) = config::load();
@@ -367,6 +426,8 @@ fn main() -> Result<()> {
     // raw mode 진입 전에 등록해야, 등록 직후~raw mode 진입 사이의 좁은 창에서
     // 신호가 와도 놓치지 않는다.
     let term_signal = install_term_signal_handler()?;
+    // 메인 루프가 라이브러리 안쪽 루프에 갇혀 신호를 못 보는 경우의 최후 방어.
+    spawn_shutdown_watchdog(Arc::clone(&term_signal));
 
     let mut term = init_terminal()?;
 
@@ -698,6 +759,49 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 감시 스레드는 **신호를 보기 전에는 절대 프로세스를 끝내지 않는다.**
+    /// 이게 깨지면 멀쩡히 돌던 앱이 2초 만에 혼자 죽는다.
+    #[test]
+    fn the_watchdog_stays_quiet_until_a_signal_arrives() {
+        let now = Instant::now();
+        assert!(!should_force_exit(None, now, SHUTDOWN_GRACE));
+        assert!(!should_force_exit(
+            None,
+            now + Duration::from_secs(3600),
+            SHUTDOWN_GRACE
+        ));
+    }
+
+    /// 신호를 봤어도 **유예 시간 안에는 기다린다** — 정상 종료 경로가 이길
+    /// 기회를 줘야 터미널 복구·폴러 정리가 제 순서대로 끝난다.
+    #[test]
+    fn the_watchdog_gives_the_normal_shutdown_path_its_grace_period() {
+        let signaled = Instant::now();
+        assert!(!should_force_exit(Some(signaled), signaled, SHUTDOWN_GRACE));
+        assert!(!should_force_exit(
+            Some(signaled),
+            signaled + SHUTDOWN_GRACE - Duration::from_millis(1),
+            SHUTDOWN_GRACE
+        ));
+    }
+
+    /// 유예가 지나도 살아 있으면 강제 종료한다 — crossterm의 EOF 루프에 갇혀
+    /// 100% CPU로 도는 상태를 끊는 유일한 수단이다(2026-08-03 실측 결함).
+    #[test]
+    fn the_watchdog_fires_once_the_grace_period_has_passed() {
+        let signaled = Instant::now();
+        assert!(should_force_exit(
+            Some(signaled),
+            signaled + SHUTDOWN_GRACE,
+            SHUTDOWN_GRACE
+        ));
+        assert!(should_force_exit(
+            Some(signaled),
+            signaled + SHUTDOWN_GRACE + Duration::from_secs(10),
+            SHUTDOWN_GRACE
+        ));
+    }
 
     /// 큰 오프셋은 패닉하거나 엉뚱한 날짜를 만들지 않고 **거절**한다.
     /// 디버그 빌드는 `attempt to add with overflow`로 죽었고, 릴리스는

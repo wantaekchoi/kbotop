@@ -22,7 +22,7 @@ Set Padding 24
 Set TypingSpeed 55ms
 
 Hide
-Type "HOME=$(mktemp -d) kbotop --date 2026-07-29 --team ssg --lang en"
+Type "HOME=$(mktemp -d) kbotop --date 2026-07-25 --team nc --lang en"
 Enter
 Show
 
@@ -36,6 +36,8 @@ Sleep 1500ms
 
 # rewind (v0.18): `[` steps back through past at-bats — the play-by-play, zone and
 # side view follow. The relay response already carried this; we used to discard it.
+Type "["
+Sleep 700ms
 Type "["
 Sleep 700ms
 Type "["
