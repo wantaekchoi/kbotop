@@ -623,7 +623,10 @@ impl App {
         });
         let Some(opt) = &mut self.options else { return };
         match key {
-            KeyCode::Esc | KeyCode::F(2) => self.options = None,
+            // 다른 오버레이(Settings·Article·NewsList)는 전부 'q'도 닫는 키로
+            // 받는다 — 여기만 빠져 있었다(2026-08-03 실사용 중 발견). 'q'가
+            // 아무 반응이 없으면 사용자는 종료하려다 갇힌 줄 안다.
+            KeyCode::Esc | KeyCode::F(2) | KeyCode::Char('q') => self.options = None,
             KeyCode::Down | KeyCode::Char('j') => {
                 if let Some(len) = len {
                     if len > 0 && opt.cursor + 1 < len {
@@ -2749,6 +2752,18 @@ mod tests {
         app.on_key(KeyCode::Esc);
         assert!(app.options.is_none());
         assert_eq!(app.date, "2026-07-23"); // 무변경
+    }
+
+    /// 2026-08-03 실사용 중 발견: Settings·Article·NewsList는 전부 'q'로도
+    /// 닫히는데 Options만 빠져 있었다 — 열어 둔 채 'q'를 눌러도 아무 일도
+    /// 안 일어나 사용자가 종료 못 하고 갇힌 것처럼 보였다.
+    #[test]
+    fn q_closes_the_options_overlay_like_every_other_overlay() {
+        let mut app = App::new(Default::default());
+        app.on_key(KeyCode::F(2));
+        assert!(app.options.is_some());
+        app.on_key(KeyCode::Char('q'));
+        assert!(app.options.is_none(), "'q'가 Options 오버레이를 안 닫는다");
     }
 
     /// 오버레이가 열려 있으면 하위 화면 키(Tab/j/k 등)를 소비한다.
