@@ -382,3 +382,83 @@ fn the_finished_game_interval_is_a_whole_number_of_minutes() {
         "README가 '5분'처럼 분으로 적는다 — 분으로 안 떨어지면 문서를 초로 고쳐야 한다"
     );
 }
+
+/// **1.0 버전 정책 절이 약속의 대상을 실제로 다 적고 있는지** 본다.
+///
+/// 이 절은 플래그 다섯 개를 이름으로 나열한다. 그런데 위의
+/// `every_cli_flag_appears_in_both_readmes`는 "문서 어딘가에 있나"만 보고,
+/// 사용법 코드블록이 이미 다섯 개를 다 담고 있어 **항상 통과한다** — 여섯 번째
+/// 플래그가 생겨도 이 문단만 조용히 낡는다. 약속을 적은 문장은 약속의 대상과
+/// 같이 늙어야 하므로 clap에게 직접 물어 그 줄과 대조한다.
+///
+/// `line_starting_with`가 절이 통째로 사라진 경우도 잡는다(문단이 없으면 panic).
+/// 두 판의 절 개수를 세는 `both_readmes_have_the_same_section_count`는 한쪽이
+/// 이 절을 잃고 다른 절을 얻으면 못 잡는다.
+#[test]
+fn the_versioning_section_names_every_flag_it_promises() {
+    use clap::CommandFactory;
+    let flags: Vec<String> = kbotop::cli::Cli::command()
+        .get_arguments()
+        .filter_map(|a| a.get_long())
+        .filter(|n| *n != "help" && *n != "version")
+        .map(|n| format!("`--{n}`"))
+        .collect();
+
+    for (name, doc, marker) in [
+        ("README.md", README_KO, "1.0부터 CLI 플래그"),
+        ("README.en.md", README_EN, "From 1.0 on, the CLI flags"),
+    ] {
+        let line = line_starting_with(doc, marker);
+        for flag in &flags {
+            assert!(
+                line.contains(flag.as_str()),
+                "{name}의 버전 정책 절이 {flag}를 안 적었다 — 플래그를 늘리면 약속 문장도 같이 고칠 것"
+            );
+        }
+    }
+}
+
+/// README가 설정 예시로 보여 주는 `config.toml`이 **실제로 열리는 파일인지** 본다.
+///
+/// 1.0은 "이 키들은 유지된다"고 약속하는데, 그 대상이 문서에 적혀 있지 않으면
+/// 약속의 절반만 공개한 셈이다. 그래서 v1.0.0에서 키 전체를 README에 실었고,
+/// 실은 이상 그 예시가 낡지 않는지도 검사해야 한다 — 예시가 죽은 키를 광고하면
+/// 약속을 어긴 것과 같아진다.
+#[test]
+fn the_documented_config_example_still_loads() {
+    for (name, doc) in [("README.md", README_KO), ("README.en.md", README_EN)] {
+        let block = toml_block_containing(doc, "favorite_team")
+            .unwrap_or_else(|| panic!("{name}에 설정 예시 toml 블록이 없다"));
+        let cfg: kbotop::config::Config = toml::from_str(&block)
+            .unwrap_or_else(|e| panic!("{name}의 설정 예시가 안 열린다: {e}\n{block}"));
+
+        // 값까지 대조한다 — 파싱만 보면 `#[serde(default)]`가 오타 난 키를
+        // 조용히 기본값으로 덮어 통과시킨다.
+        assert_eq!(cfg.favorite_team.as_deref(), Some("lg"), "{name}");
+        assert_eq!(cfg.poll_secs, 5, "{name}");
+        assert_eq!(cfg.lang.as_deref(), Some("ko"), "{name}");
+        assert_eq!(cfg.timezone.as_deref(), Some("auto"), "{name}");
+        assert!(!cfg.mouse, "{name}");
+        assert_eq!(cfg.theme.preset, "default", "{name}");
+        assert_eq!(cfg.theme.accent, "#ff6600", "{name}");
+    }
+}
+
+/// 주어진 낱말을 담은 ```toml 코드블록을 꺼낸다(주석은 그대로 둔다 — toml이 읽는다).
+fn toml_block_containing(doc: &str, needle: &str) -> Option<String> {
+    let mut block: Option<Vec<&str>> = None;
+    for line in doc.lines() {
+        match (&mut block, line.trim_start()) {
+            (None, "```toml") => block = Some(Vec::new()),
+            (Some(acc), "```") => {
+                if acc.iter().any(|l| l.contains(needle)) {
+                    return Some(acc.join("\n"));
+                }
+                block = None;
+            }
+            (Some(acc), _) => acc.push(line),
+            _ => {}
+        }
+    }
+    None
+}

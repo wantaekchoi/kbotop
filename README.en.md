@@ -85,10 +85,18 @@ Changes made in `F9` save right away. The file lives at `$XDG_CONFIG_HOME/kbotop
 A theme is a preset (`default` · `high-contrast` · `mono`) plus an accent color.
 
 ```toml
+favorite_team = "lg"     # team alias, same values as --team
+poll_secs = 5            # live refresh interval, in seconds
+lang = "ko"              # ko · en · ja
+timezone = "auto"        # auto · kst · an offset like +09:00
+mouse = false            # click and wheel (while on, the terminal loses drag-to-select)
+
 [theme]
-preset = "default"
-accent = "#ff6600"   # team · none · cyan/green/yellow/magenta/blue/red · #rrggbb
+preset = "default"       # default · high-contrast · mono
+accent = "#ff6600"       # team · none · cyan/green/yellow/magenta/blue/red · #rrggbb
 ```
+
+Missing keys fall back to their defaults, so a file written by an older version still opens.
 
 `mono` uses no color at all, so it stays readable on monochrome terminals.
 
@@ -99,6 +107,12 @@ A fan-made, unofficial tool. Data comes from Naver Sports' public (unofficial) e
 News comes from each publisher's RSS feed: the headline and a short excerpt only. Follow the link for the full article.
 
 Running in Korean fetches a list of tip strings from this repository once at startup (they appear in the bottom ticker). If that fails, the built-in list is used. Other languages do not make the request.
+
+## Versioning
+
+From 1.0 on, the CLI flags (`--team`, `--date`, `--lang`, `--tz`, `--license`) and the `config.toml` keys listed under Configuration are stable. Removing or renaming one waits for 2.0. The keys in the table above and in the in-app help (`?`) also keep doing what they do. New ones may be added, but the existing ones will not change meaning.
+
+Screen layout, colors, wording, and the data source are outside this promise. Data comes from Naver Sports alone with no fallback, so if that path closes, nothing new arrives.
 
 ## License
 

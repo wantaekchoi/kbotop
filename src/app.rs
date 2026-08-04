@@ -1977,6 +1977,24 @@ mod tests {
         assert!(!app.show_help);
     }
 
+    /// `F1`의 두 별칭(`?`·`h`)도 도움말을 연다.
+    ///
+    /// **`h`는 문서 어디에도 없다** — README 키 표에도, 앱 도움말 목록에도 없어서
+    /// 1.0 버전 정책이 약속하는 범위 밖이다(약속은 "키 표와 앱 도움말에 있는 키"까지).
+    /// 그런데도 코드에는 살아 있어, v1.0.0 리뷰 전까지 **저장소 전체에서 이 키를
+    /// 언급하는 곳이 `on_key`의 그 줄 하나뿐이었다** — 지워도 이름을 바꿔도 아무
+    /// 테스트가 안 울렸다. 약속 밖이라고 검사까지 없어도 되는 건 아니라서 여기서 막는다.
+    /// (`h`를 vim식 좌측 이동으로 옮기고 싶어지면 그때는 이 테스트가 그 결정을
+    /// 의식적으로 만든다 — 조용히 깨지는 대신.)
+    #[test]
+    fn question_mark_and_h_open_help_just_like_f1() {
+        for key in [KeyCode::Char('?'), KeyCode::Char('h')] {
+            let mut app = App::new(Default::default());
+            app.on_key(key);
+            assert!(app.show_help, "{key:?}로 도움말이 안 열렸다");
+        }
+    }
+
     #[test]
     fn f10_quits() {
         let mut app = App::new(Default::default());

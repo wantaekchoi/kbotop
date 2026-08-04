@@ -1,9 +1,10 @@
-# kbotop demo — v0.36: 터미널이 끊기면 앱이 끝난다(100% CPU 스핀 수정). 화면 변화가 아니라 tape엔 안 담긴다.
+# kbotop demo — v1.0.0: 화면 변화 없음(버전 정책 문서화만). 팀 로테이션만 갱신.
+# v0.36: 터미널이 끊기면 앱이 끝난다(100% CPU 스핀 수정). 화면 변화가 아니라 tape엔 안 담긴다.
 # v0.33: 유휴 시 다시 그리지 않는다, 구속 범례가 안 갈린다. VHS는 마우스를 못 보내므로 GIF에는 키 조작만 담긴다.
 # v0.26: 라이브 화면 아래 '이 대결' 블록(타자·투수 당일 기록 + 통산 상대 전적).
 # v0.20: 지난 이닝까지 되감기([ 로 이닝 경계 넘기), 문자중계↔투구 연동(j/k),
 # 인앱 뉴스 목록 읽기(n), 인앱 설정(S)·테마 프리셋(mono=무채)·언어 전환, 브래킷 탭.
-# (2026-07-25 NC vs SSG, 마지막 이닝 타석 6개 — scripts/demo-team.py로 고름)
+# (2026-07-21 한화 vs KIA, 마지막 이닝 타석 5개 — 라운드로빈 다음 팀 KIA)
 # record with: vhs docs/demo.tape  (needs `kbotop` on PATH: cargo install --path .)
 # 설정 자동저장이 실제 config를 안 건드리도록 임시 HOME으로 격리해 실행한다
 # (macOS는 directories 크레이트가 $HOME/Library/Application Support를 쓴다).
@@ -20,7 +21,7 @@ Set Padding 24
 Set TypingSpeed 55ms
 
 Hide
-Type "HOME=$(mktemp -d) kbotop --date 2026-07-25 --team nc --lang ko"
+Type "HOME=$(mktemp -d) kbotop --date 2026-07-21 --team kia --lang ko"
 Enter
 Show
 
@@ -42,11 +43,9 @@ Type "["
 Sleep 700ms
 Type "["
 Sleep 700ms
-Type "["
-Sleep 700ms
 Sleep 800ms
 
-# v0.20~: 그 이닝(타석 6개)의 첫 타석에서 한 번 더 누르면 앞 이닝을 받아온다
+# v0.20~: 그 이닝(타석 5개)의 첫 타석에서 한 번 더 누르면 앞 이닝을 받아온다
 # — "8회 불러오는 중"이 잠깐 뜨고, 이어서 8회 타석이 목록 앞에 붙는다
 Type "["
 Sleep 2600ms

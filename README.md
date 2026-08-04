@@ -85,10 +85,18 @@ kbotop --license          # 정적 링크된 오픈소스 고지
 테마는 프리셋(`default` · `high-contrast` · `mono`)에 강조색을 얹습니다.
 
 ```toml
+favorite_team = "lg"     # 응원 팀 별칭 (--team과 같은 값)
+poll_secs = 5            # 라이브 갱신 주기(초)
+lang = "ko"              # ko · en · ja
+timezone = "auto"        # auto · kst · +09:00 류 오프셋
+mouse = false            # 클릭·휠 (켜면 터미널 드래그 선택을 가져갑니다)
+
 [theme]
-preset = "default"
-accent = "#ff6600"   # team · none · cyan/green/yellow/magenta/blue/red · #rrggbb
+preset = "default"       # default · high-contrast · mono
+accent = "#ff6600"       # team · none · cyan/green/yellow/magenta/blue/red · #rrggbb
 ```
+
+없는 키는 기본값으로 채우므로, 예전 버전이 쓴 파일도 그대로 열립니다.
 
 `mono`는 색을 아예 쓰지 않아 흑백 터미널에서도 읽힙니다.
 
@@ -99,6 +107,12 @@ accent = "#ff6600"   # team · none · cyan/green/yellow/magenta/blue/red · #rr
 뉴스는 언론사 RSS에서 헤드라인과 짧은 발췌만 받고, 본문은 원문 링크로 넘깁니다.
 
 한국어로 실행하면 시작할 때 이 저장소에서 팁 문구 목록을 한 번 받아옵니다(하단 티커에 쓰입니다). 실패하면 앱에 내장된 목록을 씁니다. 다른 언어에서는 요청하지 않습니다.
+
+## 버전 정책
+
+1.0부터 CLI 플래그(`--team`·`--date`·`--lang`·`--tz`·`--license`)와 "설정"에 적어 둔 `config.toml` 키는 유지됩니다 — 없애거나 이름을 바꾸는 건 2.0에서만 합니다. 키 표와 앱 도움말(`?`)에 있는 키도 하던 일을 계속합니다. 새 키가 더해질 수는 있지만 이미 있는 키의 뜻을 바꾸지는 않습니다.
+
+화면 구성·색·문구, 그리고 데이터 출처는 이 약속 밖입니다. 데이터는 네이버 스포츠 한 곳에서만 오고 대체 경로가 없어서, 그쪽이 막히면 새 값이 들어오지 않습니다.
 
 ## 라이선스
 

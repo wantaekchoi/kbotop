@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-04
+
+**동작은 하나도 바뀌지 않았습니다.** 버전만 1.0이 되었고, 그동안 지켜 온 것을 앞으로도 지키겠다고 문서에 적었습니다.
+
+### Added
+- **버전 정책을 README에 명시했습니다.** CLI 플래그(`--team`·`--date`·`--lang`·`--tz`·`--license`)와 `config.toml` 키는 1.0부터 유지되며, 제거나 이름 변경은 2.0에서만 합니다. 키 표와 앱 도움말에 있는 키도 하던 일을 계속합니다. 새로 만든 약속이 아니라 `tests/public_interface.rs`가 v0.32부터 봉인해 오던 것을 공개 문서로 옮긴 것입니다.
+- **설정 파일의 키를 README에 전부 적었습니다.** 그동안 예시에 `[theme]`만 있었는데, 약속의 대상인 나머지 키(`favorite_team`·`poll_secs`·`lang`·`timezone`·`mouse`)도 기본값·허용값과 함께 실었습니다.
+- 화면 구성·색·문구, 그리고 **데이터 출처는 이 약속 밖**이라는 것도 함께 적었습니다. 데이터는 네이버 스포츠 한 곳에서만 오고 대체 경로가 없어, 그쪽이 막히면 새 값이 들어오지 않습니다. 자동 전환은 1.0 이후 과제로 남겼습니다.
+
 ## [0.36.0] - 2026-08-03
 
 ### Fixed
@@ -383,7 +392,8 @@
 ### Added
 - 첫 공개 릴리스 — 터미널에서 KBO 프로야구를 보는 라이브 TUI. 오늘 경기 목록·순위·라이브 스코어보드·문자중계·스트라이크존 투구 시각화. 네이버 스포츠 데이터, API 키 불필요, 단일 정적 바이너리. cargo/Homebrew/curl 설치.
 
-[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/wantaekchoi/kbotop/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/wantaekchoi/kbotop/compare/v0.36.0...v1.0.0
 [0.36.0]: https://github.com/wantaekchoi/kbotop/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/wantaekchoi/kbotop/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/wantaekchoi/kbotop/compare/v0.33.0...v0.34.0

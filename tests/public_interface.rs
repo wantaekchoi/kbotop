@@ -87,6 +87,28 @@ fn an_older_config_file_still_opens_with_defaults_for_what_it_lacks() {
     assert_eq!(cfg.theme.preset, Config::default().theme.preset);
 }
 
+/// **`[theme]`를 반만 적은 파일도 열린다.** 위 테스트는 `[theme]`가 통째로 없는
+/// 경우만 보는데, 손으로 쓴 파일은 `preset`만 적고 `accent`는 안 적기 쉽다
+/// (README 예시가 두 줄이라 한 줄만 베끼면 그렇게 된다). `ThemeConfig`의
+/// `#[serde(default)]`가 빠지면 그 순간 파일 **전체**가 거절되어 응원 팀·언어까지
+/// 함께 날아가는데, 이 경우를 아무도 역직렬화하지 않아 테스트는 전부 초록이었다.
+#[test]
+fn a_half_written_theme_table_does_not_throw_away_the_rest_of_the_file() {
+    let cfg: Config = toml::from_str("favorite_team = \"lg\"\n[theme]\npreset = \"mono\"\n")
+        .expect("accent가 없다고 설정 파일 전체를 거절했다");
+    assert_eq!(cfg.theme.preset, "mono", "적어 둔 preset은 살아야 한다");
+    assert_eq!(
+        cfg.theme.accent,
+        Config::default().theme.accent,
+        "안 적은 accent만 기본값으로"
+    );
+    assert_eq!(
+        cfg.favorite_team.as_deref(),
+        Some("lg"),
+        "[theme] 때문에 나머지가 날아가면 안 된다"
+    );
+}
+
 /// 손가락이 외운 키들. 화면별로 **무엇이 일어나야 하는지**까지 본다 —
 /// "키가 존재한다"만 보면 동작이 바뀐 걸 못 잡는다.
 #[test]
