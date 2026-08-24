@@ -61,6 +61,20 @@ fn detect_lang(
     })
 }
 
+/// POSIX 로케일 사슬에서 언어 힌트를 고른다: `LC_ALL` > `LC_MESSAGES` > `LANG`.
+///
+/// 가운데가 빠져 있었다 — `LC_MESSAGES`만 지정한 사람은 조용히 영어를 봤다.
+/// 빈 값은 "설정 안 됨"이다(POSIX): `LC_ALL= LANG=ko_KR.UTF-8 kbotop`은 흔한
+/// 형태인데, 빈 문자열을 그대로 받으면 뒤 단계를 가려 버린다.
+///
+/// env 접근을 인자로 받아 순수 함수로 둔다 — 테스트가 프로세스 전역 환경변수를
+/// 건드리면 병렬로 도는 다른 테스트까지 흔든다.
+fn locale_from(get: impl Fn(&str) -> Option<String>) -> Option<String> {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .into_iter()
+        .find_map(|key| get(key).filter(|v| !v.is_empty()))
+}
+
 /// 팀 별칭 → KBO 내부 코드.
 fn team_code(alias: &str) -> Option<&'static str> {
     Some(match alias.to_lowercase().as_str() {
@@ -412,9 +426,7 @@ fn main() -> Result<()> {
             std::process::exit(2);
         }
     }
-    let env_lang = std::env::var("LC_ALL")
-        .ok()
-        .or_else(|| std::env::var("LANG").ok());
+    let env_lang = locale_from(|k| std::env::var(k).ok());
     let lang = match detect_lang(
         cli.lang.as_deref(),
         cfg.lang.as_deref(),
@@ -1026,6 +1038,54 @@ mod tests {
         // 부호 뒤에 숫자가 아닌 문자 — 마찬가지로 fall through.
         assert!(resolve_date("+abc", today).is_err());
         assert!(resolve_date("-abc", today).is_err());
+    }
+
+    /// POSIX 사슬은 `LC_ALL` > `LC_MESSAGES` > `LANG`이다. 가운데가 빠져 있어
+    /// `LC_MESSAGES=ko_KR.UTF-8 LANG=en_US.UTF-8`로 띄우면 영어가 나왔다.
+    #[test]
+    fn the_locale_chain_puts_lc_messages_between_lc_all_and_lang() {
+        // 설정된 변수만 Some을 돌려준다 — 안 그러면 항상 LC_ALL이 이긴다.
+        let env = |set: &'static [(&'static str, &'static str)]| {
+            move |key: &str| {
+                set.iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| v.to_string())
+            }
+        };
+        assert_eq!(
+            locale_from(env(&[("LC_MESSAGES", "ko"), ("LANG", "en")])).as_deref(),
+            Some("ko"),
+            "LC_MESSAGES가 LANG을 이겨야 한다"
+        );
+        assert_eq!(
+            locale_from(env(&[
+                ("LC_ALL", "ko"),
+                ("LC_MESSAGES", "en"),
+                ("LANG", "en")
+            ]))
+            .as_deref(),
+            Some("ko"),
+            "LC_ALL이 가장 세다"
+        );
+        assert_eq!(
+            locale_from(env(&[("LANG", "en")])).as_deref(),
+            Some("en"),
+            "둘 다 없으면 LANG"
+        );
+    }
+
+    /// 빈 값은 "설정 안 됨"이다(POSIX). `LC_ALL= LANG=ko_KR.UTF-8`은 흔한
+    /// 형태인데, 빈 문자열을 그대로 받으면 뒤 단계를 가린다.
+    #[test]
+    fn an_empty_locale_variable_does_not_shadow_the_next_one() {
+        let get = |key: &str| {
+            Some(match key {
+                "LC_ALL" | "LC_MESSAGES" => String::new(),
+                _ => "ko_KR.UTF-8".to_string(),
+            })
+        };
+        assert_eq!(locale_from(get).as_deref(), Some("ko_KR.UTF-8"));
+        assert_eq!(locale_from(|_| None), None);
     }
 
     #[test]
