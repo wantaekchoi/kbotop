@@ -283,6 +283,14 @@ pub struct App {
     /// 마우스를 쓸지(config `mouse`, F9에서 토글). main이 매 프레임 보고 캡처를
     /// 켜고 끈다 — 끈 즉시 터미널이 드래그 선택을 되찾아야 하기 때문이다.
     pub mouse: bool,
+    /// F9에서 바꾼 설정을 되쓸 파일. **`None`이면 아무것도 저장하지 않는다.**
+    ///
+    /// 실제 XDG 경로를 아는 자리는 `main` 하나뿐이다. 예전에는 `persist()`가
+    /// `Config::save()`로 경로를 스스로 정했는데, 그러면 F9 키 처리를 부르는
+    /// **테스트가 개발자의 진짜 `config.toml`을 덮어썼다**(실측: `cargo test
+    /// settings_changes_team` 한 번에 favorite_team·lang이 갈렸다). 기본값이
+    /// "저장할 곳 없음"이면 새 테스트가 무엇을 누르든 사용자 파일에 닿지 못한다.
+    pub config_path: Option<std::path::PathBuf>,
 }
 
 /// `--team`이 들어갈 경기를 고른다.
@@ -347,6 +355,8 @@ impl App {
             theme_preset: "default".into(),
             theme_accent: "team".into(),
             mouse,
+            // 저장 대상은 main이 주입한다(위 필드 주석 참고).
+            config_path: None,
         }
     }
 
@@ -1188,7 +1198,11 @@ impl App {
                 accent: self.theme_accent.clone(),
             },
         };
-        let ok = cfg.save().is_ok();
+        // 저장할 곳을 아무도 주지 않았으면(테스트) 쓰지 않는다 — 실패도 아니다.
+        let Some(path) = self.config_path.clone() else {
+            return;
+        };
+        let ok = cfg.save_to(&path).is_ok();
         if let Some(st) = &mut self.settings {
             st.save_failed = !ok;
         }

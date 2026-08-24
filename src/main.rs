@@ -471,6 +471,9 @@ fn main() -> Result<()> {
 
     let mut app = App::new(cfg);
     app.config_error = config_error;
+    // 실제 설정 파일 경로를 아는 자리는 여기 하나다 — App은 주입받은 곳에만
+    // 쓴다(테스트는 주입하지 않으므로 사용자 파일에 닿을 수 없다).
+    app.config_path = config::config_path();
     // 표시 시간대는 프로세스 시작 시 1회만 정한다(매 프레임 파일 I/O 금지).
     // CLI > config > TZ > /etc/localtime > KST 순서는 localtime::resolve가 담당.
     app.tz = kbotop::localtime::resolve(

@@ -272,23 +272,22 @@ fn write_config(path: &Path, cfg: &Config) -> std::io::Result<()> {
 }
 
 impl Config {
-    /// XDG 경로에 원자적으로 저장한다(락파일로 직렬화 + 임시파일 → rename).
+    /// 주어진 경로에 원자적으로 저장한다(락파일로 직렬화 + 임시파일 → rename).
     /// 디렉터리·파일을 못 쓰거나(권한 등), 기존 파일이 파싱 불가하거나,
     /// 락을 못 잡으면 Err를 돌려주되 호출부(설정 화면)가 조용히 저하한다 —
-    /// 앱은 죽지 않는다. 실제 경로는 여기서 고정하고, 테스트 가능한 코어는
-    /// save_to에 둔다(경로 주입).
-    pub fn save(&self) -> std::io::Result<()> {
-        let path = config_path().ok_or_else(|| std::io::Error::other("no config dir"))?;
-        self.save_to(&path)
-    }
-
-    /// 경로를 주입 가능한 저장 코어. 실 XDG config를 건드리지 않고 락·저장
-    /// 로직을 테스트하기 위해 save()에서 분리했다.
+    /// 앱은 죽지 않는다.
+    ///
+    /// **경로를 스스로 정하지 않는다.** 예전에는 여기서 `config_path()`를 불러
+    /// XDG 경로로 가는 `save()`가 함께 있었는데, F9 키 처리를 부르는 테스트가
+    /// 그대로 그 경로를 타 **개발자의 진짜 `config.toml`을 덮어썼다**(실측:
+    /// `cargo test settings_changes_team` 한 번으로 favorite_team이 갈렸다).
+    /// 실제 경로를 아는 자리는 이제 `main`뿐이고(`App::config_path` 주입),
+    /// 아무도 주입하지 않은 App은 저장할 곳이 없어 파일을 만들 수 없다.
     ///
     /// 락 파일(`<path>.lock`)을 먼저 잡아 저장을 직렬화한다. 락은 RAII
     /// 가드(SaveLock)로 관리되어, write_config가 `?`로 조기반환하든
     /// 정상적으로 끝나든 이 함수를 벗어날 때 항상 제거된다.
-    fn save_to(&self, path: &Path) -> std::io::Result<()> {
+    pub(crate) fn save_to(&self, path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
