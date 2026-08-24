@@ -70,6 +70,27 @@ fn we_do_not_add_short_flags_without_noticing() {
     );
 }
 
+/// **`--help`는 터미널에 그대로 찍히는 글이다** — 마크다운도, 내부 메모도 아니다.
+///
+/// `--license` 항목만 `///` 두 번째 문단에 한국어 설계 메모를 달고 있었고,
+/// clap은 그 문단부터를 long help 본문으로 쓴다. 그래서 `**바이너리만 갖고…**`와
+/// 백틱이 리터럴 그대로 찍혔고, 영어뿐인 도움말에 그 항목만 한국어였다.
+#[test]
+fn the_long_help_has_no_literal_markdown_left_in_it() {
+    use clap::CommandFactory;
+    let help = kbotop::cli::Cli::command().render_long_help().to_string();
+    for marker in ["**", "`"] {
+        assert!(
+            !help.contains(marker),
+            "--help에 마크다운 {marker}가 그대로 찍힌다 — 그 문단은 `//`로 내릴 것:\n{help}"
+        );
+    }
+    assert!(
+        help.contains("Print third-party license notices"),
+        "--license 설명 자체는 남아 있어야 한다:\n{help}"
+    );
+}
+
 /// CHANGELOG의 모든 버전 제목에는 하단 링크 정의가 있어야 한다.
 ///
 /// Keep a Changelog 형식은 `## [0.24.0]`을 링크로 만들려고 문서 끝에
