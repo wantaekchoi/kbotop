@@ -256,19 +256,19 @@ mod tests {
         app.config_error = Some("TOML parse error at line 1, column 9".into());
         app.last_error = Some("network error".into());
         let text = pending_body_text(&app);
+        // 줄 단위로 본다. `contains` 두 번으로는 둘을 공백으로 이어 붙여도 통과해
+        // 화면에서 두 메시지가 한 줄에 뭉치는 것을 못 잡는다. 순서도 같이 잡힌다 —
+        // footer가 먼저 말하는 쪽(설정 파일)이 본문에서도 첫 줄이다. 잘린 footer
+        // 문장이 이어지는 자리가 거기다.
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "두 오류가 각자 한 줄씩이어야 한다: {text}");
         assert!(
-            text.contains("line 1, column 9"),
-            "본문이 고칠 자리를 안 말한다: {text}"
+            lines[0].contains("line 1, column 9"),
+            "첫 줄이 고칠 자리를 안 말한다: {text}"
         );
         assert!(
-            text.contains("network error"),
-            "본문이 폴링 실패를 안 말한다: {text}"
-        );
-        // footer가 먼저 말하는 쪽(설정 파일)이 본문에서도 먼저다 — 잘린 문장이
-        // 이어지는 자리가 본문 첫 줄이다.
-        assert!(
-            text.find("column 9") < text.find("network error"),
-            "설정 파일 오류가 먼저다: {text}"
+            lines[1].contains("network error"),
+            "둘째 줄이 폴링 실패를 안 말한다: {text}"
         );
     }
 
