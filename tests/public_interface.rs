@@ -15,7 +15,7 @@
 
 use clap::CommandFactory;
 use crossterm::event::KeyCode;
-use kbotop::app::{App, Overlay, Screen, Tab};
+use kbotop::app::{App, Overlay, Screen, Tab, OVERLAY_STACK};
 use kbotop::config::Config;
 
 /// v0.31 기준 우리가 정의한 플래그 전체. 1.0에서 얼린다.
@@ -158,6 +158,104 @@ fn the_sealed_key_bindings_still_do_what_they_did() {
     // q/F10 — 종료(true 반환)
     assert!(app.on_key(KeyCode::Char('q')), "q");
     assert!(app.on_key(KeyCode::F(10)), "F10");
+}
+
+/// **모든 오버레이 층이 `q`로 닫힌다.** README 키 표가 `q`를 "뒤로·종료"로
+/// 광고하는데 링크 픽커만 안 받아, 거기서는 닫히지도 종료되지도 않았다
+/// (`on_key`가 열린 층에 키를 통째로 넘기고 `false`를 돌려주므로 종료 경로로도
+/// 안 간다 — 눌러도 아무 일이 없다).
+///
+/// **층을 손으로 세지 않고 `OVERLAY_STACK`을 순회한다.** 같은 결함을 고친
+/// v0.36 커밋의 주석이 층을 손으로 열거했는데 거기서 링크 픽커가 빠져 있었다.
+/// 손 목록은 반드시 하나를 빠뜨린다 — 층이 새로 생기면 이 테스트가 그 층까지
+/// 자동으로 본다(`open`의 match가 컴파일 에러로 새 층을 알린다).
+#[test]
+fn every_overlay_layer_closes_on_q() {
+    for overlay in OVERLAY_STACK {
+        let mut app = App::new(Default::default());
+        open(&mut app, overlay);
+        assert_eq!(app.top_overlay(), Some(overlay), "{overlay:?}를 못 열었다");
+        assert!(
+            !app.on_key(KeyCode::Char('q')),
+            "{overlay:?}: 층이 열려 있는데 q가 앱을 종료시켰다"
+        );
+        assert_eq!(app.top_overlay(), None, "{overlay:?}: q로 안 닫힌다");
+    }
+}
+
+/// 위 테스트가 층마다 열어 두는 상태. 새 층이 생기면 여기서 컴파일이 깨진다.
+fn open(app: &mut App, overlay: Overlay) {
+    use kbotop::app::{
+        ArticleView, LinkPickerState, NewsListState, OptionsState, Pane, SettingsState,
+    };
+    match overlay {
+        Overlay::Help => app.show_help = true,
+        Overlay::Options => {
+            app.options = Some(OptionsState {
+                pane: Pane::Date,
+                cursor: 0,
+            })
+        }
+        Overlay::LinkPicker => {
+            app.link_picker = Some(LinkPickerState {
+                items: vec![("LG official site".into(), "https://example.test".into())],
+                cursor: 0,
+            })
+        }
+        Overlay::Settings => {
+            app.settings = Some(SettingsState {
+                cursor: 0,
+                save_failed: false,
+            })
+        }
+        Overlay::TeamStats => {
+            app.standings = vec![standing()];
+            app.team_stats_rank = Some(1);
+        }
+        Overlay::NewsList => {
+            app.news = vec![news()];
+            app.news_list = Some(NewsListState { cursor: 0 });
+        }
+        // 목록 없이 기사만 연다 — 목록까지 열면 q가 기사를 닫아도 그 아래
+        // 목록이 남아 "닫혔는가"를 못 본다(Esc 계단은 이 테스트의 관심사가 아니다).
+        Overlay::Article => {
+            app.article_view = Some(ArticleView {
+                item: news(),
+                scroll: 0,
+            })
+        }
+    }
+}
+
+fn news() -> kbotop::model::NewsItem {
+    kbotop::model::NewsItem {
+        title: "headline".into(),
+        source: "wire".into(),
+        url: "https://example.test".into(),
+        summary: "excerpt".into(),
+        published: String::new(),
+    }
+}
+
+/// `team_stats_target()`이 열린 것으로 인정하려면 경기를 치른 팀이어야 한다
+/// (경기 전 팀은 성적이 전부 0이라 "기록 없음"과 구분되지 않는다).
+fn standing() -> kbotop::model::Standing {
+    kbotop::model::Standing {
+        rank: 1,
+        team: kbotop::model::Team {
+            code: "LG".into(),
+            name: "LG".into(),
+        },
+        games: 100,
+        wins: 60,
+        losses: 40,
+        draws: 0,
+        win_rate: 0.6,
+        game_behind: 0.0,
+        last_five: "WWLDW".into(),
+        streak: "2승".into(),
+        stats: Default::default(),
+    }
 }
 
 /// 마우스는 **꺼져 있는 게 기본**이다(v0.31). 이걸 되돌리면 아무 설정도 안 한

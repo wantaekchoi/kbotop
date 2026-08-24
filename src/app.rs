@@ -637,9 +637,12 @@ impl App {
         });
         let Some(opt) = &mut self.options else { return };
         match key {
-            // 다른 오버레이(Settings·Article·NewsList)는 전부 'q'도 닫는 키로
-            // 받는다 — 여기만 빠져 있었다(2026-08-03 실사용 중 발견). 'q'가
-            // 아무 반응이 없으면 사용자는 종료하려다 갇힌 줄 안다.
+            // 오버레이는 전부 'q'도 닫는 키로 받는다 — 여기가 빠져 있었고
+            // (2026-08-03 실사용 중 발견) 그때 이 주석이 든 목록에서 LinkPicker가
+            // 또 빠져 있어 거기만 같은 결함으로 남았다(2026-08-24). 층을 손으로
+            // 세면 반드시 하나가 빠지므로, 이제 `tests/public_interface.rs`가
+            // OVERLAY_STACK을 순회해 전 층을 확인한다. 'q'가 아무 반응이 없으면
+            // 사용자는 종료하려다 갇힌 줄 안다.
             KeyCode::Esc | KeyCode::F(2) | KeyCode::Char('q') => self.options = None,
             KeyCode::Down | KeyCode::Char('j') => {
                 if let Some(len) = len {
@@ -659,7 +662,10 @@ impl App {
             return;
         };
         match key {
-            KeyCode::Esc | KeyCode::Char('o') => self.link_picker = None,
+            // 'q'도 닫는다 — README 키 표가 `q`를 "뒤로·종료"로 광고하는데 이
+            // 층만 안 받아, 눌러도 닫히지 않고 `on_key`가 키를 먹어 종료도 안 됐다
+            // (무반응). 다른 여섯 층과 같은 계약으로 맞춘다.
+            KeyCode::Esc | KeyCode::Char('o') | KeyCode::Char('q') => self.link_picker = None,
             KeyCode::Down | KeyCode::Char('j') => {
                 if picker.cursor + 1 < picker.items.len() {
                     picker.cursor += 1;
@@ -825,19 +831,13 @@ impl App {
         if !self.mouse {
             return;
         }
-        // 팀 성적은 `team_stats_rank`가 아니라 **`team_stats_target()`**을 본다.
-        // 렌더(ui/mod.rs)와 키 소비(on_key)가 v0.24에서 이 함수 하나로 통일한
-        // 이유가 그대로 여기에도 적용된다 — rank는 남았는데 그 팀이 순위표에서
-        // 사라지면(폴링 갱신) **화면 없이 마우스만 잠긴다.** 그때 키는 멀쩡히
-        // 듣고 있어서, 사용자에게는 마우스가 죽은 것처럼만 보인다.
-        if self.show_help
-            || self.options.is_some()
-            || self.settings.is_some()
-            || self.article_view.is_some()
-            || self.news_list.is_some()
-            || self.link_picker.is_some()
-            || self.team_stats_target().is_some()
-        {
+        // 층 목록을 손으로 다시 적지 않는다 — 값이 `top_overlay()`와 같은데도
+        // 세 번째 손 목록으로 남아 있었다(ui/mod.rs가 렌더 순서와 키 순서를
+        // OVERLAY_STACK 하나로 합친 것과 같은 이유: 손으로 적은 두 순서가 서로
+        // 달랐다). 특히 팀 성적은 `team_stats_rank`가 아니라 `team_stats_target()`
+        // 으로 판정해야 하는데(rank는 남았는데 그 팀이 순위표에서 사라지면 화면
+        // 없이 마우스만 잠긴다), 그 규칙은 이미 `is_overlay_open`이 갖고 있다.
+        if self.top_overlay().is_some() {
             return;
         }
         // `gg` 대기를 끊는다. on_key는 모든 분기에서 이걸 지운다 — "입력이 오면
@@ -1623,14 +1623,61 @@ mod tests {
 
     /// 오버레이가 떠 있으면 마우스는 아무것도 하지 않는다. 히트맵에는 그 아래
     /// 화면의 영역이 남아 있어서, 처리하면 **보고 있지도 않은 것**이 움직인다.
+    ///
+    /// **층을 손으로 세지 않고 `OVERLAY_STACK`을 순회한다.** 예전 게이트는 층
+    /// 일곱 개를 손으로 나열한 세 번째 목록이었고(값은 `top_overlay()`와 같았다),
+    /// 그런 목록은 하나가 빠져도 아무 테스트가 안 잡았다. 마우스를 켜고 본다 —
+    /// 끈 상태로 보면 `!self.mouse` 조기 반환에 걸려 게이트 자체는 안 지나간다.
     #[test]
-    fn the_mouse_does_nothing_while_an_overlay_is_open() {
-        let mut app = App::new(Default::default());
-        app.games = vec![game("a"), game("b")];
-        app.show_help = true;
-        app.on_mouse(Some(crate::ui::hit::Zone::GameRow(1)), MouseAction::Click);
-        assert_eq!(app.selected, 0, "도움말이 떠 있는데 목록이 움직였다");
-        assert!(app.show_help, "마우스로 오버레이가 닫히면 안 된다");
+    fn the_mouse_does_nothing_while_any_overlay_is_open() {
+        for overlay in OVERLAY_STACK {
+            let mut app = App::new(Default::default());
+            app.mouse = true;
+            app.games = vec![game("a"), game("b")];
+            match overlay {
+                Overlay::Help => app.show_help = true,
+                Overlay::Options => {
+                    app.options = Some(OptionsState {
+                        pane: Pane::Date,
+                        cursor: 0,
+                    })
+                }
+                Overlay::LinkPicker => {
+                    app.link_picker = Some(LinkPickerState {
+                        items: vec![("LG".into(), "https://example.test".into())],
+                        cursor: 0,
+                    })
+                }
+                Overlay::Settings => {
+                    app.settings = Some(SettingsState {
+                        cursor: 0,
+                        save_failed: false,
+                    })
+                }
+                Overlay::TeamStats => {
+                    app.standings = vec![standing_with_games(1, 100)];
+                    app.team_stats_rank = Some(1);
+                }
+                Overlay::NewsList => {
+                    app.news = vec![news_item("headline", "https://example.test")];
+                    app.news_list = Some(NewsListState { cursor: 0 });
+                }
+                Overlay::Article => {
+                    app.article_view = Some(ArticleView {
+                        item: news_item("headline", "https://example.test"),
+                        scroll: 0,
+                    })
+                }
+            }
+            assert_eq!(app.top_overlay(), Some(overlay), "{overlay:?}를 못 열었다");
+            app.on_mouse(Some(crate::ui::hit::Zone::GameRow(1)), MouseAction::Click);
+            assert_eq!(app.selected, 0, "{overlay:?}가 떠 있는데 목록이 움직였다");
+            assert_eq!(
+                app.top_overlay(),
+                Some(overlay),
+                "{overlay:?}: 마우스로 오버레이가 닫히면 안 된다"
+            );
+        }
     }
 
     /// 빈 곳에서의 휠은 아무것도 하지 않는다 — 어느 목록을 굴릴지 짐작하지 않는다.
