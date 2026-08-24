@@ -56,7 +56,8 @@ fn offset_abbrev(offset_secs: i32) -> String {
 /// 표시용 시간대를 정한다. 폴백 사슬 — 앞에서 성공하면 멈춘다.
 ///
 /// 1. `setting`(CLI `--tz` / config `timezone`): `auto` · `kst` · `+09:00` 류
-/// 2. `TZ` 환경변수가 **숫자 오프셋**이면 사용(IANA 이름은 여기서 못 씀)
+/// 2. `TZ` 환경변수 — **POSIX 규약**이라 부호가 ISO와 반대다(`UTC-9`=UTC+9).
+///    숫자 오프셋이 아니면 지역명으로 보고 zoneinfo에서 찾는다.
 /// 3. Unix `/etc/localtime`(TZif) 파싱 — DST까지 자동 처리
 /// 4. 전부 실패 → KST
 ///
@@ -92,8 +93,11 @@ pub fn resolve(setting: Option<&str>, now_secs: u64) -> TimeZone {
         }
     }
 
-    if let Some(off) = std::env::var("TZ").ok().and_then(|v| parse_offset(&v)) {
-        return TimeZone::from_offset(off);
+    if let Some(tz) = std::env::var("TZ")
+        .ok()
+        .and_then(|v| from_tz_value(&v, now_secs))
+    {
+        return tz;
     }
 
     #[cfg(unix)]
@@ -106,9 +110,74 @@ pub fn resolve(setting: Option<&str>, now_secs: u64) -> TimeZone {
     TimeZone::kst()
 }
 
-/// `+09:00` `-0400` `UTC+9` `+09` 같은 **숫자 오프셋** 표기를 초로. IANA
-/// 이름(`Asia/Seoul`)은 여기서 처리하지 않는다(None → 다음 폴백 단계로).
+/// `TZ` 값 하나를 시간대로. **env를 읽지 않는다** — 테스트가 프로세스 전역
+/// 환경변수를 건드리지 않고 이 규칙만 직접 확인할 수 있게 분리했다.
+///
+/// `TZ`는 POSIX 규약이라 `--tz`(ISO-8601)와 **부호가 반대**다: `UTC-9`가
+/// UTC+9(KST)를 뜻한다. 예전에는 두 경로가 같은 파서를 그대로 썼고, 그래서
+/// `TZ=UTC-9`를 UTC-9로 읽어 헤더 시계·문자중계·경기 시작 시각이 18시간 어긋났다.
+///
+/// 숫자가 아니면 지역명(`Asia/Seoul`·`EST5EDT`)으로 보고 zoneinfo에서 찾는다 —
+/// 조용히 버리면 `TZ`를 지정한 사람이 시스템 시간대로 보게 된다. `--tz`는 같은
+/// 값을 exit 2로 거절하는데 `TZ`만 말없이 무시하고 있었다.
+fn from_tz_value(raw: &str, now_secs: u64) -> Option<TimeZone> {
+    // POSIX가 허용하는 선행 ':'를 뗀다(`TZ=:Asia/Seoul`).
+    let raw = raw.strip_prefix(':').unwrap_or(raw).trim();
+    if let Some(off) = parse_posix_offset(raw) {
+        return Some(TimeZone::from_offset(off));
+    }
+    from_zoneinfo(raw, now_secs)
+}
+
+/// 지역명을 zoneinfo에서 찾는다. Windows에는 그 디렉터리가 없어 늘 None이고,
+/// 호출부는 그대로 다음 폴백(KST)으로 간다.
+#[cfg(unix)]
+fn from_zoneinfo(name: &str, now_secs: u64) -> Option<TimeZone> {
+    from_tzif_file(&zoneinfo_path(name)?, now_secs)
+}
+
+#[cfg(not(unix))]
+fn from_zoneinfo(_name: &str, _now_secs: u64) -> Option<TimeZone> {
+    None
+}
+
+/// 지역명이 zoneinfo에서 찾아볼 만한 이름일 때의 경로. 절대경로·`..`는 받지
+/// 않는다 — `TZ`는 우리가 만든 값이 아니라 남이 넣어 둔 값이다(glibc도 같은
+/// 이유로 막는다).
+#[cfg(unix)]
+fn zoneinfo_path(name: &str) -> Option<String> {
+    let ok = !name.is_empty()
+        && !name.starts_with('/')
+        && !name.contains("..")
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-' | b'+'));
+    ok.then(|| format!("/usr/share/zoneinfo/{name}"))
+}
+
+/// 실제로 존재하는 UTC 오프셋 범위(-12:00 ~ +14:00). 부호를 붙인 뒤에 본다 —
+/// 시(0..=14)만 보면 `-14:00`이 통과한다(주석은 -12부터라고 적어 뒀는데 실제로
+/// 통과시켰다). ISO와 POSIX는 부호가 반대라 각자 부호를 붙인 값으로 봐야 한다.
+fn in_utc_offset_range(secs: &i32) -> bool {
+    (-12 * 3600..=14 * 3600).contains(secs)
+}
+
+/// POSIX `TZ`의 숫자 오프셋(`UTC-9` = UTC+9) — ISO와 부호가 반대다.
+fn parse_posix_offset(raw: &str) -> Option<i32> {
+    parse_offset_secs(raw)
+        .map(|secs| -secs)
+        .filter(in_utc_offset_range)
+}
+
+/// `+09:00` `-0400` `UTC+9` `+09` 같은 **ISO-8601 숫자 오프셋** 표기를 초로.
+/// IANA 이름(`Asia/Seoul`)은 여기서 처리하지 않는다(None → 다음 폴백 단계로).
 fn parse_offset(raw: &str) -> Option<i32> {
+    parse_offset_secs(raw).filter(in_utc_offset_range)
+}
+
+/// 부호를 그대로 붙인 오프셋 초. **범위 검사는 호출자 몫이다** — ISO와 POSIX는
+/// 부호가 반대라 같은 문자열의 유효 범위도 반대가 된다.
+fn parse_offset_secs(raw: &str) -> Option<i32> {
     let s = raw.trim();
     let s = s
         .strip_prefix("UTC")
@@ -132,8 +201,11 @@ fn parse_offset(raw: &str) -> Option<i32> {
     };
     let h: i32 = h_str.parse().ok()?;
     let m: i32 = m_str.parse().ok()?;
+    // 곱하기 **전에** 자릿수를 막는다 — 안 그러면 `+999999`가 i32를 넘겨
+    // debug 빌드에서 패닉한다. 실제 오프셋의 절대값은 어느 규약이든 14시간이
+    // 최대이므로 이 상한은 ISO·POSIX 양쪽에 안전하다.
     if !(0..=14).contains(&h) || !(0..60).contains(&m) {
-        return None; // UTC 오프셋 실제 범위(-12~+14)를 벗어나면 오타로 본다.
+        return None;
     }
     Some(sign * (h * 3600 + m * 60))
 }
@@ -283,6 +355,80 @@ mod tests {
         assert_eq!(parse_offset("+99:00"), None);
         assert_eq!(parse_offset("+09:99"), None);
         assert_eq!(parse_offset("garbage"), None);
+    }
+
+    /// **`TZ`는 POSIX 규약이라 부호가 `--tz`와 반대다.** `TZ=UTC-9`는 UTC+9,
+    /// 즉 KST다(`date(1)`도 그렇게 읽는다). 예전에는 같은 파서를 두 경로에 그대로
+    /// 재사용해 이 값을 UTC-9로 읽었고, 헤더 시계·문자중계·경기 시작 시각이
+    /// 18시간 어긋났다.
+    #[test]
+    fn tz_env_uses_posix_sign_which_is_the_opposite_of_the_cli_flag() {
+        assert_eq!(
+            from_tz_value("UTC-9", 1_800_000_000).map(|t| t.offset_secs),
+            Some(9 * 3600),
+            "POSIX UTC-9는 UTC+9(KST)다"
+        );
+        assert_eq!(
+            from_tz_value("UTC+5", 1_800_000_000).map(|t| t.offset_secs),
+            Some(-5 * 3600),
+            "POSIX UTC+5는 UTC-5다"
+        );
+        // 같은 문자열을 --tz로 주면 ISO라 반대로 읽혀야 한다 — 두 규약이 서로
+        // 다른 값을 낸다는 사실 자체를 못박는다.
+        assert_eq!(resolve(Some("UTC-9"), 0).offset_secs, -9 * 3600);
+    }
+
+    /// 지역명을 조용히 버리지 않는다. `--tz Asia/Seoul`은 exit 2로 거절하는데
+    /// `TZ`만 말없이 무시해, 지정한 사람은 시스템 시간대를 보면서 자기가 정한
+    /// 대로 보고 있다고 믿었다. zoneinfo가 없는 환경에서는 검사를 건너뛴다.
+    #[cfg(unix)]
+    #[test]
+    fn tz_env_resolves_an_iana_name_from_zoneinfo() {
+        if !std::path::Path::new("/usr/share/zoneinfo/Asia/Seoul").exists() {
+            return;
+        }
+        assert_eq!(
+            from_tz_value("Asia/Seoul", 1_800_000_000).map(|t| t.offset_secs),
+            Some(9 * 3600)
+        );
+        // POSIX가 허용하는 선행 ':'도 같은 값이어야 한다.
+        assert_eq!(
+            from_tz_value(":Asia/Seoul", 1_800_000_000).map(|t| t.offset_secs),
+            Some(9 * 3600)
+        );
+    }
+
+    /// `TZ`로 들어오는 경로 비슷한 값은 zoneinfo 밖으로 못 나간다.
+    #[cfg(unix)]
+    #[test]
+    fn a_tz_name_never_escapes_the_zoneinfo_directory() {
+        for bad in [
+            "../../etc/passwd",
+            "/etc/localtime",
+            "Asia/../../etc/passwd",
+            "",
+        ] {
+            assert_eq!(zoneinfo_path(bad), None, "{bad}");
+        }
+        assert_eq!(
+            zoneinfo_path("Asia/Seoul").as_deref(),
+            Some("/usr/share/zoneinfo/Asia/Seoul")
+        );
+    }
+
+    /// 시(0..=14)만 보면 `-14:00`이 통과한다 — 주석은 -12부터라고 적어 뒀는데
+    /// 실제로는 통과시켰고, `--tz -14:00`이 UTC-14로 받아들여졌다.
+    #[test]
+    fn offsets_below_minus_twelve_hours_are_rejected() {
+        assert_eq!(parse_offset("-14:00"), None, "UTC-14는 존재하지 않는다");
+        assert_eq!(parse_offset("-13:00"), None);
+        assert_eq!(
+            parse_offset("-12:00"),
+            Some(-12 * 3600),
+            "-12:00은 실존한다"
+        );
+        assert_eq!(parse_offset("+14:00"), Some(14 * 3600), "+14:00도 실존한다");
+        assert!(!is_supported_setting("-14:00"), "--tz가 받아들이면 안 된다");
     }
 
     /// 명시 설정이 자동 감지를 이긴다 — Windows·컨테이너처럼 감지가 안 되는
