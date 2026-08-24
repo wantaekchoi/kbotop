@@ -1,7 +1,7 @@
 //! F2 옵션 픽커 오버레이 + 공용 chooser(링크 픽커도 재사용).
 use super::i18n::Labels;
 use crate::app::{App, Pane};
-use crate::dateutil::{format_civil, kst_days};
+use crate::dateutil::format_civil;
 use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
@@ -10,15 +10,17 @@ use ratatui::{
     Frame,
 };
 
-/// Date pane 항목: (표시 라벨, YYYY-MM-DD). 오늘은 now_secs 기준 KST.
+/// Date pane 항목: (표시 라벨, YYYY-MM-DD). 기준(`anchor_days`)은 **지금 보고
+/// 있는 날짜**다(`App::date_days`) — 진짜 오늘로 고정하면 -3일로 옮긴 뒤 다시
+/// 열어도 여전히 오늘 기준이라 거기서 더 못 간다. `--date`는 임의 날짜를 받는데
+/// 앱 안 내비게이션만 오늘 언저리에 묶여 있었다.
 /// "-2"/"-3"/"+2"/"+3"의 접미(days/일)는 언어별 완성형이 아니라
 /// `l.date_days_fmt_minus`(공백 유무 포함 sep)로 데이터 주도 조립한다 —
 /// 언어 분기(match lang) 없이 라벨 데이터만 바뀌면 문구가 따라온다. sep는
 /// 접미의 첫 글자가 ASCII(라틴 문자 계열)인지로 결정한다 — 리터럴 "days"
 /// 문자열 일치만 보면 놓치는 라틴 변형 접미도 첫 글자 ASCII 판정이면
 /// 안전하게 걸린다. 한글/일본어 접미는 첫 글자가 비ASCII라 여전히 sep 없음.
-pub fn date_items(l: &'static Labels, now_secs: u64) -> Vec<(String, String)> {
-    let today = kst_days(now_secs);
+pub fn date_items(l: &'static Labels, anchor_days: i64) -> Vec<(String, String)> {
     let sep = if l
         .date_days_fmt_minus
         .chars()
@@ -40,7 +42,7 @@ pub fn date_items(l: &'static Labels, now_secs: u64) -> Vec<(String, String)> {
     ]
     .into_iter()
     .map(|(label, off)| {
-        let d = format_civil(today + off);
+        let d = format_civil(anchor_days + off);
         (format!("{label}  {d}"), d)
     })
     .collect()
@@ -76,9 +78,9 @@ pub fn poll_items(l: &'static Labels) -> Vec<(String, u64)> {
 /// app.rs 커서 경계용 항목 수. Pane은 v0.8부터 Date 단일 variant다(Team·Poll은
 /// F9 설정으로 이동 — team_items/poll_items 자체는 change_setting/settings_rows가
 /// 계속 쓰므로 남아 있다).
-pub fn pane_len(pane: Pane, now_secs: u64, l: &'static Labels) -> usize {
+pub fn pane_len(pane: Pane, anchor_days: i64, l: &'static Labels) -> usize {
     let Pane::Date = pane;
-    date_items(l, now_secs).len()
+    date_items(l, anchor_days).len()
 }
 
 /// 공용 chooser: 중앙 오버레이 박스에 제목+항목 목록(커서 "> ", REVERSED).
@@ -109,7 +111,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let Some(opt) = &app.options else { return };
     let l = app.labels();
     let title = format!("{}  [ {} ]", l.title_options, l.pane_date);
-    let items: Vec<Line> = date_items(l, app.now_secs)
+    let items: Vec<Line> = date_items(l, app.date_days())
         .into_iter()
         .map(|(label, _)| Line::from(label))
         .collect();
@@ -139,7 +141,7 @@ mod tests {
             .map(|c| c.symbol())
             .collect();
         assert!(text.contains("Date"), "pane label Date missing");
-        for (label, _) in date_items(app.labels(), app.now_secs) {
+        for (label, _) in date_items(app.labels(), app.date_days()) {
             assert!(text.contains(&label), "date item {label} missing");
         }
     }
@@ -178,10 +180,10 @@ mod tests {
     /// 못박는다.
     #[test]
     fn date_items_suffix_separator_is_locale_correct() {
-        let now = 1_800_000_000u64;
+        let anchor = crate::dateutil::kst_days(1_800_000_000);
 
         // en: 라틴 문자 접미("days") → 숫자와 접미 사이 공백 있음.
-        let en = date_items(crate::ui::i18n::labels(crate::ui::i18n::Lang::En), now);
+        let en = date_items(crate::ui::i18n::labels(crate::ui::i18n::Lang::En), anchor);
         assert!(
             en[3].0.starts_with("-2 days"),
             "en suffix missing space before 'days': {}",
@@ -189,7 +191,7 @@ mod tests {
         );
 
         // ko: 비ASCII 접미("일") → 숫자에 바로 붙음(공백 없음).
-        let ko = date_items(crate::ui::i18n::labels(crate::ui::i18n::Lang::Ko), now);
+        let ko = date_items(crate::ui::i18n::labels(crate::ui::i18n::Lang::Ko), anchor);
         assert!(
             ko[3].0.starts_with("-2일"),
             "ko suffix should attach directly (no space) before '일': {}",
@@ -203,7 +205,7 @@ mod tests {
 
         // ja: 비ASCII 접미("日") → 숫자에 바로 붙음(공백 없음) — ko와 같은
         // 경로를 다른 접미 문자열로 한 번 더 봉인한다.
-        let ja = date_items(crate::ui::i18n::labels(crate::ui::i18n::Lang::Ja), now);
+        let ja = date_items(crate::ui::i18n::labels(crate::ui::i18n::Lang::Ja), anchor);
         assert!(
             ja[3].0.starts_with("-2日"),
             "ja suffix should attach directly (no space) before '日': {}",

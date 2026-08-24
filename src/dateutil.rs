@@ -37,6 +37,22 @@ pub fn format_civil(days: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
+/// "YYYY-MM-DD" → epoch 일수. [`format_civil`]의 역함수다 — 화면이 문자열로
+/// 들고 다니는 조회 날짜(`App::date`)를 다시 산술로 되돌릴 때 쓴다. 자릿수가
+/// 어긋나거나 존재하지 않는 날짜(2월 30일 등)면 None이다: 왕복이 맞는지까지
+/// 확인하므로 `days_from_civil`이 조용히 이월시킨 값을 통과시키지 않는다.
+pub fn parse_civil(s: &str) -> Option<i64> {
+    let mut it = s.split('-');
+    let y: i64 = it.next()?.parse().ok()?;
+    let m: i64 = it.next()?.parse().ok()?;
+    let d: i64 = it.next()?.parse().ok()?;
+    if it.next().is_some() {
+        return None;
+    }
+    let days = days_from_civil(y, m, d);
+    (civil_from_days(days) == (y, m, d)).then_some(days)
+}
+
 /// UTC epoch 초 → KST 기준 epoch 일수.
 pub fn kst_days(utc_secs: u64) -> i64 {
     (utc_secs as i64 + 9 * 3600).div_euclid(86400)
@@ -82,6 +98,25 @@ mod tests {
             let (y, m, d) = civil_from_days(days);
             assert_eq!(days_from_civil(y, m, d), days);
         }
+    }
+
+    /// `parse_civil`은 `format_civil`과 왕복해야 한다 — 화면이 문자열로 들고
+    /// 다니는 날짜를 되돌리는 유일한 경로라, 하루라도 밀리면 F2 픽커가 엉뚱한
+    /// 날을 기준으로 삼는다.
+    #[test]
+    fn parse_civil_roundtrips_with_format_civil() {
+        for days in [0i64, 19782, 20819, 20657] {
+            assert_eq!(parse_civil(&format_civil(days)), Some(days));
+        }
+    }
+
+    #[test]
+    fn parse_civil_rejects_dates_that_do_not_exist() {
+        assert_eq!(parse_civil("2026-02-30"), None, "2월 30일은 없다");
+        assert_eq!(parse_civil("2026-13-01"), None, "13월은 없다");
+        assert_eq!(parse_civil("2026-08-21-1"), None);
+        assert_eq!(parse_civil("20260821"), None);
+        assert_eq!(parse_civil(""), None);
     }
 
     /// M-1(v19a 리뷰): 이동 전엔 elapsed_label/pitch_interval_label 테스트를

@@ -354,6 +354,20 @@ impl App {
         crate::ui::i18n::labels(self.lang)
     }
 
+    /// F2 날짜 픽커가 기준으로 삼는 날 — **지금 보고 있는 날짜**다.
+    ///
+    /// 진짜 오늘로 고정돼 있으면 -3일로 옮긴 뒤 다시 열어도 여전히 오늘 기준이라
+    /// 거기서 더 못 간다. 커서도 항상 첫 행(Today)에 놓여, 무심코 누른 Enter가
+    /// 보던 날짜를 오늘로 되돌렸다. 기준이 보고 있는 날짜면 첫 행이 곧 그 날짜라
+    /// 세 가지가 함께 풀린다: 계속 거슬러 갈 수 있고, 열자마자 Enter를 눌러도
+    /// 제자리이며, 커서가 지금 보는 날을 가리킨다.
+    ///
+    /// `date`가 비었거나(기동 직후) 해석이 안 되면 KST 오늘로 폴백한다.
+    pub fn date_days(&self) -> i64 {
+        crate::dateutil::parse_civil(&self.date)
+            .unwrap_or_else(|| crate::dateutil::kst_days(self.now_secs))
+    }
+
     /// 지금 열려 있는지 — `OVERLAY_STACK` 순서 판정과 렌더가 함께 쓴다.
     pub fn is_overlay_open(&self, o: Overlay) -> bool {
         match o {
@@ -617,7 +631,7 @@ impl App {
         let len = self.options.as_ref().map(|opt| {
             crate::ui::options::pane_len(
                 opt.pane,
-                self.now_secs,
+                self.date_days(),
                 crate::ui::i18n::labels(self.lang),
             )
         });
@@ -1080,7 +1094,7 @@ impl App {
         };
         let l = self.labels();
         // Pane은 v0.8부터 Date 단일 variant다(Team·Poll은 F9 설정으로 이동).
-        if let Some((_, date)) = crate::ui::options::date_items(l, self.now_secs)
+        if let Some((_, date)) = crate::ui::options::date_items(l, self.date_days())
             .into_iter()
             .nth(opt.cursor)
         {
@@ -2810,6 +2824,48 @@ mod tests {
             app.date,
             crate::dateutil::format_civil(crate::dateutil::kst_days(1_800_000_000) - 1)
         );
+    }
+
+    /// **날짜 픽커는 계속 거슬러 갈 수 있어야 한다.** 기준이 진짜 오늘로
+    /// 고정돼 있으면 -3일로 옮긴 뒤 다시 열어도 목록이 그대로라, 앱 안에서는
+    /// 오늘 ±3일 밖으로 영영 못 나간다(`--date`는 임의 날짜를 받는데도).
+    /// 두 번 연달아 -3일을 고르면 -6일이 되어야 한다.
+    #[test]
+    fn the_date_picker_keeps_walking_back_three_days_at_a_time() {
+        let mut app = App::new(Default::default());
+        app.now_secs = 1_800_000_000;
+        let today = crate::dateutil::kst_days(1_800_000_000);
+        app.date = crate::dateutil::format_civil(today);
+
+        // 항목 순서는 [오늘, 어제, 내일, -2, -3, +2, +3] — 커서 4가 "-3일".
+        for step in 1..=2 {
+            app.on_key(KeyCode::F(2));
+            for _ in 0..4 {
+                app.on_key(KeyCode::Down);
+            }
+            app.on_key(KeyCode::Enter);
+            assert_eq!(
+                app.date,
+                crate::dateutil::format_civil(today - 3 * step),
+                "{step}번째 -3일 이동"
+            );
+        }
+    }
+
+    /// **열자마자 Enter를 눌러도 보던 날짜에서 튕기지 않는다.** 기준이 오늘이면
+    /// 커서가 놓이는 첫 행이 "오늘"이라, 날짜를 옮겨 둔 사람이 픽커를 열었다
+    /// 무심코 확인만 해도 오늘로 되돌아갔다.
+    #[test]
+    fn opening_the_date_picker_and_confirming_keeps_the_date_you_are_on() {
+        let mut app = App::new(Default::default());
+        app.now_secs = 1_800_000_000;
+        app.date = crate::dateutil::format_civil(crate::dateutil::kst_days(1_800_000_000) - 40);
+        let before = app.date.clone();
+        app.games_loaded = true;
+        app.on_key(KeyCode::F(2));
+        app.on_key(KeyCode::Enter);
+        assert_eq!(app.date, before, "커서가 지금 보는 날이 아닌 곳에 놓였다");
+        assert!(app.games_loaded, "제자리인데 목록을 버렸다");
     }
 
     /// Tips는 News처럼 보조 — stale/last_error/fetching에 관여하지 않는다.
