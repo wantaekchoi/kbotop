@@ -158,17 +158,24 @@ pub fn draw(f: &mut Frame, app: &App, hits: &mut HitMap) {
 ///
 /// 두 패널이 같은 함수를 부른다. 한쪽만 고치면 나머지 하나가 그대로 남는다.
 ///
-/// **설정 파일 오류가 폴링 오류보다 먼저다**(footer와 같은 순서). footer는
-/// 에러에 폭의 절반만 내주므로 80·100칸에서는 `config.toml could not be read,
-/// using …`에서 잘려 **어디를 고쳐야 하는지(줄·열)가 화면에서 사라졌다**. 본문은
-/// 접어서 보여주므로(games/standings 모두 `Wrap`) 상세가 갈 곳이 여기다.
+/// **깨진 게 둘이면 둘 다 말한다.** footer는 에러에 폭의 절반만 내주므로 한
+/// 가지만, 그것도 80·100칸에서는 앞부분만 남는다. 본문은 접어서 보여주므로
+/// (games/standings 모두 `Wrap`) 두 상세가 다 들어갈 곳은 여기뿐이다. 순서는
+/// footer와 같다 — 잘린 footer 문장이 이어지는 자리가 본문 첫 줄이다.
 pub(crate) fn pending_body_text(app: &App) -> String {
     let l = app.labels();
     // 라벨 앞 공백은 footer 배너용이라 본문에서는 뗀다.
-    match (&app.config_error, &app.last_error) {
-        (Some(e), _) => format!("{}{e}", l.config_broken.trim_start()),
-        (None, Some(e)) => format!("{}{e}", l.error_prefix.trim_start()),
-        (None, None) => l.loading.to_string(),
+    let lines: Vec<String> = [
+        (&app.config_error, l.config_broken),
+        (&app.last_error, l.error_prefix),
+    ]
+    .into_iter()
+    .filter_map(|(e, label)| e.as_ref().map(|e| format!("{}{e}", label.trim_start())))
+    .collect();
+    if lines.is_empty() {
+        l.loading.to_string()
+    } else {
+        lines.join("\n")
     }
 }
 
@@ -239,13 +246,12 @@ mod tests {
     use crate::poller::Update;
     use ratatui::{backend::TestBackend, Terminal};
 
-    /// **설정 파일 오류의 상세는 본문이 갖고 있어야 한다.** footer는 에러에
-    /// 폭의 절반만 내주므로(v1.0에서 `q 종료`를 지키려고 그렇게 했다) 80·100칸
-    /// 에서는 `config.toml could not be read, using …`에서 잘려 **어디를 고쳐야
-    /// 하는지(줄·열)가 화면 어디에도 안 남았다**(실측: 220칸에서만 온전했다).
-    /// 우선순위는 footer와 같다 — 설정 파일이 깨진 건 폴링 실패보다 먼저다.
+    /// **둘 다 깨졌으면 본문이 둘 다 말한다.** footer는 에러에 폭의 절반만
+    /// 내주므로(v1.0에서 `q 종료`를 지키려고 그렇게 했다) 하나만, 그것도
+    /// 80·100칸에서는 앞부분만 남는다. 접어서 보여줄 수 있는 곳은 본문뿐이다.
+    /// 한쪽만 단언하면 나머지 하나를 버려도 통과한다.
     #[test]
-    fn the_body_carries_the_config_error_detail_the_footer_has_to_cut() {
+    fn the_body_says_both_the_config_error_and_the_polling_failure() {
         let mut app = App::new(Default::default());
         app.config_error = Some("TOML parse error at line 1, column 9".into());
         app.last_error = Some("network error".into());
@@ -255,7 +261,13 @@ mod tests {
             "본문이 고칠 자리를 안 말한다: {text}"
         );
         assert!(
-            !text.contains("network error"),
+            text.contains("network error"),
+            "본문이 폴링 실패를 안 말한다: {text}"
+        );
+        // footer가 먼저 말하는 쪽(설정 파일)이 본문에서도 먼저다 — 잘린 문장이
+        // 이어지는 자리가 본문 첫 줄이다.
+        assert!(
+            text.find("column 9") < text.find("network error"),
             "설정 파일 오류가 먼저다: {text}"
         );
     }
