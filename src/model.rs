@@ -47,12 +47,6 @@ pub struct BaseState {
     pub third: bool,
 }
 
-impl BaseState {
-    pub fn runner_count(self) -> u8 {
-        self.first as u8 + self.second as u8 + self.third as u8
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Count {
     pub ball: u8,
@@ -402,16 +396,6 @@ pub struct TeamStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn base_state_counts_runners() {
-        let bases = BaseState {
-            first: true,
-            second: false,
-            third: true,
-        };
-        assert_eq!(bases.runner_count(), 2);
-    }
 
     #[test]
     fn game_status_is_live_only_when_playing() {
