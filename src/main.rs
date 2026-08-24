@@ -363,6 +363,14 @@ fn spawn_shutdown_watchdog(flag: Arc<AtomicBool>) {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    // **다른 인자를 보기 전에 처리한다.** 고지는 바이너리가 스스로 뱉는 것이라
+    // 옆에 무엇이 오든 같아야 하는데, --date 검증이 위에 있던 동안에는
+    // `--license --date zzz`가 exit 2, `--license --team zzz`는 고지 출력 후
+    // exit 0이었다 — 같은 플래그가 옆 인자에 따라 다르게 동작했다.
+    if cli.license {
+        print!("{}", include_str!("../THIRD-PARTY.md"));
+        return Ok(());
+    }
     let (cfg, config_error) = config::load();
 
     // KST 오늘의 epoch 일수 — kst_today()와 동일 산술(+9h) 공유.
@@ -384,10 +392,6 @@ fn main() -> Result<()> {
             }
         },
     };
-    if cli.license {
-        print!("{}", include_str!("../THIRD-PARTY.md"));
-        return Ok(());
-    }
     // 알 수 없는 --team 별칭은 조용히 무시하지 않는다(v0.1.2 리뷰 Minor).
     if let Some(alias) = cli.team.as_deref() {
         if team_code(alias).is_none() {

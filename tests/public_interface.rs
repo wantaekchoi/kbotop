@@ -49,6 +49,37 @@ fn we_define_no_short_flags_at_all() {
     assert!(shorts.is_empty(), "short 옵션이 생겼다: {shorts:?}");
 }
 
+/// **`--license`는 옆에 무엇이 오든 고지를 뱉는다.** 예전에는 `--date` 검증이
+/// 먼저라 `--license --date zzz`가 exit 2였는데 `--license --team zzz`는 고지를
+/// 출력하고 exit 0이었다 — 같은 플래그가 옆 인자에 따라 다르게 동작했다.
+/// 정적 링크 배포물이 고지를 뱉는 건 지켜야 하는 의무라, 인자 오타 하나로
+/// 막히면 안 된다.
+#[test]
+fn license_prints_the_notices_whatever_else_is_on_the_command_line() {
+    for args in [
+        &["--license"][..],
+        &["--license", "--date", "zzz"],
+        &["--license", "--team", "zzz"],
+        &["--license", "--tz", "zzz"],
+        &["--license", "--lang", "zzz"],
+    ] {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_kbotop"))
+            .args(args)
+            .output()
+            .expect("바이너리를 못 돌렸다");
+        assert!(
+            out.status.success(),
+            "{args:?}: exit {:?}\n{}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("서드파티 라이선스 고지"),
+            "{args:?}: 고지가 안 나왔다"
+        );
+    }
+}
+
 /// `config.toml`에 사람이 적어 둔 키들. **읽히지 않으면 조용히 기본값으로
 /// 돌아가므로**(관용 파싱) 테스트가 없으면 오타 하나로 설정이 죽는다.
 #[test]
