@@ -10,17 +10,31 @@ use ratatui::{
     Frame,
 };
 
-/// Date pane 항목: (표시 라벨, YYYY-MM-DD). 기준(`anchor_days`)은 **지금 보고
-/// 있는 날짜**다(`App::date_days`) — 진짜 오늘로 고정하면 -3일로 옮긴 뒤 다시
-/// 열어도 여전히 오늘 기준이라 거기서 더 못 간다. `--date`는 임의 날짜를 받는데
-/// 앱 안 내비게이션만 오늘 언저리에 묶여 있었다.
+/// Date pane 항목: (표시 라벨, YYYY-MM-DD).
+///
+/// 기준(`anchor_days`)은 **지금 보고 있는 날짜**다(`App::date_days`) — 진짜
+/// 오늘로 고정하면 -3일로 옮긴 뒤 다시 열어도 여전히 오늘 기준이라 거기서 더
+/// 못 간다. `--date`는 임의 날짜를 받는데 앱 안 내비게이션만 오늘 언저리에
+/// 묶여 있었다.
+///
+/// **라벨은 기준이 아니라 진짜 오늘(`today_days`)이 정한다.** 기준만 옮기고
+/// 라벨을 그대로 뒀더니 `--date 2026-06-01`에서 세 줄이 전부 거짓말을 했다
+/// (오늘 2026-06-01 / 어제 05-31 / 내일 06-02 — 실제 오늘은 08-24). 이제
+/// 오늘·어제·내일은 그 줄의 날짜가 실제로 그럴 때만 붙고, 기준일 자신은
+/// `date_viewing`, 나머지는 기준에서 며칠인지(`-2일`)로 말한다.
+///
+/// **진짜 오늘로 돌아갈 자리도 목록이 갖고 있다.** 기준이 오늘에서 멀어지면
+/// ±3일 안에 오늘이 없어, 06-01에서 08-24로 돌아가려면 `+3일`을 스물여덟 번
+/// 눌러야 했다. 오늘이 목록에 없을 때만 둘째 줄로 끼워 넣는다 — 첫 줄(커서가
+/// 놓이는 자리)은 계속 기준일이라 열자마자 Enter를 눌러도 제자리다.
+///
 /// "-2"/"-3"/"+2"/"+3"의 접미(days/일)는 언어별 완성형이 아니라
 /// `l.date_days_fmt_minus`(공백 유무 포함 sep)로 데이터 주도 조립한다 —
 /// 언어 분기(match lang) 없이 라벨 데이터만 바뀌면 문구가 따라온다. sep는
 /// 접미의 첫 글자가 ASCII(라틴 문자 계열)인지로 결정한다 — 리터럴 "days"
 /// 문자열 일치만 보면 놓치는 라틴 변형 접미도 첫 글자 ASCII 판정이면
 /// 안전하게 걸린다. 한글/일본어 접미는 첫 글자가 비ASCII라 여전히 sep 없음.
-pub fn date_items(l: &'static Labels, anchor_days: i64) -> Vec<(String, String)> {
+pub fn date_items(l: &'static Labels, anchor_days: i64, today_days: i64) -> Vec<(String, String)> {
     let sep = if l
         .date_days_fmt_minus
         .chars()
@@ -31,21 +45,26 @@ pub fn date_items(l: &'static Labels, anchor_days: i64) -> Vec<(String, String)>
     } else {
         ""
     };
-    [
-        (l.date_today.to_string(), 0i64),
-        (l.date_yesterday.to_string(), -1),
-        (l.date_tomorrow.to_string(), 1),
-        (format!("{:+}{sep}{}", -2, l.date_days_fmt_minus), -2),
-        (format!("{:+}{sep}{}", -3, l.date_days_fmt_minus), -3),
-        (format!("{:+}{sep}{}", 2, l.date_days_fmt_minus), 2),
-        (format!("{:+}{sep}{}", 3, l.date_days_fmt_minus), 3),
-    ]
-    .into_iter()
-    .map(|(label, off)| {
-        let d = format_civil(anchor_days + off);
-        (format!("{label}  {d}"), d)
-    })
-    .collect()
+    let label = |off: i64| match anchor_days + off - today_days {
+        0 => l.date_today.to_string(),
+        -1 => l.date_yesterday.to_string(),
+        1 => l.date_tomorrow.to_string(),
+        _ if off == 0 => l.date_viewing.to_string(),
+        _ => format!("{off:+}{sep}{}", l.date_days_fmt_minus),
+    };
+    let mut rows: Vec<(String, i64)> = [0i64, -1, 1, -2, -3, 2, 3]
+        .into_iter()
+        .map(|off| (label(off), anchor_days + off))
+        .collect();
+    if !rows.iter().any(|(_, days)| *days == today_days) {
+        rows.insert(1, (l.date_today.to_string(), today_days));
+    }
+    rows.into_iter()
+        .map(|(label, days)| {
+            let d = format_civil(days);
+            (format!("{label}  {d}"), d)
+        })
+        .collect()
 }
 
 /// Team pane 항목: (라벨, 코드). 첫 항목은 해제(None).
@@ -78,9 +97,9 @@ pub fn poll_items(l: &'static Labels) -> Vec<(String, u64)> {
 /// app.rs 커서 경계용 항목 수. Pane은 v0.8부터 Date 단일 variant다(Team·Poll은
 /// F9 설정으로 이동 — team_items/poll_items 자체는 change_setting/settings_rows가
 /// 계속 쓰므로 남아 있다).
-pub fn pane_len(pane: Pane, anchor_days: i64, l: &'static Labels) -> usize {
+pub fn pane_len(pane: Pane, anchor_days: i64, today_days: i64, l: &'static Labels) -> usize {
     let Pane::Date = pane;
-    date_items(l, anchor_days).len()
+    date_items(l, anchor_days, today_days).len()
 }
 
 /// 공용 chooser: 중앙 오버레이 박스에 제목+항목 목록(커서 "> ", REVERSED).
@@ -111,7 +130,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let Some(opt) = &app.options else { return };
     let l = app.labels();
     let title = format!("{}  [ {} ]", l.title_options, l.pane_date);
-    let items: Vec<Line> = date_items(l, app.date_days())
+    let items: Vec<Line> = date_items(l, app.date_days(), app.today_days())
         .into_iter()
         .map(|(label, _)| Line::from(label))
         .collect();
@@ -141,7 +160,7 @@ mod tests {
             .map(|c| c.symbol())
             .collect();
         assert!(text.contains("Date"), "pane label Date missing");
-        for (label, _) in date_items(app.labels(), app.date_days()) {
+        for (label, _) in date_items(app.labels(), app.date_days(), app.today_days()) {
             assert!(text.contains(&label), "date item {label} missing");
         }
     }
@@ -183,7 +202,11 @@ mod tests {
         let anchor = crate::dateutil::kst_days(1_800_000_000);
 
         // en: 라틴 문자 접미("days") → 숫자와 접미 사이 공백 있음.
-        let en = date_items(crate::ui::i18n::labels(crate::ui::i18n::Lang::En), anchor);
+        let en = date_items(
+            crate::ui::i18n::labels(crate::ui::i18n::Lang::En),
+            anchor,
+            anchor,
+        );
         assert!(
             en[3].0.starts_with("-2 days"),
             "en suffix missing space before 'days': {}",
@@ -191,7 +214,11 @@ mod tests {
         );
 
         // ko: 비ASCII 접미("일") → 숫자에 바로 붙음(공백 없음).
-        let ko = date_items(crate::ui::i18n::labels(crate::ui::i18n::Lang::Ko), anchor);
+        let ko = date_items(
+            crate::ui::i18n::labels(crate::ui::i18n::Lang::Ko),
+            anchor,
+            anchor,
+        );
         assert!(
             ko[3].0.starts_with("-2일"),
             "ko suffix should attach directly (no space) before '일': {}",
@@ -205,7 +232,11 @@ mod tests {
 
         // ja: 비ASCII 접미("日") → 숫자에 바로 붙음(공백 없음) — ko와 같은
         // 경로를 다른 접미 문자열로 한 번 더 봉인한다.
-        let ja = date_items(crate::ui::i18n::labels(crate::ui::i18n::Lang::Ja), anchor);
+        let ja = date_items(
+            crate::ui::i18n::labels(crate::ui::i18n::Lang::Ja),
+            anchor,
+            anchor,
+        );
         assert!(
             ja[3].0.starts_with("-2日"),
             "ja suffix should attach directly (no space) before '日': {}",
@@ -216,6 +247,64 @@ mod tests {
             "ja suffix must not have a stray space: {}",
             ja[3].0
         );
+    }
+
+    /// **세 이름은 그 이름의 날에만 붙는다.** 기준을 "지금 보고 있는 날"로
+    /// 옮기면서 라벨을 그대로 뒀더니 `--date 2026-06-01`에서 세 줄이 전부
+    /// 거짓이 됐다 — `오늘 2026-06-01` / `어제 05-31` / `내일 06-02`인데 실제
+    /// 오늘은 08-24였다.
+    #[test]
+    fn the_three_day_names_only_appear_on_the_days_they_name() {
+        let l = crate::ui::i18n::labels(crate::ui::i18n::Lang::Ko);
+        let today = crate::dateutil::kst_days(1_800_000_000);
+        let anchor = today - 84; // 석 달쯤 전을 보고 있는 상태
+        let items = date_items(l, anchor, today);
+
+        for (label, date) in &items {
+            for (name, offset) in [
+                (l.date_today, 0i64),
+                (l.date_yesterday, -1),
+                (l.date_tomorrow, 1),
+            ] {
+                if label.starts_with(name) {
+                    assert_eq!(
+                        *date,
+                        crate::dateutil::format_civil(today + offset),
+                        "'{name}' 라벨이 엉뚱한 날에 붙었다: {label}"
+                    );
+                }
+            }
+        }
+        assert!(
+            items[0].0.starts_with(l.date_viewing),
+            "첫 줄은 지금 보는 날이라고 말해야 한다: {}",
+            items[0].0
+        );
+        assert_eq!(items[0].1, crate::dateutil::format_civil(anchor));
+    }
+
+    /// **오늘로 돌아갈 줄은 언제나 정확히 하나다.** 기준이 오늘에서 멀면 목록
+    /// ±3일 안에 오늘이 없어 `+3일`을 스물여덟 번 눌러야 돌아왔고, 반대로
+    /// 무조건 한 줄을 더 넣으면 가까울 때 같은 날이 두 줄이 된다.
+    /// 기준이 오늘일 때는 예전 그대로 일곱 줄이다.
+    #[test]
+    fn there_is_exactly_one_row_for_the_real_today_at_any_distance() {
+        let l = crate::ui::i18n::labels(crate::ui::i18n::Lang::En);
+        let today = crate::dateutil::kst_days(1_800_000_000);
+        let today_str = crate::dateutil::format_civil(today);
+        for back in [0i64, 1, 3, 4, 40] {
+            let items = date_items(l, today - back, today);
+            let rows = items.iter().filter(|(_, d)| *d == today_str).count();
+            assert_eq!(rows, 1, "{back}일 전을 보는 중: 오늘 줄이 {rows}개");
+            // ±3일 안에 오늘이 있으면 줄을 더하지 않는다(중복 금지).
+            let expected = if back <= 3 { 7 } else { 8 };
+            assert_eq!(items.len(), expected, "{back}일 전을 보는 중: 항목 수");
+            assert_eq!(
+                items[0].1,
+                crate::dateutil::format_civil(today - back),
+                "첫 줄은 언제나 기준일이라야 열자마자 Enter가 제자리다"
+            );
+        }
     }
 
     #[test]

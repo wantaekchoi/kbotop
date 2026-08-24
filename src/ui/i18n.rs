@@ -177,9 +177,14 @@ pub struct Labels {
     pub help_lines: [&'static str; 12],
     // F2 픽커
     pub pane_date: &'static str,
+    /// 세 라벨은 **진짜 오늘 기준**이다 — 목록의 기준일(보고 있는 날)이 아니라
+    /// 그 줄의 날짜가 실제로 오늘·어제·내일일 때만 붙는다. 기준일이 오늘에서
+    /// 멀어졌는데도 첫 줄이 "오늘"이라고 하던 것이 v1.0의 회귀였다.
     pub date_today: &'static str,
     pub date_yesterday: &'static str,
     pub date_tomorrow: &'static str,
+    /// 오늘·어제·내일 어느 것도 아닌 **지금 보고 있는 날**의 라벨.
+    pub date_viewing: &'static str,
     pub date_days_fmt_minus: &'static str, // "-{n} days" / "-{n}일" 의 suffix: "days"/"일"
     pub team_none: &'static str,
     pub poll_suffix: &'static str, // "s live poll" / "초 폴링"
@@ -345,6 +350,7 @@ pub const EN: Labels = Labels {
     date_today: "Today",
     date_yesterday: "Yesterday",
     date_tomorrow: "Tomorrow",
+    date_viewing: "Viewing",
     date_days_fmt_minus: "days",
     team_none: "None (clear)",
     poll_suffix: "s live poll",
@@ -502,6 +508,7 @@ pub const KO: Labels = Labels {
     date_today: "오늘",
     date_yesterday: "어제",
     date_tomorrow: "내일",
+    date_viewing: "보는 날",
     date_days_fmt_minus: "일",
     team_none: "해제 (없음)",
     poll_suffix: "초 폴링",
@@ -659,6 +666,7 @@ pub const JA: Labels = Labels {
     date_today: "今日",
     date_yesterday: "昨日",
     date_tomorrow: "明日",
+    date_viewing: "表示中",
     date_days_fmt_minus: "日",
     team_none: "解除 (なし)",
     poll_suffix: "秒更新",
@@ -799,6 +807,7 @@ mod tests {
                 l.date_today,
                 l.date_yesterday,
                 l.date_tomorrow,
+                l.date_viewing,
                 l.date_days_fmt_minus,
                 l.team_none,
                 l.poll_suffix,

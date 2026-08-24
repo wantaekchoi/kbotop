@@ -378,6 +378,13 @@ impl App {
             .unwrap_or_else(|| crate::dateutil::kst_days(self.now_secs))
     }
 
+    /// **진짜 오늘**(KST)의 epoch 일수. F2 픽커의 라벨(오늘·어제·내일)과
+    /// "오늘로 돌아가기" 줄이 이걸 기준으로 선다 — `date_days`(보고 있는 날)와
+    /// 갈라 두지 않으면 라벨이 기준일을 따라가 거짓말을 한다.
+    pub fn today_days(&self) -> i64 {
+        crate::dateutil::kst_days(self.now_secs)
+    }
+
     /// 지금 열려 있는지 — `OVERLAY_STACK` 순서 판정과 렌더가 함께 쓴다.
     pub fn is_overlay_open(&self, o: Overlay) -> bool {
         match o {
@@ -642,6 +649,7 @@ impl App {
             crate::ui::options::pane_len(
                 opt.pane,
                 self.date_days(),
+                self.today_days(),
                 crate::ui::i18n::labels(self.lang),
             )
         });
@@ -1104,9 +1112,10 @@ impl App {
         };
         let l = self.labels();
         // Pane은 v0.8부터 Date 단일 variant다(Team·Poll은 F9 설정으로 이동).
-        if let Some((_, date)) = crate::ui::options::date_items(l, self.date_days())
-            .into_iter()
-            .nth(opt.cursor)
+        if let Some((_, date)) =
+            crate::ui::options::date_items(l, self.date_days(), self.today_days())
+                .into_iter()
+                .nth(opt.cursor)
         {
             if date != self.date {
                 self.date = date;
@@ -2898,7 +2907,8 @@ mod tests {
         let today = crate::dateutil::kst_days(1_800_000_000);
         app.date = crate::dateutil::format_civil(today);
 
-        // 항목 순서는 [오늘, 어제, 내일, -2, -3, +2, +3] — 커서 4가 "-3일".
+        // 항목 순서는 기준일부터 [0, -1, +1, -2, -3, +2, +3] — 커서 4가 "-3일"
+        // (기준이 오늘에서 ±3일 안이라 "오늘로 돌아가기" 줄은 끼지 않는다).
         for step in 1..=2 {
             app.on_key(KeyCode::F(2));
             for _ in 0..4 {
@@ -2927,6 +2937,26 @@ mod tests {
         app.on_key(KeyCode::Enter);
         assert_eq!(app.date, before, "커서가 지금 보는 날이 아닌 곳에 놓였다");
         assert!(app.games_loaded, "제자리인데 목록을 버렸다");
+    }
+
+    /// **진짜 오늘로 돌아가는 길이 한 줄로 있다.** 기준을 "보고 있는 날"로
+    /// 옮기면서 첫 줄 "오늘"이 그 날을 다시 고르는 no-op이 됐고, 그래서 목록에
+    /// 진짜 오늘이 아예 없었다 — 06-01에서 08-24로 오려면 `+3일`을 스물여덟 번
+    /// 눌러야 했다. 기준 이동(계속 거슬러 가기)은 그대로 두고 돌아올 길만 준다.
+    #[test]
+    fn the_date_picker_has_one_row_back_to_the_real_today() {
+        let mut app = App::new(Default::default());
+        app.now_secs = 1_800_000_000;
+        let today = crate::dateutil::kst_days(1_800_000_000);
+        app.date = crate::dateutil::format_civil(today - 84);
+        app.on_key(KeyCode::F(2));
+        app.on_key(KeyCode::Down); // 둘째 줄 = 진짜 오늘
+        app.on_key(KeyCode::Enter);
+        assert_eq!(
+            app.date,
+            crate::dateutil::format_civil(today),
+            "한 번에 오늘로 못 돌아왔다"
+        );
     }
 
     /// Tips는 News처럼 보조 — stale/last_error/fetching에 관여하지 않는다.
