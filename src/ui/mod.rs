@@ -148,6 +148,24 @@ pub fn draw(f: &mut Frame, app: &App, hits: &mut HitMap) {
     }
 }
 
+/// 아직 첫 응답이 안 온 패널(`games`·`standings`)이 본문에 띄울 문구.
+///
+/// `games_loaded`/`standings_loaded`는 **성공했을 때만** true가 되므로, 계속
+/// 실패하는 동안에는 영영 false다. 그래서 `loading`만 두면 오프라인에서 60초가
+/// 지나도 본문은 "불러오는 중"이고, 실패했다는 사실은 footer 한 줄에만 남는다 —
+/// 같은 화면이 본문과 footer로 서로 다른 말을 했다(실측: 본문 loading /
+/// footer ERROR). 실패를 아는 순간부터는 본문이 그걸 말한다.
+///
+/// 두 패널이 같은 함수를 부른다. 한쪽만 고치면 나머지 하나가 그대로 남는다.
+pub(crate) fn pending_body_text(app: &App) -> String {
+    let l = app.labels();
+    match &app.last_error {
+        // error_prefix의 앞 공백은 footer 배너용이라 본문에서는 뗀다.
+        Some(e) => format!("{}{e}", l.error_prefix.trim_start()),
+        None => l.loading.to_string(),
+    }
+}
+
 /// 티커·n 키가 공유하는 현재 뉴스 회전 인덱스 — 계산 드리프트 방지.
 pub fn current_news_index(now_secs: u64, len: usize) -> usize {
     if len == 0 {

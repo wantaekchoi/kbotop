@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Rect},
     style::{Modifier, Style},
     text::Span,
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState, Wrap},
     Frame,
 };
 
@@ -74,7 +74,10 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, hits: &mut super::hit::HitMa
     // 헤더 행만 있는 동일한 화면으로 보인다.
     if !app.standings_loaded {
         f.render_widget(
-            Paragraph::new(l.loading).block(Block::bordered().title(block_title(app))),
+            Paragraph::new(super::pending_body_text(app))
+                // 에러 원문은 URL까지 길다 — 한 줄에서 조용히 잘리지 않게 접는다.
+                .wrap(Wrap { trim: true })
+                .block(Block::bordered().title(block_title(app))),
             area,
         );
         return;
@@ -195,6 +198,24 @@ mod tests {
         let text = render_to_string(&app);
         assert!(text.contains("loading"));
         assert!(!text.contains("No standings available"));
+    }
+
+    /// games.rs와 같은 이유로 순위 패널도 실패를 본문에 말한다 — 두 패널이
+    /// `ui::pending_body_text` 하나를 공유하므로 한쪽만 고칠 수 없다.
+    #[test]
+    fn the_body_says_the_error_when_the_first_load_keeps_failing() {
+        let mut app = App::new(Default::default());
+        app.apply(Update::Error("Dns Failed".into()));
+        assert!(!app.standings_loaded);
+        let text = render_to_string(&app);
+        assert!(
+            text.contains("Dns Failed"),
+            "본문이 원인을 안 말한다:\n{text}"
+        );
+        assert!(
+            !text.contains("loading"),
+            "실패를 아는데 아직 loading이다:\n{text}"
+        );
     }
 
     #[test]

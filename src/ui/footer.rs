@@ -2,6 +2,7 @@ use crate::app::{App, Screen, Tab};
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::Paragraph,
     Frame,
 };
@@ -99,9 +100,11 @@ pub fn assemble_hints(items: &[HintItem], width: usize) -> String {
     out
 }
 
-/// htop 기능키 바: 반전 스타일 한 줄. 최근 에러가 있으면 힌트 대신 그 내용을
-/// 보여줘 화면이 왜 stale인지 알 수 있게 한다("/ Find"는 아직 미구현이라
-/// 힌트에서 뺐다 — help.rs와 동일 사유).
+/// 화면 상태에 맞는 힌트 조각들. `render`가 폭에 맞춰 조립한다 — 에러가 떠도
+/// 힌트는 그대로 남아야 해서(에러 배너가 한 줄을 통째로 먹으면 나가는 키가
+/// 사라진다) 조립 대상 자체는 에러 유무와 무관하게 여기서 정해진다.
+///
+/// ("/ Find"는 아직 미구현이라 힌트에서 뺐다 — help.rs와 동일 사유.)
 ///
 /// 화면(List/Live)과 탭(Games/Standings)에 따라 힌트를 바꾼다 — Live 화면에서
 /// "Enter Live"는 이미 진입한 화면이라 no-op이고(app.rs의 Enter 핸들러는
@@ -109,215 +112,275 @@ pub fn assemble_hints(items: &[HintItem], width: usize) -> String {
 /// 안내되지 않아 발견 불가능했다. 마찬가지로 app.rs의 Enter 핸들러는
 /// `tab == Tab::Games`일 때만 라이브 화면을 여므로(Standings 탭에서는
 /// no-op), Standings 탭에서는 "Enter Live"를 보여주지 않는다.
+fn hint_items(app: &App) -> Vec<HintItem> {
+    let l = app.labels();
+    // 커서가 취소·예정 경기에 있으면 Enter는 아무 일도 하지 않는다
+    // (`App::can_enter_live` — 문자중계가 없어 영구 "loading"에 갇히는
+    // 걸 막는 가드다). 그런데 힌트는 "Enter 중계"라고 계속 말하고 있어,
+    // 눌러 본 사람은 앱이 먹통이 된 줄 안다 — 되는 자리에서만 안내한다.
+    let enter_is_dead = matches!(app.screen, Screen::List)
+        && app.tab == Tab::Games
+        && !app
+            .games
+            .get(app.selected)
+            .is_some_and(|g| App::can_enter_live(g.status));
+    let items: Vec<HintItem> = match (&app.screen, app.tab) {
+        (Screen::List, Tab::Games) => vec![
+            HintItem {
+                key: "F1",
+                label: l.hint_help,
+                core: true,
+            },
+            HintItem {
+                key: "F2",
+                label: l.hint_options,
+                core: false,
+            },
+            HintItem {
+                key: "F9",
+                label: l.hint_settings,
+                core: false,
+            },
+            HintItem {
+                key: "Tab",
+                label: l.hint_switch,
+                core: true,
+            },
+            HintItem {
+                key: "o",
+                label: l.hint_links,
+                core: false,
+            },
+            HintItem {
+                key: "n",
+                label: l.hint_news,
+                core: false,
+            },
+            // 목록에서 라이브로 들어가는 건 이 앱의 주 동작이다. 부가
+            // 힌트로 두면 80칸에서 **영어·일본어만** 탈락해(한국어는
+            // 73칸으로 들어간다) 같은 화면인데 언어에 따라 주 동작을
+            // 안내받는 사람과 못 받는 사람이 갈렸다.
+            HintItem {
+                key: "Enter",
+                label: l.hint_live_key,
+                core: true,
+            },
+            HintItem {
+                key: "q",
+                label: l.hint_quit,
+                core: true,
+            },
+        ],
+        (Screen::List, Tab::Standings) => vec![
+            HintItem {
+                key: "F1",
+                label: l.hint_help,
+                core: true,
+            },
+            // 순위 행에서 Enter를 누르면 그 팀의 시즌 성적이 뜬다
+            // (v0.24). 그런데 footer에도 도움말에도 없어서 아는 사람만
+            // 쓰는 기능이었다 — Esc를 힌트에 넣은 것과 같은 이유로 넣는다.
+            HintItem {
+                key: "Enter",
+                label: l.hint_team_stats,
+                core: false,
+            },
+            HintItem {
+                key: "F2",
+                label: l.hint_options,
+                core: false,
+            },
+            HintItem {
+                key: "F9",
+                label: l.hint_settings,
+                core: false,
+            },
+            HintItem {
+                key: "Tab",
+                label: l.hint_switch,
+                core: true,
+            },
+            HintItem {
+                key: "o",
+                label: l.hint_links,
+                core: false,
+            },
+            HintItem {
+                key: "n",
+                label: l.hint_news,
+                core: false,
+            },
+            HintItem {
+                key: "q",
+                label: l.hint_quit,
+                core: true,
+            },
+        ],
+        (Screen::Live { state, .. }, _) => {
+            // v0.18 Esc 계단(app.rs와 순서를 맞춘다): ①투구 또는
+            // 문자중계 커서가 있으면 그 커서 전용 복귀 라벨(가장 좁은
+            // 단계 — 리뷰 M-5: 이전엔 이 둘을 하나로 묶어 문자중계
+            // 커서만 있을 때도 투구 전용 문구("전체보기")가 떴다) →
+            // ②과거 타석을 보는 중이면 "라이브로"(중간 단계) → ③그
+            // 외엔 "뒤로"(화면 이탈, 가장 넓은 단계).
+            let back = if app.live_pitch_sel.is_some() {
+                l.hint_all_pitches
+            } else if app.live_relay_cursor.is_some() {
+                l.hint_latest
+            } else if app.live_atbat_sel.is_some() {
+                l.hint_go_live
+            } else {
+                l.hint_back
+            };
+            let mut items = vec![
+                HintItem {
+                    key: "F1",
+                    label: l.hint_help,
+                    core: true,
+                },
+                HintItem {
+                    key: "Esc",
+                    label: back,
+                    core: true,
+                },
+            ];
+            // 돌려볼 과거 타석이 있을 때만 광고한다(at_bats가 1개뿐이면
+            // `[`/`]`가 아무 데도 못 가므로 힌트가 거짓 약속이 된다).
+            if state.as_ref().is_some_and(|s| s.at_bats.len() > 1) {
+                items.push(HintItem {
+                    key: "[ ]",
+                    label: l.hint_rewind,
+                    core: false,
+                });
+            }
+            items.push(HintItem {
+                key: "←→",
+                label: l.hint_pitch,
+                core: false,
+            });
+            // 문자중계 줄 커서(j/k, v0.18)를 어디에도 안내하지 않아
+            // 발견 불가능했다(리뷰 I-5) — 되감을 줄이 있을 때만
+            // 광고한다(rewind 힌트와 같은 "거짓 약속 금지" 원칙).
+            if state
+                .as_ref()
+                .is_some_and(|s| !s.active_relay_lines(app.live_atbat_sel).is_empty())
+            {
+                items.push(HintItem {
+                    key: "j/k",
+                    label: l.hint_relay,
+                    core: false,
+                });
+            }
+            items.push(HintItem {
+                key: "q",
+                label: l.hint_quit,
+                core: true,
+            });
+            items
+        }
+    };
+    let mut items = items;
+    if enter_is_dead || (app.tab == Tab::Standings && !app.team_stats_available()) {
+        items.retain(|h| h.key != "Enter");
+    }
+    items
+}
+
+/// htop 기능키 바: 반전 스타일 한 줄. 최근 에러가 있으면 **왼쪽 절반**에 그 내용을
+/// 함께 보여줘 화면이 왜 stale인지 알 수 있게 한다.
+///
+/// 에러가 한 줄을 통째로 먹지 않는다. 예전에는 배너가 폭 전체를 차지해 힌트가
+/// 하나도 안 남았는데, 오프라인이 되면 바로 그 순간 `q Quit`이 사라져 **나가는
+/// 법이 화면에서 없어졌다**(실측: 100칸에서 180자 URL 하나로 한 줄이 다 찼다).
+/// 이제 에러는 폭의 절반까지만 쓰고 나머지는 힌트 몫이다 — `assemble_hints`가
+/// 부가 힌트부터 떨어뜨리므로 core(`q Quit` 등)는 좁은 폭에서도 남는다.
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let l = app.labels();
+    let width = area.width as usize;
     // 설정 파일이 깨진 건 폴링 에러보다 먼저 알려야 한다 — 사용자가 파일을
     // 고칠 때까지 계속 기본값으로 도는 상태이고, 그 사이 저장도 막혀 있다.
-    let shown = app
+    let error = app
         .config_error
         .as_ref()
-        .map(|e| (format!("{}{e}", l.config_broken), true))
+        .map(|e| format!("{}{e}", l.config_broken))
         .or_else(|| {
             app.last_error
                 .as_ref()
-                .map(|e| (format!("{}{e}", l.error_prefix), false))
+                .map(|e| format!("{}{}", l.error_prefix, compact_error(e)))
         });
-    let (text, style) = match &shown {
-        Some((msg, _)) => (
-            // 긴 에러(HTTP 본문 조각 등)는 한 줄 footer에서 조용히 잘린다 —
-            // 정직한 말줄임(§15 오버플로 정책).
-            super::text::ellipsize(msg, area.width as usize),
-            // mono는 색을 안 쓴다 — 여기가 게이트를 안 거치고 흰 글자/빨간 배경을
-            // 직접 쓰고 있었다. `theme.rs`의 정책 주석은 예외를 **팀 배지 하나**로만
-            // 인정하는데 이 배너가 조용히 새고 있었고, mono 봉인 테스트는 `fg`만
-            // 보고 `bg`를 안 봐서 못 잡았다. 색이 빠져도 에러는 굵게 남아 눈에 띈다.
-            if app.theme_preset == "mono" {
-                Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
-            } else {
-                Style::default()
-                    .fg(Color::White)
-                    .bg(Color::Red)
-                    .add_modifier(Modifier::BOLD)
-            },
-        ),
-        None => {
-            // 커서가 취소·예정 경기에 있으면 Enter는 아무 일도 하지 않는다
-            // (`App::can_enter_live` — 문자중계가 없어 영구 "loading"에 갇히는
-            // 걸 막는 가드다). 그런데 힌트는 "Enter 중계"라고 계속 말하고 있어,
-            // 눌러 본 사람은 앱이 먹통이 된 줄 안다 — 되는 자리에서만 안내한다.
-            let enter_is_dead = matches!(app.screen, Screen::List)
-                && app.tab == Tab::Games
-                && !app
-                    .games
-                    .get(app.selected)
-                    .is_some_and(|g| App::can_enter_live(g.status));
-            let items: Vec<HintItem> = match (&app.screen, app.tab) {
-                (Screen::List, Tab::Games) => vec![
-                    HintItem {
-                        key: "F1",
-                        label: l.hint_help,
-                        core: true,
-                    },
-                    HintItem {
-                        key: "F2",
-                        label: l.hint_options,
-                        core: false,
-                    },
-                    HintItem {
-                        key: "F9",
-                        label: l.hint_settings,
-                        core: false,
-                    },
-                    HintItem {
-                        key: "Tab",
-                        label: l.hint_switch,
-                        core: true,
-                    },
-                    HintItem {
-                        key: "o",
-                        label: l.hint_links,
-                        core: false,
-                    },
-                    HintItem {
-                        key: "n",
-                        label: l.hint_news,
-                        core: false,
-                    },
-                    // 목록에서 라이브로 들어가는 건 이 앱의 주 동작이다. 부가
-                    // 힌트로 두면 80칸에서 **영어·일본어만** 탈락해(한국어는
-                    // 73칸으로 들어간다) 같은 화면인데 언어에 따라 주 동작을
-                    // 안내받는 사람과 못 받는 사람이 갈렸다.
-                    HintItem {
-                        key: "Enter",
-                        label: l.hint_live_key,
-                        core: true,
-                    },
-                    HintItem {
-                        key: "q",
-                        label: l.hint_quit,
-                        core: true,
-                    },
-                ],
-                (Screen::List, Tab::Standings) => vec![
-                    HintItem {
-                        key: "F1",
-                        label: l.hint_help,
-                        core: true,
-                    },
-                    // 순위 행에서 Enter를 누르면 그 팀의 시즌 성적이 뜬다
-                    // (v0.24). 그런데 footer에도 도움말에도 없어서 아는 사람만
-                    // 쓰는 기능이었다 — Esc를 힌트에 넣은 것과 같은 이유로 넣는다.
-                    HintItem {
-                        key: "Enter",
-                        label: l.hint_team_stats,
-                        core: false,
-                    },
-                    HintItem {
-                        key: "F2",
-                        label: l.hint_options,
-                        core: false,
-                    },
-                    HintItem {
-                        key: "F9",
-                        label: l.hint_settings,
-                        core: false,
-                    },
-                    HintItem {
-                        key: "Tab",
-                        label: l.hint_switch,
-                        core: true,
-                    },
-                    HintItem {
-                        key: "o",
-                        label: l.hint_links,
-                        core: false,
-                    },
-                    HintItem {
-                        key: "n",
-                        label: l.hint_news,
-                        core: false,
-                    },
-                    HintItem {
-                        key: "q",
-                        label: l.hint_quit,
-                        core: true,
-                    },
-                ],
-                (Screen::Live { state, .. }, _) => {
-                    // v0.18 Esc 계단(app.rs와 순서를 맞춘다): ①투구 또는
-                    // 문자중계 커서가 있으면 그 커서 전용 복귀 라벨(가장 좁은
-                    // 단계 — 리뷰 M-5: 이전엔 이 둘을 하나로 묶어 문자중계
-                    // 커서만 있을 때도 투구 전용 문구("전체보기")가 떴다) →
-                    // ②과거 타석을 보는 중이면 "라이브로"(중간 단계) → ③그
-                    // 외엔 "뒤로"(화면 이탈, 가장 넓은 단계).
-                    let back = if app.live_pitch_sel.is_some() {
-                        l.hint_all_pitches
-                    } else if app.live_relay_cursor.is_some() {
-                        l.hint_latest
-                    } else if app.live_atbat_sel.is_some() {
-                        l.hint_go_live
-                    } else {
-                        l.hint_back
-                    };
-                    let mut items = vec![
-                        HintItem {
-                            key: "F1",
-                            label: l.hint_help,
-                            core: true,
-                        },
-                        HintItem {
-                            key: "Esc",
-                            label: back,
-                            core: true,
-                        },
-                    ];
-                    // 돌려볼 과거 타석이 있을 때만 광고한다(at_bats가 1개뿐이면
-                    // `[`/`]`가 아무 데도 못 가므로 힌트가 거짓 약속이 된다).
-                    if state.as_ref().is_some_and(|s| s.at_bats.len() > 1) {
-                        items.push(HintItem {
-                            key: "[ ]",
-                            label: l.hint_rewind,
-                            core: false,
-                        });
-                    }
-                    items.push(HintItem {
-                        key: "←→",
-                        label: l.hint_pitch,
-                        core: false,
-                    });
-                    // 문자중계 줄 커서(j/k, v0.18)를 어디에도 안내하지 않아
-                    // 발견 불가능했다(리뷰 I-5) — 되감을 줄이 있을 때만
-                    // 광고한다(rewind 힌트와 같은 "거짓 약속 금지" 원칙).
-                    if state
-                        .as_ref()
-                        .is_some_and(|s| !s.active_relay_lines(app.live_atbat_sel).is_empty())
-                    {
-                        items.push(HintItem {
-                            key: "j/k",
-                            label: l.hint_relay,
-                            core: false,
-                        });
-                    }
-                    items.push(HintItem {
-                        key: "q",
-                        label: l.hint_quit,
-                        core: true,
-                    });
-                    items
-                }
-            };
-            let mut items = items;
-            if enter_is_dead || (app.tab == Tab::Standings && !app.team_stats_available()) {
-                items.retain(|h| h.key != "Enter");
-            }
-            (
-                assemble_hints(&items, area.width as usize),
-                Style::default().add_modifier(Modifier::REVERSED),
-            )
-        }
+    // 에러가 쓰는 폭(절반)과 힌트가 쓰는 폭(나머지 - 구분자 두 칸).
+    let err_budget = if error.is_some() { width / 2 } else { 0 };
+    let hint_budget = if error.is_some() {
+        width.saturating_sub(err_budget + HINT_GAP)
+    } else {
+        width
     };
-    let paragraph = Paragraph::new(text).style(style);
-    f.render_widget(paragraph, area);
+    let hints = assemble_hints(&hint_items(app), hint_budget);
+    let hint_style = Style::default().add_modifier(Modifier::REVERSED);
+    let line = match error {
+        Some(msg) => Line::from(vec![
+            // 긴 에러(HTTP 본문 조각 등)는 예산에 맞춰 정직하게 말줄임한다
+            // (§15 오버플로 정책). 전문은 본문 패널이 보여준다.
+            Span::styled(super::text::ellipsize(&msg, err_budget), error_style(app)),
+            Span::raw(" ".repeat(HINT_GAP)),
+            Span::raw(hints),
+        ]),
+        None => Line::from(hints),
+    };
+    f.render_widget(Paragraph::new(line).style(hint_style), area);
+}
+
+/// 에러 조각과 힌트 사이 간격.
+const HINT_GAP: usize = 2;
+
+/// 에러 조각의 스타일. mono는 색을 안 쓴다 — 여기가 게이트를 안 거치고 흰 글자/
+/// 빨간 배경을 직접 쓰고 있었다. `theme.rs`의 정책 주석은 예외를 **팀 배지
+/// 하나**로만 인정하는데 이 배너가 조용히 새고 있었고, mono 봉인 테스트는 `fg`만
+/// 보고 `bg`를 안 봐서 못 잡았다. 색이 빠져도 에러는 굵게 남아 눈에 띈다.
+///
+/// `remove_modifier(REVERSED)`: 이 조각은 힌트 바(REVERSED) 위에 얹히므로,
+/// 빼 주지 않으면 흰 글자/빨간 배경이 반전돼 빨간 글자/흰 배경으로 뒤집힌다.
+fn error_style(app: &App) -> Style {
+    if app.theme_preset == "mono" {
+        Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
+    } else {
+        Style::default()
+            .fg(Color::White)
+            .bg(Color::Red)
+            .add_modifier(Modifier::BOLD)
+            .remove_modifier(Modifier::REVERSED)
+    }
+}
+
+/// 에러 한 줄을 footer 폭에 맞게 줄인다 — **URL은 호스트만, 원인은 앞으로.**
+///
+/// ureq의 전송 실패 메시지는 `network error: <URL>: <원인>` 꼴인데 우리 URL은
+/// 쿼리스트링까지 180자가 넘는다. 그대로 두면 한 줄 footer를 URL이 다 먹어
+/// **220칸에서도 원인이 잘렸다**(실측). 잘리는 건 언제나 뒤쪽이므로 원인을 앞으로
+/// 당기고, 어디에 못 닿았는지는 호스트만 괄호로 남긴다. URL이 없는 메시지는
+/// 그대로 돌려준다.
+fn compact_error(msg: &str) -> String {
+    let Some(scheme_at) = msg.find("://") else {
+        return msg.to_string();
+    };
+    // URL 토큰의 경계는 앞뒤 공백. 공백은 ASCII 한 바이트라 인덱스 산술이 안전하다.
+    let start = msg[..scheme_at].rfind(' ').map_or(0, |i| i + 1);
+    let end = msg[scheme_at..]
+        .find(' ')
+        .map_or(msg.len(), |i| scheme_at + i);
+    let host_start = scheme_at + "://".len();
+    let host_end = msg[host_start..end]
+        .find(['/', '?', '#'])
+        .map_or(end, |i| host_start + i);
+    let host = msg[host_start..host_end].trim_end_matches(':');
+    let head = &msg[..start];
+    // URL 바로 뒤의 `: `는 URL과 원인을 잇던 구분자라 자리를 옮기면 의미가 없다.
+    let cause = msg[end..].trim_start_matches([':', ' ']);
+    if cause.is_empty() {
+        format!("{head}{host}")
+    } else {
+        format!("{head}{cause} ({host})")
+    }
 }
 
 #[cfg(test)]
@@ -625,6 +688,52 @@ mod tests {
         app.last_error = Some("x".repeat(200));
         let text = render_to_string(&app);
         assert!(text.contains('…'), "expected honest ellipsis in:\n{text}");
+    }
+
+    /// **에러가 떠도 나가는 법은 화면에 남는다.** 예전에는 에러 배너가 한 줄을
+    /// 통째로 차지해, 오프라인이 되는 순간 `q Quit`이 사라졌다 — 100칸에서
+    /// 실제 요청 URL 하나로 한 줄이 다 찼다(실측). 원인도 함께 남아야 한다:
+    /// 힌트만 남기고 에러를 통째로 본문에만 두면 이번엔 footer가 왜 stale인지
+    /// 말하지 않는다.
+    #[test]
+    fn a_long_error_keeps_both_the_quit_hint_and_the_cause() {
+        let mut app = App::new(Default::default());
+        app.last_error = Some(format!(
+            "network error: https://api-gw.sports.naver.com/schedule/games?{}: Dns Failed",
+            "fields=basic&".repeat(14)
+        ));
+        for width in [80, 100, 220] {
+            let text = render_to_string_with_width(&app, width);
+            assert!(
+                text.contains("q Quit"),
+                "{width}칸: 에러가 나가는 키를 먹었다:\n{text}"
+            );
+            assert!(
+                text.contains("Dns Failed"),
+                "{width}칸: 원인이 잘렸다:\n{text}"
+            );
+        }
+    }
+
+    /// footer는 **원인을 앞에, URL은 호스트만** 남긴다. 잘리는 건 언제나 뒤쪽이라
+    /// 원인이 URL 뒤에 있으면 제일 먼저 잘린다 — 220칸에서도 잘렸다(실측).
+    #[test]
+    fn compact_error_leads_with_the_cause_and_keeps_only_the_host() {
+        assert_eq!(
+            compact_error(
+                "network error: https://api-gw.sports.naver.com/schedule/games?fields=basic&toDate=2026-08-24: Dns Failed: resolve dns name"
+            ),
+            "network error: Dns Failed: resolve dns name (api-gw.sports.naver.com)"
+        );
+    }
+
+    /// URL이 없는 메시지(설정 파일 오류 등)는 손대지 않는다.
+    #[test]
+    fn compact_error_leaves_a_message_without_a_url_alone() {
+        assert_eq!(
+            compact_error("could not read config"),
+            "could not read config"
+        );
     }
 
     /// 선택 중에는 Esc가 "전체보기 복귀"임을 힌트로 알린다 — 상태별 전환 검증.
